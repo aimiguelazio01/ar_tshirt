@@ -631,7 +631,7 @@ const els = {
 let mindarThree, renderer, scene, camera, anchor;
 let audioCtx, audioEnabled = true, bgAudioSource;
 let currentFacing = 'environment';
-let modelScale = 0.43;
+let modelScale = 0.866;
 let baseMarkerScale = 0.43;
 let basePosZ = 0.05;
 let preloadedGLTF = null;
@@ -1186,14 +1186,15 @@ function attachMonsterModel(group){
     monsterModel.userData.center = center;
 
     // MindAR marker width = 1.0 (from x=-0.5 to x=+0.5).
-    // Scale 3D character so its scale directly matches the marker:
+    // Set 3D character scale to the 5-clicks size on "+ SIZE" (1.15^5 = 2.01x / ~201% scale):
     const targetMarkerWidth = 1.0;
     baseMarkerScale = targetMarkerWidth / (size.x || 2.323);
-    modelScale = baseMarkerScale;
+    const scaleFactor5Clicks = Math.pow(1.15, 5); // 5 clicks on + SIZE (~201%)
+    modelScale = baseMarkerScale * scaleFactor5Clicks;
     monsterModel.scale.set(modelScale, modelScale, modelScale);
 
     if (els.scaleLabel) {
-      els.scaleLabel.textContent = `🎯 100% MARKER`;
+      els.scaleLabel.textContent = `🎯 201% MARKER`;
     }
 
     // Center on marker in X, Y and sit on the shirt surface protruding into +Z (towards camera)
@@ -2124,14 +2125,13 @@ if (els.btnSizeUp) {
 
 if (els.btnSizeReset) {
   els.btnSizeReset.addEventListener('click', () => {
-    // Cycle between Marker Width Match (100%), Marker Height Match (~150%), and 1:1 Scale
-    const pct = baseMarkerScale > 0 ? Math.round((modelScale / baseMarkerScale) * 100) : 100;
-    if (pct < 110) {
-      applyModelScale(baseMarkerScale * 1.45, true);
-    } else if (pct < 160) {
-      applyModelScale(1.0, true);
-    } else {
+    // Toggle between user's preferred 5-clicks size (201%) and base 100% marker width
+    const preferredScale = baseMarkerScale * Math.pow(1.15, 5);
+    const pct = baseMarkerScale > 0 ? Math.round((modelScale / baseMarkerScale) * 100) : 201;
+    if (Math.abs(pct - 201) < 8) {
       applyModelScale(baseMarkerScale, true);
+    } else {
+      applyModelScale(preferredScale, true);
     }
   });
 }
