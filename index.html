@@ -335,9 +335,6 @@
         <span id="status-text">SEARCHING…</span>
       </div>
       <div style="display:flex; gap:6px; pointer-events:auto; flex-wrap:wrap; justify-content:flex-end;">
-        <div class="status-chip" id="btn-preview-3d" role="button" style="background:var(--amber); color:var(--void); font-weight:bold; cursor:pointer;">
-          <span id="preview-3d-text">👁️ PREVIEW 3D</span>
-        </div>
         <div class="status-chip" id="btn-size-down" role="button" style="cursor:pointer;" title="Make 3D model smaller">
           <span>➖ SIZE</span>
         </div>
@@ -361,7 +358,7 @@
 
     <div id="reticle-hint" class="reticle-hint">
       <div class="reticle-box"><i></i><i></i><i></i><i></i></div>
-      <span>Frame the printed artwork (or click PREVIEW 3D)</span>
+      <span>Frame the printed artwork on your T-shirt</span>
     </div>
 
     <div class="hud-bottom">
@@ -385,7 +382,7 @@
       <div style="background:var(--panel-2); border:1px solid var(--hairline); padding:24px; border-radius:8px; max-width:380px; width:100%; text-align:center; position:relative; box-shadow:0 12px 32px rgba(0,0,0,0.6);">
         <button id="btn-close-marker" style="position:absolute; top:12px; right:12px; background:none; border:none; color:var(--paper-dim); font-size:22px; cursor:pointer;">✕</button>
         <h3 style="margin:0 0 8px; color:var(--amber); font-family:var(--font-display);">AR Target Marker</h3>
-        <p style="font-size:13px; color:var(--paper-dim); margin-bottom:16px;">Point your camera at this image to lock the 3D model, or click <strong>PREVIEW 3D</strong> to see it right now!</p>
+        <p style="font-size:13px; color:var(--paper-dim); margin-bottom:16px;">Point your camera at the printed artwork on the T-shirt to experience the AR animation.</p>
         <img src="assets/t1.jpg" style="width:100%; max-height:300px; object-fit:contain; border-radius:6px; border:1px solid var(--hairline);" />
       </div>
     </div>
@@ -620,8 +617,6 @@ const els = {
   captureFlash: document.getElementById('capture-flash'),
   toast: document.getElementById('toast'),
   arContainer: document.getElementById('ar-container'),
-  btnPreview3D: document.getElementById('btn-preview-3d'),
-  preview3DText: document.getElementById('preview-3d-text'),
   btnSizeDown: document.getElementById('btn-size-down'),
   btnSizeUp: document.getElementById('btn-size-up'),
   btnSizeReset: document.getElementById('btn-size-reset'),
@@ -750,7 +745,6 @@ function cleanARContainer() {
   simHeadBone = null;
   simHeadRestRot = null;
   anchor = null;
-  previewRoot = null;
   monsterGarmentPos = null;
   renderer = null;
   scene = null;
@@ -1053,56 +1047,24 @@ async function initAR(){
 let isTargetLocked = false;
 let arRotY = 0, arRotX = 0;
 let isArDragging = false, arPrevX = 0, arPrevY = 0;
-let previewRoot = null;
 let monsterGarmentPos = null;
 
 function setLockState(locked){
   isTargetLocked = !!locked;
   els.statusDot.classList.toggle('locked', isTargetLocked);
   els.statusDot.classList.toggle('searching', !isTargetLocked);
-  els.statusText.textContent = isTargetLocked ? 'LOCKED ON ARTWORK' : (currentFacing === 'environment' ? 'MAIN LENS ACTIVE' : 'FRONT LENS ACTIVE');
+  els.statusText.textContent = isTargetLocked ? 'ARTWORK TRACKED' : (currentFacing === 'environment' ? 'SCANNING FOR T-SHIRT…' : 'FRONT LENS ACTIVE');
   els.reticleHint.classList.toggle('hide', isTargetLocked);
 
   if (monsterModel) {
-    if (isTargetLocked) {
-      if (anchor && anchor.group) {
-        anchor.group.add(monsterModel);
-      }
-      if (monsterGarmentPos) {
-        monsterModel.position.copy(monsterGarmentPos);
-      }
-      monsterModel.rotation.set(0, 0, 0);
-    } else {
-      if (previewRoot) {
-        previewRoot.add(monsterModel);
-      }
-      monsterModel.position.set(0, 0, 0);
-      monsterModel.rotation.set(arRotX, arRotY, 0);
-    }
+    monsterModel.visible = isTargetLocked;
   }
 
-  // Planes remain anchored to the SAME MindAR target as the character
   if (planesModel) {
-    if (isTargetLocked) {
-      if (anchor && anchor.group) {
-        anchor.group.add(planesModel);
-      }
-      if (monsterGarmentPos) {
-        planesModel.position.copy(monsterGarmentPos);
-      }
-      planesModel.rotation.set(0, 0, 0);
-      planesModel.visible = !arePlanesDisappeared;
-    } else {
-      if (previewRoot) {
-        previewRoot.add(planesModel);
-      }
-      planesModel.position.set(0, 0, 0);
-      planesModel.rotation.set(arRotX, arRotY, 0);
-      planesModel.visible = !arePlanesDisappeared;
-    }
+    planesModel.visible = isTargetLocked && !arePlanesDisappeared;
   }
 
-  isPlaneInteractionActive = isTargetLocked || forcePreview;
+  isPlaneInteractionActive = isTargetLocked && !arePlanesDisappeared;
 
   if (!isPlaneInteractionActive) {
     resetAllPlanes();
@@ -1111,7 +1073,6 @@ function setLockState(locked){
 
   if (isTargetLocked){
     playUnlockSting();
-    showToast('Artwork locked to garment ✨');
   } else {
     console.log('[MindAR] Target lost');
   }
@@ -1122,19 +1083,9 @@ function setLockState(locked){
 // ---------------------------------------------------------------
 let animMesh, monsterModel, mixer, clock = new THREE.Clock();
 let particleSystem, particleVelocities;
-let forcePreview = false;
 
 function buildSceneContent(group){
-  // 1. Dedicated persistent preview root in scene — ensures character is ALWAYS visible
-  if (!previewRoot) {
-    previewRoot = new THREE.Group();
-  }
-  previewRoot.position.set(0, -0.15, -1.8);
-  if (scene) {
-    scene.add(previewRoot);
-  }
-
-  // 2. Scene illumination — ambient + directional lights added to SCENE directly
+  // 1. Scene illumination — ambient + directional lights added to SCENE directly
   const ambLight = new THREE.AmbientLight(0xffffff, 2.5);
   const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444455, 2.0);
   const dirLight = new THREE.DirectionalLight(0xffb020, 2.8);
@@ -1151,7 +1102,7 @@ function buildSceneContent(group){
   lightContainer.add(frontLight);
   lightContainer.add(pointLight);
 
-  // 3. Particle field
+  // 2. Particle field
   const count = CONFIG.maxParticles;
   const positions = new Float32Array(count * 3);
   particleVelocities = new Float32Array(count * 3);
@@ -1167,16 +1118,12 @@ function buildSceneContent(group){
   pGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   const pMat = new THREE.PointsMaterial({ color: 0xfff2d6, size: 0.015, transparent: true, opacity: 0.85 });
   particleSystem = new THREE.Points(pGeo, pMat);
-  if (previewRoot) {
-    previewRoot.add(particleSystem);
-  } else {
-    group.add(particleSystem);
-  }
+  group.add(particleSystem);
 
-  // 4. Attach 3D Monster Model
+  // 3. Attach 3D Monster Model
   attachMonsterModel(group);
 
-  // 5. Attach 4 Interactive Planes from planes.glb
+  // 4. Attach 4 Interactive Planes from planes.glb
   attachPlanesModel(group);
 }
 
@@ -1224,27 +1171,17 @@ function attachMonsterModel(group){
     basePosZ = (-box.min.z * modelScale) + 0.05;
     monsterGarmentPos = new THREE.Vector3(posX, posY, basePosZ);
 
-    if (isTargetLocked) {
-      monsterModel.position.copy(monsterGarmentPos);
-      monsterModel.rotation.set(0, 0, 0);
-      group.add(monsterModel);
-    } else {
-      monsterModel.position.set(0, 0, 0);
-      monsterModel.rotation.set(arRotX, arRotY, 0);
-      if (previewRoot) {
-        previewRoot.add(monsterModel);
-      } else {
-        group.add(monsterModel);
-      }
-    }
+    monsterModel.position.copy(monsterGarmentPos);
+    monsterModel.rotation.set(0, 0, 0);
+    monsterModel.visible = isTargetLocked;
+    group.add(monsterModel);
 
     // Sync planesModel position & scale if it preloaded earlier
     if (planesModel) {
       planesModel.scale.set(modelScale, modelScale, modelScale);
-      if (isTargetLocked) {
-        planesModel.position.copy(monsterGarmentPos);
-        planesModel.rotation.set(0, 0, 0);
-      }
+      planesModel.position.copy(monsterGarmentPos);
+      planesModel.rotation.set(0, 0, 0);
+      planesModel.visible = isTargetLocked && !arePlanesDisappeared;
     }
 
     // Locate C_head_01 and c_neck bones for realistic head and neck tracking
@@ -1363,22 +1300,10 @@ function attachPlanesModel(group){
       planesModel.position.copy(monsterGarmentPos);
     }
 
-    planesModel.visible = !arePlanesDisappeared;
-
-    if (isTargetLocked) {
-      planesModel.rotation.set(0, 0, 0);
-      group.add(planesModel);
-      isPlaneInteractionActive = !arePlanesDisappeared;
-    } else {
-      planesModel.position.set(0, 0, 0);
-      planesModel.rotation.set(arRotX, arRotY, 0);
-      if (previewRoot) {
-        previewRoot.add(planesModel);
-      } else {
-        group.add(planesModel);
-      }
-      isPlaneInteractionActive = false;
-    }
+    planesModel.rotation.set(0, 0, 0);
+    planesModel.visible = isTargetLocked && !arePlanesDisappeared;
+    group.add(planesModel);
+    isPlaneInteractionActive = isTargetLocked && !arePlanesDisappeared;
   };
 
   if (preloadedPlanesGLTF) {
@@ -1726,11 +1651,6 @@ function renderLoop(){
     mixer.update(delta);
   }
 
-  // Floating bob in preview mode
-  if (!isTargetLocked && previewRoot) {
-    previewRoot.position.y = -0.15 + Math.sin(t * 2.0) * 0.02;
-  }
-
   // Head-only tracking: Keep the whole body facing forward on the garment, rotate only "C_head_01" bone
   if (isTargetLocked && monsterModel && camera && anchor && anchor.group && anchor.group.visible) {
     monsterModel.rotation.set(0, 0, 0);
@@ -1789,12 +1709,6 @@ function renderLoop(){
     }
     // Subtle idle breathing motion along Z
     monsterModel.position.z = basePosZ + Math.sin(t * 2.0) * 0.012;
-  } else if (!isTargetLocked && monsterModel) {
-    monsterModel.rotation.set(arRotX, arRotY, 0);
-    if (headBone && headRestRot) {
-      headBone.rotation.y = headRestRot.y + Math.sin(t * 1.5) * 0.15;
-      headBone.rotation.x = headRestRot.x + Math.cos(t * 1.2) * 0.08;
-    }
   } else if (animMesh && camera && anchor && anchor.group && anchor.group.visible) {
     anchor.group.updateMatrixWorld(true);
     const camWorldPos = new THREE.Vector3();
@@ -1828,12 +1742,12 @@ function renderLoop(){
     const FADE_RATE = 0.20;
     currentPlaneOpacity += (targetPlaneOpacity - currentPlaneOpacity) * FADE_RATE;
 
-    if (currentPlaneOpacity < 0.03) {
+    if (currentPlaneOpacity < 0.03 || !isTargetLocked) {
       planesModel.visible = false;
       isPlaneInteractionActive = false;
     } else {
       planesModel.visible = true;
-      isPlaneInteractionActive = isTargetLocked || forcePreview;
+      isPlaneInteractionActive = true;
       for (let i = 0; i < interactivePlanes.length; i++) {
         const pMat = interactivePlanes[i].material;
         if (pMat) {
@@ -2264,21 +2178,6 @@ if (els.arContainer) {
   window.addEventListener('pointercancel', () => { isArDragging = false; });
 }
 
-if (els.btnPreview3D) {
-  els.btnPreview3D.addEventListener('click', () => {
-    if (isSimulatorMode) {
-      showToast('Already in interactive 3D view!');
-      return;
-    }
-    forcePreview = !forcePreview;
-    els.btnPreview3D.style.background = forcePreview ? 'var(--cyan)' : 'var(--amber)';
-    els.btnPreview3D.style.color = 'var(--void)';
-    els.preview3DText.textContent = forcePreview ? '✨ 3D VISIBLE' : '👁️ PREVIEW 3D';
-    setLockState(forcePreview);
-    showToast(forcePreview ? '3D Model & Interactive Planes Active ✨' : 'AR Target Tracking Mode');
-  });
-}
-
 function applyModelScale(newScale, showToastMsg = false) {
   modelScale = Math.max(0.05, Math.min(4.0, newScale));
   if (monsterModel) {
@@ -2290,14 +2189,12 @@ function applyModelScale(newScale, showToastMsg = false) {
       const posY = -c.y * modelScale;
       basePosZ = (-b.min.z * modelScale) + 0.05;
       monsterGarmentPos = new THREE.Vector3(posX, posY, basePosZ);
-      if (isTargetLocked) {
-        monsterModel.position.copy(monsterGarmentPos);
-      }
+      monsterModel.position.copy(monsterGarmentPos);
     }
   }
   if (planesModel) {
     planesModel.scale.set(modelScale, modelScale, modelScale);
-    if (monsterGarmentPos && isTargetLocked) {
+    if (monsterGarmentPos) {
       planesModel.position.copy(monsterGarmentPos);
     }
   }
