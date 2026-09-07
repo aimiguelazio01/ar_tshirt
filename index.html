@@ -341,6 +341,9 @@
         <div class="status-chip" id="btn-size-down" role="button" style="cursor:pointer;" title="Make 3D model smaller">
           <span>➖ SIZE</span>
         </div>
+        <div class="status-chip" id="btn-size-reset" role="button" style="cursor:pointer;" title="Reset or toggle marker scale">
+          <span id="scale-label">🎯 100% MARKER</span>
+        </div>
         <div class="status-chip" id="btn-size-up" role="button" style="cursor:pointer;" title="Make 3D model larger">
           <span>➕ SIZE</span>
         </div>
@@ -617,6 +620,8 @@ const els = {
   preview3DText: document.getElementById('preview-3d-text'),
   btnSizeDown: document.getElementById('btn-size-down'),
   btnSizeUp: document.getElementById('btn-size-up'),
+  btnSizeReset: document.getElementById('btn-size-reset'),
+  scaleLabel: document.getElementById('scale-label'),
   btnShowMarker: document.getElementById('btn-show-marker'),
   modalMarker: document.getElementById('modal-marker'),
   btnCloseMarker: document.getElementById('btn-close-marker'),
@@ -626,7 +631,8 @@ const els = {
 let mindarThree, renderer, scene, camera, anchor;
 let audioCtx, audioEnabled = true, bgAudioSource;
 let currentFacing = 'environment';
-let modelScale = 0.012;
+let modelScale = 0.43;
+let baseMarkerScale = 0.43;
 let basePosZ = 0.05;
 let preloadedGLTF = null;
 let preloadedPlanesGLTF = null;
@@ -1175,10 +1181,20 @@ function attachMonsterModel(group){
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
 
-    const maxDim = Math.max(size.x, size.y, size.z);
-    // MindAR marker width = 1.0; scale to fit ~85% of marker comfortably
-    modelScale = 0.85 / (maxDim || 2.3);
+    monsterModel.userData.box = box;
+    monsterModel.userData.size = size;
+    monsterModel.userData.center = center;
+
+    // MindAR marker width = 1.0 (from x=-0.5 to x=+0.5).
+    // Scale 3D character so its scale directly matches the marker:
+    const targetMarkerWidth = 1.0;
+    baseMarkerScale = targetMarkerWidth / (size.x || 2.323);
+    modelScale = baseMarkerScale;
     monsterModel.scale.set(modelScale, modelScale, modelScale);
+
+    if (els.scaleLabel) {
+      els.scaleLabel.textContent = `🎯 100% MARKER`;
+    }
 
     // Center on marker in X, Y and sit on the shirt surface protruding into +Z (towards camera)
     const posX = -center.x * modelScale;
@@ -2060,27 +2076,95 @@ if (els.btnPreview3D) {
   });
 }
 
+function applyModelScale(newScale, showToastMsg = false) {
+  modelScale = Math.max(0.05, Math.min(4.0, newScale));
+  if (monsterModel) {
+    monsterModel.scale.set(modelScale, modelScale, modelScale);
+    if (monsterModel.userData && monsterModel.userData.center && monsterModel.userData.box) {
+      const c = monsterModel.userData.center;
+      const b = monsterModel.userData.box;
+      const posX = -c.x * modelScale;
+      const posY = -c.y * modelScale;
+      basePosZ = (-b.min.z * modelScale) + 0.05;
+      monsterGarmentPos = new THREE.Vector3(posX, posY, basePosZ);
+      if (isTargetLocked) {
+        monsterModel.position.copy(monsterGarmentPos);
+      }
+    }
+  }
+  if (planesModel) {
+    planesModel.scale.set(modelScale, modelScale, modelScale);
+    if (monsterGarmentPos && isTargetLocked) {
+      planesModel.position.copy(monsterGarmentPos);
+    }
+  }
+  if (simMonster) {
+    simMonster.scale.set(modelScale, modelScale, modelScale);
+  }
+  const pct = baseMarkerScale > 0 ? Math.round((modelScale / baseMarkerScale) * 100) : Math.round(modelScale * 100);
+  if (els.scaleLabel) {
+    els.scaleLabel.textContent = `🎯 ${pct}% MARKER`;
+  }
+  if (showToastMsg) {
+    showToast(`Character Scale: ${pct}% (Marker Matched)`);
+  }
+}
+
 if (els.btnSizeDown) {
   els.btnSizeDown.addEventListener('click', () => {
-    modelScale = Math.max(0.002, modelScale * 0.8);
-    if (monsterModel) monsterModel.scale.set(modelScale, modelScale, modelScale);
-    if (planesModel) planesModel.scale.set(modelScale, modelScale, modelScale);
-    if (simMonster) simMonster.scale.multiplyScalar(0.8);
-    if (animMesh) animMesh.scale.multiplyScalar(0.8);
-    showToast('Model size reduced');
+    applyModelScale(modelScale * 0.85, true);
   });
 }
 
 if (els.btnSizeUp) {
   els.btnSizeUp.addEventListener('click', () => {
-    modelScale = Math.min(0.05, modelScale * 1.25);
-    if (monsterModel) monsterModel.scale.set(modelScale, modelScale, modelScale);
-    if (planesModel) planesModel.scale.set(modelScale, modelScale, modelScale);
-    if (simMonster) simMonster.scale.multiplyScalar(1.25);
-    if (animMesh) animMesh.scale.multiplyScalar(1.25);
-    showToast('Model size increased');
+    applyModelScale(modelScale * 1.15, true);
   });
 }
+
+if (els.btnSizeReset) {
+  els.btnSizeReset.addEventListener('click', () => {
+    // Cycle between Marker Width Match (100%), Marker Height Match (~150%), and 1:1 Scale
+    const pct = baseMarkerScale > 0 ? Math.round((modelScale / baseMarkerScale) * 100) : 100;
+    if (pct < 110) {
+      applyModelScale(baseMarkerScale * 1.45, true);
+    } else if (pct < 160) {
+      applyModelScale(1.0, true);
+    } else {
+      applyModelScale(baseMarkerScale, true);
+    }
+  });
+}
+
+// Mouse wheel to zoom/scale 3D character in AR view
+if (els.arContainer) {
+  els.arContainer.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.08 : 0.92;
+    applyModelScale(modelScale * factor, true);
+  }, { passive: false });
+}
+
+// Touch pinch to zoom on mobile
+let initialPinchDist = 0;
+let initialPinchScale = 1.0;
+window.addEventListener('touchstart', (e) => {
+  if (e.touches && e.touches.length === 2) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    initialPinchDist = Math.hypot(dx, dy);
+    initialPinchScale = modelScale;
+  }
+}, { passive: true });
+window.addEventListener('touchmove', (e) => {
+  if (e.touches && e.touches.length === 2 && initialPinchDist > 10) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    const currentDist = Math.hypot(dx, dy);
+    const newScale = initialPinchScale * (currentDist / initialPinchDist);
+    applyModelScale(newScale, false);
+  }
+}, { passive: true });
 
 if (els.btnShowMarker) {
   els.btnShowMarker.addEventListener('click', () => {
