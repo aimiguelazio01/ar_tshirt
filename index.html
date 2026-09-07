@@ -993,6 +993,10 @@ async function initAR(){
 
     await mindarThree.start();
 
+    if (!isHandTrackerReady) {
+      initHandTracking();
+    }
+
     currentFacing = mindarThree.shouldFaceUser ? 'user' : 'environment';
     els.lensLabel.textContent = currentFacing === 'environment' ? 'MAIN LENS' : 'FRONT LENS';
     els.statusText.textContent = currentFacing === 'environment' ? 'MAIN LENS ACTIVE' : 'FRONT LENS ACTIVE';
@@ -1086,13 +1090,14 @@ function setLockState(locked){
         planesModel.position.copy(monsterGarmentPos);
       }
       planesModel.rotation.set(0, 0, 0);
-      planesModel.visible = true;
+      planesModel.visible = !arePlanesDisappeared;
     } else {
       if (previewRoot) {
         previewRoot.add(planesModel);
       }
       planesModel.position.set(0, 0, 0);
       planesModel.rotation.set(arRotX, arRotY, 0);
+      planesModel.visible = !arePlanesDisappeared;
     }
   }
 
@@ -1232,6 +1237,15 @@ function attachMonsterModel(group){
       }
     }
 
+    // Sync planesModel position & scale if it preloaded earlier
+    if (planesModel) {
+      planesModel.scale.set(modelScale, modelScale, modelScale);
+      if (isTargetLocked) {
+        planesModel.position.copy(monsterGarmentPos);
+        planesModel.rotation.set(0, 0, 0);
+      }
+    }
+
     // Locate C_head_01 and c_neck bones for realistic head and neck tracking
     headBone = monsterModel.getObjectByName('C_head_01');
     neckBone = monsterModel.getObjectByName('c_neck');
@@ -1289,25 +1303,58 @@ function attachPlanesModel(group){
     interactivePlanes = [];
     console.log('[Planes] planes.glb loaded');
 
+    // 4 vibrant holographic palettes with glowing emissive illumination
+    const planePalettes = [
+      { color: 0x00f0ff, emissive: 0x005577 }, // Cyan Hologram
+      { color: 0xffb700, emissive: 0x774400 }, // Neon Amber
+      { color: 0xb038ff, emissive: 0x550088 }, // Cyber Purple
+      { color: 0x00ff88, emissive: 0x006633 }, // Matrix Emerald
+    ];
+
+    let meshIdx = 0;
     planesModel.traverse((child) => {
       if (child.isMesh) {
         console.log('[Planes] Mesh:', child.name);
         child.castShadow = false;
         child.receiveShadow = false;
-        // Preserve Plane Materials: Clone each interactive plane's material ONCE
-        child.material = child.material ? child.material.clone() : new THREE.MeshStandardMaterial({ color: 0x3388ff });
-        child.material.side = THREE.DoubleSide;
-        child.material.transparent = true;
-        child.material.opacity = currentPlaneOpacity;
+
+        // Normalize Houdini Z depth:
+        // In Houdini, planes were authored at Z = 2.02 to 3.03 (behind the camera in AR).
+        // The monster chest is at Z = 0.48.
+        // Bring planes forward to sit in a floating layer in front of the chest: Z = 0.58 to 0.80.
+        const posAttr = child.geometry.attributes.position;
+        if (posAttr && !child.userData.zNormalized) {
+          for (let v = 0; v < posAttr.count; v++) {
+            const origZ = posAttr.getZ(v);
+            const newZ = 0.58 + (origZ - 2.02) * 0.22;
+            posAttr.setZ(v, newZ);
+          }
+          posAttr.needsUpdate = true;
+          child.geometry.computeBoundingBox();
+          child.geometry.computeBoundingSphere();
+          child.userData.zNormalized = true;
+        }
+
+        const pal = planePalettes[meshIdx % planePalettes.length];
+        meshIdx++;
+
+        child.material = new THREE.MeshStandardMaterial({
+          color: pal.color,
+          emissive: pal.emissive,
+          emissiveIntensity: 0.7,
+          roughness: 0.15,
+          metalness: 0.2,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: currentPlaneOpacity,
+          depthWrite: false
+        });
         child.material.needsUpdate = true;
-        // Store original color for restoring after touch
         child.userData.originalColor = child.material.color.clone();
         interactivePlanes.push(child);
       }
     });
 
-    // In Houdini, planes.glb was authored in the exact coordinate frame of monster.glb:
-    // Scale and position planesModel to match monsterModel on the garment
     if (modelScale) {
       planesModel.scale.set(modelScale, modelScale, modelScale);
     }
@@ -1353,117 +1400,124 @@ let handLandmarker = null;
 let isHandTrackerReady = false;
 let hasHandDetected = false;
 let lastHandInferenceTime = 0;
-const HAND_INFERENCE_INTERVAL_MS = 40; // ~25 fps throttle for smooth mobile performance
+const HAND_INFERENCE_INTERVAL_MS = 35; // Responsive inference (~28 fps)
 
 async function initHandTracking() {
   if (handLandmarker) return;
+  if (els.gestureText) {
+    els.gestureText.textContent = '⏳ AI LOADING...';
+  }
+
   let waitCount = 0;
-  while ((!window.FilesetResolver || !window.HandLandmarker) && waitCount < 80) {
+  while ((!window.FilesetResolver || !window.HandLandmarker) && waitCount < 100) {
     await new Promise(r => setTimeout(r, 50));
     waitCount++;
   }
   if (!window.FilesetResolver || !window.HandLandmarker) {
     console.warn('[HandTracking] MediaPipe tasks-vision libraries not ready');
+    if (els.gestureText) els.gestureText.textContent = '⚠️ MP LOAD FAIL';
     return;
   }
 
+  const modelCandidates = [
+    "assets/models/hand_landmarker.task",
+    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+  ];
+
+  let vision = null;
   try {
-    const vision = await window.FilesetResolver.forVisionTasks(
+    vision = await window.FilesetResolver.forVisionTasks(
       "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
     );
-    handLandmarker = await window.HandLandmarker.createFromOptions(vision, {
-      baseOptions: {
-        modelAssetPath: "assets/models/hand_landmarker.task",
-        delegate: "GPU"
-      },
-      runningMode: "VIDEO",
-      numHands: 2
-    });
-    isHandTrackerReady = true;
-    console.log('[HandTracking] Initialized with 2 hands');
-  } catch (err) {
-    console.warn('[HandTracking] GPU delegate failed, trying CPU:', err);
+  } catch (vErr) {
+    console.warn('[HandTracking] FilesetResolver error:', vErr);
+  }
+
+  if (!vision) {
+    if (els.gestureText) els.gestureText.textContent = '⚠️ WASM ERROR';
+    return;
+  }
+
+  // Robust multi-tier fallback: GPU local -> CPU local -> GPU CDN -> CPU CDN
+  const attempts = [
+    { model: modelCandidates[0], delegate: "GPU" },
+    { model: modelCandidates[0], delegate: "CPU" },
+    { model: modelCandidates[1], delegate: "GPU" },
+    { model: modelCandidates[1], delegate: "CPU" },
+  ];
+
+  for (const config of attempts) {
     try {
-      const vision = await window.FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
-      );
+      console.log(`[HandTracking] Attempting ${config.delegate} with ${config.model}...`);
       handLandmarker = await window.HandLandmarker.createFromOptions(vision, {
         baseOptions: {
-          modelAssetPath: "assets/models/hand_landmarker.task",
-          delegate: "CPU"
+          modelAssetPath: config.model,
+          delegate: config.delegate
         },
         runningMode: "VIDEO",
         numHands: 2
       });
       isHandTrackerReady = true;
-      console.log('[HandTracking] Initialized with 2 hands (CPU)');
-    } catch (err2) {
-      console.error('[HandTracking] Failed to initialize HandLandmarker:', err2);
+      console.log(`[HandTracking] Successfully initialized with ${config.delegate} (${config.model})`);
+      updateGestureHUD(arePlanesDisappeared);
+      return;
+    } catch (err) {
+      console.warn(`[HandTracking] ${config.delegate} failed for ${config.model}:`, err);
     }
+  }
+
+  console.error('[HandTracking] All HandLandmarker initialization attempts failed');
+  if (els.gestureText) {
+    els.gestureText.textContent = '⚠️ MP FAILED (TAP)';
   }
 }
 
 // Coordinate mapping function:
 // Converts MediaPipe landmark (x, y in [0, 1]) to Three.js NDC (-1 to +1)
-// accounting for object-fit: cover, aspect ratios, and lens mirroring.
 function handToNDC(landmark, video, container) {
   const Cw = (container && container.clientWidth) ? container.clientWidth : window.innerWidth;
   const Ch = (container && container.clientHeight) ? container.clientHeight : window.innerHeight;
   const Vw = (video && video.videoWidth) ? video.videoWidth : 1280;
   const Vh = (video && video.videoHeight) ? video.videoHeight : 720;
 
-  const Ca = Cw / Ch;
-  const Va = Vw / Vh;
-
   const isMirrored = (currentFacing === 'user');
   const vx = isMirrored ? (1 - landmark.x) : landmark.x;
   const vy = landmark.y;
 
-  let screenX = 0;
-  let screenY = 0;
+  const scale = Math.max(Cw / Vw, Ch / Vh);
+  const renW = Vw * scale;
+  const renH = Vh * scale;
+  const offX = (Cw - renW) / 2;
+  const offY = (Ch - renH) / 2;
 
-  if (Va > Ca) {
-    // Video is wider than screen: cropped horizontally
-    const scaledWidth = Ch * Va;
-    const offsetX = (scaledWidth - Cw) / 2;
-    screenX = vx * scaledWidth - offsetX;
-    screenY = vy * Ch;
-  } else {
-    // Video is taller than screen: cropped vertically
-    const scaledHeight = Cw / Va;
-    const offsetY = (scaledHeight - Ch) / 2;
-    screenX = vx * Cw;
-    screenY = vy * scaledHeight - offsetY;
-  }
+  const screenX = vx * renW + offX;
+  const screenY = vy * renH + offY;
 
-  // Normalized Device Coordinates for Three.js camera Raycaster
-  const ndcX = (screenX / Cw) * 2 - 1;
+  const ndcX =  (screenX / Cw) * 2 - 1;
   const ndcY = -(screenY / Ch) * 2 + 1;
 
   return { ndcX, ndcY, screenX, screenY };
 }
 
-// Raycaster and stabilization variables
-const raycaster = new THREE.Raycaster();
-const pointer = new THREE.Vector2();
 let activePlane = null;
-let smoothNdcX = 0;
-let smoothNdcY = 0;
-let hasPreviousFinger = false;
-let hitConfirmationCount = 0;
 let pendingHitPlane = null;
-const HIT_THRESHOLD = 2; // Require 2 consecutive frames to switch plane
+let hitConfirmationCount = 0;
+const HIT_THRESHOLD = 2;
 let exitToleranceCounter = 0;
-const EXIT_TOLERANCE_FRAMES = 3; // Short exit tolerance to prevent flicker
+const EXIT_TOLERANCE_FRAMES = 3;
+let smoothNdcX = 0, smoothNdcY = 0;
+let hasPreviousFinger = false;
+const pointer = new THREE.Vector2();
+const raycaster = new THREE.Raycaster();
 
-function setActivePlane(mesh) {
-  if (activePlane === mesh) return;
-  if (activePlane) {
-    clearActivePlane();
-  }
-  activePlane = mesh;
-  activePlane.material.color.set("#00ff66");
-  console.log("[Interaction] Plane hit:", activePlane.name || "Plane");
+function setActivePlane(planeMesh) {
+  if (activePlane === planeMesh) return;
+  resetAllPlanes();
+  activePlane = planeMesh;
+  activePlane.material.color.setHex(0xffffff); // Highlight white on touch
+  playPopSound();
+  showToast(`Plane: ${planeMesh.name || 'Unlocked'}`);
+  console.log('[Planes] Touched plane:', planeMesh.name);
 }
 
 function clearActivePlane() {
@@ -1498,27 +1552,33 @@ function onHandLost() {
 function isHandRaised(landmarks) {
   if (!landmarks || landmarks.length < 21) return false;
   const wrist = landmarks[0];
-  const thumbTip = landmarks[4];
-  const indexTip = landmarks[8];
-  const middleTip = landmarks[12];
-  const ringTip = landmarks[16];
-  const pinkyTip = landmarks[20];
+  let minY = 1.0;
+  let avgY = 0;
+  for (let i = 0; i < landmarks.length; i++) {
+    const y = landmarks[i].y;
+    avgY += y;
+    if (y < minY) minY = y;
+  }
+  avgY /= landmarks.length;
 
-  // Highest point of the hand in normalized video coordinates (0.0 is top, 1.0 is bottom)
-  const minTipY = Math.min(thumbTip.y, indexTip.y, middleTip.y, ringTip.y, pinkyTip.y);
-
-  // Hand is considered raised if:
-  // 1. Hand is in upper/mid region of frame (above waist/lower torso level, y < 0.70)
-  // 2. AND hand is not pointing downwards (fingers are at or above wrist level)
-  // 3. OR the hand is raised high (wrist.y < 0.52) regardless of wrist tilt
-  const isHighInFrame = wrist.y < 0.52 || minTipY < 0.60;
-  const isPointingUpOrLevel = minTipY < (wrist.y + 0.06);
-
-  return isHighInFrame || (wrist.y < 0.78 && isPointingUpOrLevel);
+  // When pointing mobile camera at the back of a T-shirt:
+  // Lowered hands rest at hips/thighs/sides (Y > 0.75 or out of frame).
+  // A hand is raised if fingertips or hand body reach the mid/upper screen:
+  // 1. Highest point of hand in upper 70% of frame (minY < 0.70)
+  // 2. OR average hand center above lower torso (avgY < 0.72)
+  // 3. OR wrist is raised (wrist.y < 0.68)
+  return (minY < 0.70) || (avgY < 0.72) || (wrist.y < 0.68);
 }
 
 function updateGestureHUD(isRaised) {
   if (!els.gestureChip || !els.gestureText) return;
+  if (!isHandTrackerReady) {
+    els.gestureText.textContent = '⏳ AI LOADING...';
+    els.gestureChip.style.background = '';
+    els.gestureChip.style.color = '';
+    els.gestureChip.style.fontWeight = 'normal';
+    return;
+  }
   if (isRaised) {
     els.gestureText.textContent = '✋ HAND RAISED';
     els.gestureChip.style.background = 'var(--amber)';
@@ -1533,25 +1593,22 @@ function updateGestureHUD(isRaised) {
 }
 
 function updateHandTracking(video) {
-  if (!handLandmarker || !video || video.paused || video.readyState < 2) {
-    if (hasHandDetected) {
-      hasHandDetected = false;
-      console.log('[HandTracking] Hand lost');
-      onHandLost();
-    }
-    return;
-  }
+  if (!handLandmarker || !video) return;
+  if (video.paused || video.ended || video.readyState < 2) return;
+  if (!video.videoWidth || !video.videoHeight) return;
 
   const now = performance.now();
-  if (now - lastHandInferenceTime < HAND_INFERENCE_INTERVAL_MS) {
+  const safeTimestamp = Math.max(Math.round(now), Math.round(lastHandInferenceTime) + 1);
+  if (safeTimestamp - lastHandInferenceTime < HAND_INFERENCE_INTERVAL_MS) {
     return;
   }
-  lastHandInferenceTime = now;
+  lastHandInferenceTime = safeTimestamp;
 
   let results;
   try {
-    results = handLandmarker.detectForVideo(video, now);
+    results = handLandmarker.detectForVideo(video, safeTimestamp);
   } catch(e) {
+    console.warn('[HandTracking] detectForVideo exception:', e);
     return;
   }
 
@@ -1560,7 +1617,7 @@ function updateHandTracking(video) {
   if (results && results.landmarks && results.landmarks.length > 0) {
     if (!hasHandDetected) {
       hasHandDetected = true;
-      console.log('[HandTracking] Hand detected count:', results.landmarks.length);
+      console.log('[HandTracking] Hands detected count:', results.landmarks.length);
     }
 
     // Check all detected hands: if ANY hand is raised, trigger gesture
@@ -1572,12 +1629,11 @@ function updateHandTracking(video) {
     }
 
     const landmarks = results.landmarks[0];
-    const indexTip = landmarks[8]; // MediaPipe Landmark 8: Index fingertip
+    const indexTip = landmarks[8];
 
     if (indexTip) {
       const { ndcX, ndcY, screenX, screenY } = handToNDC(indexTip, video, els.arContainer);
 
-      // Debug cursor display over real index fingertip
       const cursor = document.getElementById('hand-debug-cursor');
       if (SHOW_HAND_DEBUG && cursor) {
         cursor.style.display = 'block';
@@ -1585,7 +1641,6 @@ function updateHandTracking(video) {
         cursor.style.top = screenY + 'px';
       }
 
-      // Smooth fingertip coordinates with lerp
       if (!hasPreviousFinger) {
         smoothNdcX = ndcX;
         smoothNdcY = ndcY;
@@ -1598,11 +1653,8 @@ function updateHandTracking(video) {
 
       pointer.set(smoothNdcX, smoothNdcY);
 
-      // Raycast against the four interactive plane meshes only when planes are visible
       if (!arePlanesDisappeared && isPlaneInteractionActive && camera && interactivePlanes.length > 0) {
-        if (planesModel) {
-          planesModel.updateMatrixWorld(true);
-        }
+        if (planesModel) planesModel.updateMatrixWorld(true);
         raycaster.setFromCamera(pointer, camera);
         const hits = raycaster.intersectObjects(interactivePlanes, false);
 
@@ -1612,18 +1664,16 @@ function updateHandTracking(video) {
           if (hitMesh === activePlane) {
             pendingHitPlane = null;
             hitConfirmationCount = 0;
-          } else {
-            if (hitMesh === pendingHitPlane) {
-              hitConfirmationCount++;
-              if (hitConfirmationCount >= HIT_THRESHOLD) {
-                setActivePlane(hitMesh);
-                pendingHitPlane = null;
-                hitConfirmationCount = 0;
-              }
-            } else {
-              pendingHitPlane = hitMesh;
-              hitConfirmationCount = 1;
+          } else if (hitMesh === pendingHitPlane) {
+            hitConfirmationCount++;
+            if (hitConfirmationCount >= HIT_THRESHOLD) {
+              setActivePlane(hitMesh);
+              pendingHitPlane = null;
+              hitConfirmationCount = 0;
             }
+          } else {
+            pendingHitPlane = hitMesh;
+            hitConfirmationCount = 1;
           }
         } else {
           if (exitToleranceCounter < EXIT_TOLERANCE_FRAMES) {
@@ -1639,7 +1689,6 @@ function updateHandTracking(video) {
       }
     }
   } else {
-    // No hand detected in frame -> hands are lowered
     if (hasHandDetected) {
       hasHandDetected = false;
       console.log('[HandTracking] Hand lost');
@@ -1663,7 +1712,7 @@ function updateHandTracking(video) {
   } else {
     handLoweredDebounceCount++;
     handRaisedDebounceCount = 0;
-    if (handLoweredDebounceCount >= GESTURE_TRIGGER_FRAMES + 1) {
+    if (handLoweredDebounceCount >= GESTURE_TRIGGER_FRAMES) {
       if (arePlanesDisappeared) {
         arePlanesDisappeared = false;
         targetPlaneOpacity = 0.88;
@@ -1963,14 +2012,47 @@ function startSimulatorMode() {
       if (!pGltf) return;
       planesModel = pGltf.scene.clone(true);
       interactivePlanes = [];
+
+      const planePalettes = [
+        { color: 0x00f0ff, emissive: 0x005577 }, // Cyan Hologram
+        { color: 0xffb700, emissive: 0x774400 }, // Neon Amber
+        { color: 0xb038ff, emissive: 0x550088 }, // Cyber Purple
+        { color: 0x00ff88, emissive: 0x006633 }, // Matrix Emerald
+      ];
+
+      let meshIdx = 0;
       planesModel.traverse((child) => {
         if (child.isMesh) {
           child.castShadow = false;
           child.receiveShadow = false;
-          child.material = child.material ? child.material.clone() : new THREE.MeshStandardMaterial({ color: 0x3388ff });
-          child.material.side = THREE.DoubleSide;
-          child.material.transparent = true;
-          child.material.opacity = currentPlaneOpacity;
+
+          const posAttr = child.geometry.attributes.position;
+          if (posAttr && !child.userData.zNormalized) {
+            for (let v = 0; v < posAttr.count; v++) {
+              const origZ = posAttr.getZ(v);
+              const newZ = 0.58 + (origZ - 2.02) * 0.22;
+              posAttr.setZ(v, newZ);
+            }
+            posAttr.needsUpdate = true;
+            child.geometry.computeBoundingBox();
+            child.geometry.computeBoundingSphere();
+            child.userData.zNormalized = true;
+          }
+
+          const pal = planePalettes[meshIdx % planePalettes.length];
+          meshIdx++;
+
+          child.material = new THREE.MeshStandardMaterial({
+            color: pal.color,
+            emissive: pal.emissive,
+            emissiveIntensity: 0.7,
+            roughness: 0.15,
+            metalness: 0.2,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: currentPlaneOpacity,
+            depthWrite: false
+          });
           child.userData.originalColor = child.material.color.clone();
           interactivePlanes.push(child);
         }
