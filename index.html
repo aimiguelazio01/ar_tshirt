@@ -347,8 +347,8 @@
         <div class="status-chip" id="btn-size-up" role="button" style="cursor:pointer;" title="Make 3D model larger">
           <span>➕ SIZE</span>
         </div>
-        <div class="status-chip" id="gesture-chip" role="button" style="cursor:pointer;" title="MediaPipe Pose: Raise elbows & wrists above shoulders to reveal planes">
-          <span id="gesture-text">👇 ARMS DOWN (PLANES OFF)</span>
+        <div class="status-chip" id="gesture-chip" role="button" style="cursor:pointer;" title="MediaPipe Pose: Raise arms (elbows & wrists above shoulders) to hide planes">
+          <span id="gesture-text">👇 ARMS DOWN (PLANES ON)</span>
         </div>
         <div class="status-chip" id="btn-show-marker" role="button" style="cursor:pointer;">
           <span>🖼️ MARKER</span>
@@ -647,12 +647,11 @@ let interactivePlanes = [];
 let isPlaneInteractionActive = false;
 
 // MediaPipe Pose Gesture State:
-// The planes ONLY appear when the MediaPipe elbows and wrists are above the shoulders.
-// Initially / when arms are lowered: planes are hidden (arePlanesDisappeared = true).
-// When elbows and wrists are above shoulders: planes appear (arePlanesDisappeared = false).
-let arePlanesDisappeared = true;
-let targetPlaneOpacity = 0.0;
-let currentPlaneOpacity = 0.0;
+// When arms are down: planes are visible (arePlanesDisappeared = false).
+// When arms are raised (elbows and wrists above shoulders): planes are invisible (arePlanesDisappeared = true).
+let arePlanesDisappeared = false;
+let targetPlaneOpacity = 0.88;
+let currentPlaneOpacity = 0.88;
 let handRaisedDebounceCount = 0;
 let handLoweredDebounceCount = 0;
 const GESTURE_TRIGGER_FRAMES = 2;
@@ -1576,7 +1575,7 @@ function areElbowsAndWristsAboveShoulders(landmarks) {
   return leftArmRaised || rightArmRaised;
 }
 
-function updateGestureHUD(isRevealed) {
+function updateGestureHUD(isArmsRaised) {
   if (!els.gestureChip || !els.gestureText) return;
   if (!isPoseTrackerReady) {
     els.gestureText.textContent = '⏳ POSE AI LOADING...';
@@ -1585,13 +1584,13 @@ function updateGestureHUD(isRevealed) {
     els.gestureChip.style.fontWeight = 'normal';
     return;
   }
-  if (isRevealed) {
-    els.gestureText.textContent = '💪 ARMS RAISED (PLANES ON)';
-    els.gestureChip.style.background = 'var(--cyan)';
+  if (isArmsRaised) {
+    els.gestureText.textContent = '✋ ARMS RAISED (PLANES OFF)';
+    els.gestureChip.style.background = 'var(--amber)';
     els.gestureChip.style.color = 'var(--void)';
     els.gestureChip.style.fontWeight = 'bold';
   } else {
-    els.gestureText.textContent = '👇 ARMS DOWN (PLANES OFF)';
+    els.gestureText.textContent = '👇 ARMS DOWN (PLANES ON)';
     els.gestureChip.style.background = '';
     els.gestureChip.style.color = '';
     els.gestureChip.style.fontWeight = 'normal';
@@ -1653,16 +1652,17 @@ function updatePoseTracking(video) {
     }
   }
 
-  // The planes ONLY appear when elbows and wrists are above the shoulders:
+  // When arms are raised -> planes become INVISIBLE.
+  // When arms are down -> planes become VISIBLE.
   if (isPoseSatisfied) {
     handRaisedDebounceCount++;
     handLoweredDebounceCount = 0;
     if (handRaisedDebounceCount >= GESTURE_TRIGGER_FRAMES) {
-      if (arePlanesDisappeared) {
-        arePlanesDisappeared = false;
-        targetPlaneOpacity = 0.88;
-        showToast('💪 Elbows & Wrists Above Shoulders — Planes Revealed ✨');
-        console.log('[PoseTracking] Elbows & wrists above shoulders -> revealing planes.glb');
+      if (!arePlanesDisappeared) {
+        arePlanesDisappeared = true;
+        targetPlaneOpacity = 0.0;
+        showToast('✋ Arms Raised — Planes Hidden');
+        console.log('[PoseTracking] Arms raised above shoulders -> hiding planes.glb');
         updateGestureHUD(true);
       }
     }
@@ -1670,11 +1670,11 @@ function updatePoseTracking(video) {
     handLoweredDebounceCount++;
     handRaisedDebounceCount = 0;
     if (handLoweredDebounceCount >= GESTURE_TRIGGER_FRAMES) {
-      if (!arePlanesDisappeared) {
-        arePlanesDisappeared = true;
-        targetPlaneOpacity = 0.0;
-        showToast('👇 Arms Lowered — Planes Hidden');
-        console.log('[PoseTracking] Arms lowered -> hiding planes.glb');
+      if (arePlanesDisappeared) {
+        arePlanesDisappeared = false;
+        targetPlaneOpacity = 0.88;
+        showToast('👇 Arms Down — Planes Visible ✨');
+        console.log('[PoseTracking] Arms down -> showing planes.glb');
         updateGestureHUD(false);
       }
     }
@@ -2384,8 +2384,8 @@ if (els.gestureChip) {
   els.gestureChip.addEventListener('click', () => {
     arePlanesDisappeared = !arePlanesDisappeared;
     targetPlaneOpacity = arePlanesDisappeared ? 0.0 : 0.88;
-    updateGestureHUD(!arePlanesDisappeared);
-    showToast(!arePlanesDisappeared ? '💪 Arms Raised — Planes Revealed ✨' : '👇 Arms Lowered — Planes Hidden');
+    updateGestureHUD(arePlanesDisappeared);
+    showToast(arePlanesDisappeared ? '✋ Arms Raised — Planes Hidden' : '👇 Arms Down — Planes Visible ✨');
   });
 }
 
@@ -2393,16 +2393,16 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'h' || e.key === 'H' || e.key === 'p' || e.key === 'P') {
     arePlanesDisappeared = !arePlanesDisappeared;
     targetPlaneOpacity = arePlanesDisappeared ? 0.0 : 0.88;
-    updateGestureHUD(!arePlanesDisappeared);
-    showToast(!arePlanesDisappeared ? '💪 Arms Raised — Planes Revealed ✨' : '👇 Arms Lowered — Planes Hidden');
+    updateGestureHUD(arePlanesDisappeared);
+    showToast(arePlanesDisappeared ? '✋ Arms Raised — Planes Hidden' : '👇 Arms Down — Planes Visible ✨');
   }
 });
 
-window.testPoseGesture = window.testHandGesture = function(revealPlanes) {
-  arePlanesDisappeared = !revealPlanes;
+window.testPoseGesture = window.testHandGesture = function(raiseArms) {
+  arePlanesDisappeared = !!raiseArms;
   targetPlaneOpacity = arePlanesDisappeared ? 0.0 : 0.88;
-  updateGestureHUD(!arePlanesDisappeared);
-  showToast(!arePlanesDisappeared ? '💪 Arms Raised — Planes Revealed ✨' : '👇 Arms Lowered — Planes Hidden');
+  updateGestureHUD(arePlanesDisappeared);
+  showToast(arePlanesDisappeared ? '✋ Arms Raised — Planes Hidden' : '👇 Arms Down — Planes Visible ✨');
 };
 
 // ---------------------------------------------------------------
