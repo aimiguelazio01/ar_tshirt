@@ -347,6 +347,9 @@
         <div class="status-chip" id="btn-size-up" role="button" style="cursor:pointer;" title="Make 3D model larger">
           <span>➕ SIZE</span>
         </div>
+        <div class="status-chip" id="gesture-chip" role="button" style="cursor:pointer;" title="MediaPipe Gesture: Raise hand to hide planes">
+          <span id="gesture-text">✋ HAND GESTURE</span>
+        </div>
         <div class="status-chip" id="btn-show-marker" role="button" style="cursor:pointer;">
           <span>🖼️ MARKER</span>
         </div>
@@ -622,6 +625,8 @@ const els = {
   btnSizeUp: document.getElementById('btn-size-up'),
   btnSizeReset: document.getElementById('btn-size-reset'),
   scaleLabel: document.getElementById('scale-label'),
+  gestureChip: document.getElementById('gesture-chip'),
+  gestureText: document.getElementById('gesture-text'),
   btnShowMarker: document.getElementById('btn-show-marker'),
   modalMarker: document.getElementById('modal-marker'),
   btnCloseMarker: document.getElementById('btn-close-marker'),
@@ -639,6 +644,16 @@ let preloadedPlanesGLTF = null;
 let planesModel = null;
 let interactivePlanes = [];
 let isPlaneInteractionActive = false;
+
+// MediaPipe Hand Gesture State:
+// When one of the user's hands is raised -> planes.glb disappears
+// When hands are lowered -> planes.glb reappears (initially visible)
+let arePlanesDisappeared = false;
+let targetPlaneOpacity = 0.88;
+let currentPlaneOpacity = 0.88;
+let handRaisedDebounceCount = 0;
+let handLoweredDebounceCount = 0;
+const GESTURE_TRIGGER_FRAMES = 2;
 let headBone = null, headRestRot = null, neckBone = null, neckRestRot = null;
 let simHeadBone = null, simHeadRestRot = null;
 let detectedCameras = [];
@@ -1283,7 +1298,7 @@ function attachPlanesModel(group){
         child.material = child.material ? child.material.clone() : new THREE.MeshStandardMaterial({ color: 0x3388ff });
         child.material.side = THREE.DoubleSide;
         child.material.transparent = true;
-        child.material.opacity = 0.88;
+        child.material.opacity = currentPlaneOpacity;
         child.material.needsUpdate = true;
         // Store original color for restoring after touch
         child.userData.originalColor = child.material.color.clone();
@@ -1300,10 +1315,12 @@ function attachPlanesModel(group){
       planesModel.position.copy(monsterGarmentPos);
     }
 
+    planesModel.visible = !arePlanesDisappeared;
+
     if (isTargetLocked) {
       planesModel.rotation.set(0, 0, 0);
       group.add(planesModel);
-      isPlaneInteractionActive = true;
+      isPlaneInteractionActive = !arePlanesDisappeared;
     } else {
       planesModel.position.set(0, 0, 0);
       planesModel.rotation.set(arRotX, arRotY, 0);
@@ -1360,10 +1377,10 @@ async function initHandTracking() {
         delegate: "GPU"
       },
       runningMode: "VIDEO",
-      numHands: 1
+      numHands: 2
     });
     isHandTrackerReady = true;
-    console.log('[HandTracking] Initialized');
+    console.log('[HandTracking] Initialized with 2 hands');
   } catch (err) {
     console.warn('[HandTracking] GPU delegate failed, trying CPU:', err);
     try {
@@ -1376,10 +1393,10 @@ async function initHandTracking() {
           delegate: "CPU"
         },
         runningMode: "VIDEO",
-        numHands: 1
+        numHands: 2
       });
       isHandTrackerReady = true;
-      console.log('[HandTracking] Initialized');
+      console.log('[HandTracking] Initialized with 2 hands (CPU)');
     } catch (err2) {
       console.error('[HandTracking] Failed to initialize HandLandmarker:', err2);
     }
@@ -1478,6 +1495,43 @@ function onHandLost() {
   if (cursor) cursor.style.display = 'none';
 }
 
+function isHandRaised(landmarks) {
+  if (!landmarks || landmarks.length < 21) return false;
+  const wrist = landmarks[0];
+  const thumbTip = landmarks[4];
+  const indexTip = landmarks[8];
+  const middleTip = landmarks[12];
+  const ringTip = landmarks[16];
+  const pinkyTip = landmarks[20];
+
+  // Highest point of the hand in normalized video coordinates (0.0 is top, 1.0 is bottom)
+  const minTipY = Math.min(thumbTip.y, indexTip.y, middleTip.y, ringTip.y, pinkyTip.y);
+
+  // Hand is considered raised if:
+  // 1. Hand is in upper/mid region of frame (above waist/lower torso level, y < 0.70)
+  // 2. AND hand is not pointing downwards (fingers are at or above wrist level)
+  // 3. OR the hand is raised high (wrist.y < 0.52) regardless of wrist tilt
+  const isHighInFrame = wrist.y < 0.52 || minTipY < 0.60;
+  const isPointingUpOrLevel = minTipY < (wrist.y + 0.06);
+
+  return isHighInFrame || (wrist.y < 0.78 && isPointingUpOrLevel);
+}
+
+function updateGestureHUD(isRaised) {
+  if (!els.gestureChip || !els.gestureText) return;
+  if (isRaised) {
+    els.gestureText.textContent = '✋ HAND RAISED';
+    els.gestureChip.style.background = 'var(--amber)';
+    els.gestureChip.style.color = 'var(--void)';
+    els.gestureChip.style.fontWeight = 'bold';
+  } else {
+    els.gestureText.textContent = '👇 HANDS LOWERED';
+    els.gestureChip.style.background = '';
+    els.gestureChip.style.color = '';
+    els.gestureChip.style.fontWeight = 'normal';
+  }
+}
+
 function updateHandTracking(video) {
   if (!handLandmarker || !video || video.paused || video.readyState < 2) {
     if (hasHandDetected) {
@@ -1501,10 +1555,20 @@ function updateHandTracking(video) {
     return;
   }
 
+  let isAnyHandRaised = false;
+
   if (results && results.landmarks && results.landmarks.length > 0) {
     if (!hasHandDetected) {
       hasHandDetected = true;
-      console.log('[HandTracking] Hand detected');
+      console.log('[HandTracking] Hand detected count:', results.landmarks.length);
+    }
+
+    // Check all detected hands: if ANY hand is raised, trigger gesture
+    for (let h = 0; h < results.landmarks.length; h++) {
+      if (isHandRaised(results.landmarks[h])) {
+        isAnyHandRaised = true;
+        break;
+      }
     }
 
     const landmarks = results.landmarks[0];
@@ -1534,8 +1598,8 @@ function updateHandTracking(video) {
 
       pointer.set(smoothNdcX, smoothNdcY);
 
-      // Raycast against the four interactive plane meshes
-      if (isPlaneInteractionActive && camera && interactivePlanes.length > 0) {
+      // Raycast against the four interactive plane meshes only when planes are visible
+      if (!arePlanesDisappeared && isPlaneInteractionActive && camera && interactivePlanes.length > 0) {
         if (planesModel) {
           planesModel.updateMatrixWorld(true);
         }
@@ -1562,7 +1626,6 @@ function updateHandTracking(video) {
             }
           }
         } else {
-          // No plane hit this frame
           if (exitToleranceCounter < EXIT_TOLERANCE_FRAMES) {
             exitToleranceCounter++;
           } else {
@@ -1576,11 +1639,38 @@ function updateHandTracking(video) {
       }
     }
   } else {
-    // No hand detected
+    // No hand detected in frame -> hands are lowered
     if (hasHandDetected) {
       hasHandDetected = false;
       console.log('[HandTracking] Hand lost');
       onHandLost();
+    }
+  }
+
+  // MediaPipe Gesture: Raise hand -> planes.glb disappears; Lower hands -> planes.glb reappears
+  if (isAnyHandRaised) {
+    handRaisedDebounceCount++;
+    handLoweredDebounceCount = 0;
+    if (handRaisedDebounceCount >= GESTURE_TRIGGER_FRAMES) {
+      if (!arePlanesDisappeared) {
+        arePlanesDisappeared = true;
+        targetPlaneOpacity = 0.0;
+        showToast('✋ Hand Raised — Planes Hidden');
+        console.log('[MediaPipe] Hand raised detected -> hiding planes.glb');
+        updateGestureHUD(true);
+      }
+    }
+  } else {
+    handLoweredDebounceCount++;
+    handRaisedDebounceCount = 0;
+    if (handLoweredDebounceCount >= GESTURE_TRIGGER_FRAMES + 1) {
+      if (arePlanesDisappeared) {
+        arePlanesDisappeared = false;
+        targetPlaneOpacity = 0.88;
+        showToast('👇 Hand Lowered — Planes Reappeared');
+        console.log('[MediaPipe] Hand lowered -> showing planes.glb');
+        updateGestureHUD(false);
+      }
     }
   }
 }
@@ -1727,6 +1817,27 @@ function renderLoop(){
     updateHandTracking(video);
   }
 
+  // MediaPipe Hand Gesture: Smooth visibility and opacity fade for planes.glb
+  if (planesModel) {
+    const FADE_RATE = 0.20;
+    currentPlaneOpacity += (targetPlaneOpacity - currentPlaneOpacity) * FADE_RATE;
+
+    if (currentPlaneOpacity < 0.03) {
+      planesModel.visible = false;
+      isPlaneInteractionActive = false;
+    } else {
+      planesModel.visible = true;
+      isPlaneInteractionActive = isTargetLocked || forcePreview;
+      for (let i = 0; i < interactivePlanes.length; i++) {
+        const pMat = interactivePlanes[i].material;
+        if (pMat) {
+          pMat.opacity = currentPlaneOpacity;
+          pMat.transparent = true;
+        }
+      }
+    }
+  }
+
   renderer.render(scene, camera);
 }
 
@@ -1846,6 +1957,40 @@ function startSimulatorMode() {
       gltf.animations.forEach(clip => simMixer.clipAction(clip).play());
     }
     modelGroup.add(simMonster);
+
+    // Setup interactive planes in simulator
+    function setupSimPlanes(pGltf) {
+      if (!pGltf) return;
+      planesModel = pGltf.scene.clone(true);
+      interactivePlanes = [];
+      planesModel.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = false;
+          child.receiveShadow = false;
+          child.material = child.material ? child.material.clone() : new THREE.MeshStandardMaterial({ color: 0x3388ff });
+          child.material.side = THREE.DoubleSide;
+          child.material.transparent = true;
+          child.material.opacity = currentPlaneOpacity;
+          child.userData.originalColor = child.material.color.clone();
+          interactivePlanes.push(child);
+        }
+      });
+      planesModel.scale.set(simScale, simScale, simScale);
+      planesModel.position.set(-center.x * simScale, -center.y * simScale, -center.z * simScale);
+      planesModel.visible = !arePlanesDisappeared;
+      modelGroup.add(planesModel);
+    }
+
+    if (preloadedPlanesGLTF) {
+      setupSimPlanes(preloadedPlanesGLTF);
+    } else if (window.GLTFLoader) {
+      const pLoader = new window.GLTFLoader();
+      pLoader.load(CONFIG.planesUrl, (pGltf) => {
+        preloadedPlanesGLTF = pGltf;
+        setupSimPlanes(pGltf);
+      });
+    }
+
     showToast('3D Monster Active — Drag to rotate!');
   }
 
@@ -1932,6 +2077,24 @@ function startSimulatorMode() {
       pos.setY(i, y);
     }
     pos.needsUpdate = true;
+
+    // MediaPipe Hand Gesture: Smooth visibility and opacity fade for planes.glb
+    if (planesModel) {
+      const FADE_RATE = 0.20;
+      currentPlaneOpacity += (targetPlaneOpacity - currentPlaneOpacity) * FADE_RATE;
+      if (currentPlaneOpacity < 0.03) {
+        planesModel.visible = false;
+      } else {
+        planesModel.visible = true;
+        for (let i = 0; i < interactivePlanes.length; i++) {
+          const pMat = interactivePlanes[i].material;
+          if (pMat) {
+            pMat.opacity = currentPlaneOpacity;
+            pMat.transparent = true;
+          }
+        }
+      }
+    }
 
     simRenderer.render(simScene, simCamera);
   };
@@ -2177,6 +2340,31 @@ if (els.btnCloseMarker) {
     els.modalMarker.classList.add('hidden');
   });
 }
+
+if (els.gestureChip) {
+  els.gestureChip.addEventListener('click', () => {
+    arePlanesDisappeared = !arePlanesDisappeared;
+    targetPlaneOpacity = arePlanesDisappeared ? 0.0 : 0.88;
+    updateGestureHUD(arePlanesDisappeared);
+    showToast(arePlanesDisappeared ? '✋ Hand Raised — Planes Hidden' : '👇 Hand Lowered — Planes Visible');
+  });
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'h' || e.key === 'H') {
+    arePlanesDisappeared = !arePlanesDisappeared;
+    targetPlaneOpacity = arePlanesDisappeared ? 0.0 : 0.88;
+    updateGestureHUD(arePlanesDisappeared);
+    showToast(arePlanesDisappeared ? '✋ Hand Raised — Planes Hidden' : '👇 Hand Lowered — Planes Visible');
+  }
+});
+
+window.testHandGesture = function(raiseHand) {
+  arePlanesDisappeared = !!raiseHand;
+  targetPlaneOpacity = arePlanesDisappeared ? 0.0 : 0.88;
+  updateGestureHUD(arePlanesDisappeared);
+  showToast(arePlanesDisappeared ? '✋ Hand Raised — Planes Hidden' : '👇 Hand Lowered — Planes Visible');
+};
 
 // ---------------------------------------------------------------
 // Boot
