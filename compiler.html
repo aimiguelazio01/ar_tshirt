@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MindAR Target Compiler for t1.jpg</title>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.module.js"
+    }
+  }
+  </script>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js"></script>
+  <style>
+    body { font-family: monospace; background: #000; color: #0f0; padding: 2rem; }
+    #status { font-size: 1.2rem; margin-top: 1rem; color: #ffb020; }
+  </style>
+</head>
+<body>
+  <h2>Compiling assets/t1.jpg to assets/t1.mind...</h2>
+  <div id="status">Waiting for MindAR Compiler...</div>
+
+  <script type="module">
+    async function run() {
+      const status = document.getElementById('status');
+      while (!window.MINDAR || !window.MINDAR.IMAGE || !window.MINDAR.IMAGE.Compiler) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+      status.textContent = 'Loading image assets/t1.jpg...';
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = 'assets/t1.jpg';
+      await new Promise((res, rej) => {
+        img.onload = res;
+        img.onerror = () => rej(new Error('Could not load assets/t1.jpg'));
+      });
+
+      status.textContent = 'Extracting feature points (compiling)...';
+      const compiler = new window.MINDAR.IMAGE.Compiler();
+      await compiler.compileImageTargets([img], (progress) => {
+        status.textContent = 'Compiling progress: ' + Math.round(progress) + '%';
+      });
+
+      status.textContent = 'Exporting data buffer...';
+      const buffer = await compiler.exportData();
+      status.textContent = 'Exported buffer size: ' + buffer.byteLength + ' bytes. Uploading to server...';
+
+      const resp = await fetch('/upload_mind', {
+        method: 'POST',
+        body: buffer
+      });
+
+      if (resp.ok) {
+        status.textContent = 'SUCCESS! assets/t1.mind compiled and saved (' + buffer.byteLength + ' bytes)!';
+        document.body.style.color = '#00ff66';
+      } else {
+        status.textContent = 'Upload failed with status ' + resp.status;
+      }
+    }
+    run().catch(e => {
+      console.error(e);
+      document.getElementById('status').textContent = 'ERROR: ' + e.message;
+      document.body.style.color = '#ff4444';
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Camera Diagnostic Test</title>
+  <style>
+    body { background: #111; color: #eee; font-family: sans-serif; padding: 20px; }
+    button { padding: 10px 16px; margin: 5px; font-size: 14px; cursor: pointer; background: #ffb020; border: none; border-radius: 4px; font-weight: bold; }
+    video { max-width: 100%; width: 640px; height: 480px; background: #000; border: 2px solid #333; margin-top: 15px; display: block; }
+    pre { background: #222; padding: 10px; border-radius: 4px; max-height: 250px; overflow: auto; }
+  </style>
+</head>
+<body>
+  <h2>Camera Diagnostic Test</h2>
+  <div id="controls">
+    <button onclick="testCam({ video: true })">Test 1: Default { video: true }</button>
+    <button onclick="testCam({ video: { width: 640, height: 480 } })">Test 2: 640x480</button>
+    <button onclick="testCam({ video: { width: 1280, height: 720 } })">Test 3: 720p</button>
+    <button onclick="testCam({ video: { width: 320, height: 240 } })">Test 4: 320x240</button>
+    <button onclick="listDevices()">List Devices</button>
+    <button onclick="stopCam()">Stop Camera</button>
+  </div>
+  <video id="vid" autoplay playsinline muted></video>
+  <h3>Logs:</h3>
+  <pre id="log"></pre>
+
+  <script>
+    let currentStream = null;
+    const logEl = document.getElementById('log');
+    const vid = document.getElementById('vid');
+
+    function log(msg) {
+      console.log(msg);
+      logEl.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
+    }
+
+    async function listDevices() {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        log("Devices found: " + devices.length);
+        devices.forEach(d => {
+          log(`- [${d.kind}] ${d.label || '(no label)'} | id: ${d.deviceId.substring(0, 10)}...`);
+        });
+      } catch(e) {
+        log("Error listing devices: " + e.message);
+      }
+    }
+
+    async function stopCam() {
+      if (currentStream) {
+        currentStream.getTracks().forEach(t => t.stop());
+        currentStream = null;
+      }
+      vid.srcObject = null;
+      log("Camera stopped.");
+    }
+
+    async function testCam(constraints) {
+      await stopCam();
+      log("Requesting getUserMedia with: " + JSON.stringify(constraints));
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        currentStream = stream;
+        vid.srcObject = stream;
+        const track = stream.getVideoTracks()[0];
+        log("SUCCESS! Video track: " + track.label + " (" + JSON.stringify(track.getSettings()) + ")");
+      } catch (err) {
+        log("FAILED: " + err.name + " - " + err.message);
+      }
+    }
+
+    // Auto run listDevices
+    listDevices();
+  </script>
+</body>
+</html>

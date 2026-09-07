@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>TAPWEAR — Tap. Scan. Unlock.</title>
+<style>
+  :root{
+    /* ---- Token system ---- */
+    --void:      #0F1016;   /* base background, indigo-black not pure black */
+    --panel:     #171922;   /* raised surface */
+    --panel-2:   #1F2230;
+    --hairline:  #33374A;
+    --paper:     #F3F1EA;   /* off-white type */
+    --paper-dim: #A9ACBE;
+    --amber:     #FFB020;   /* primary accent — tap / energy */
+    --amber-dim: #7A5A18;
+    --cyan:      #4FE3D0;   /* lock-confirmed state */
+    --danger:    #FF5470;   /* error / unsupported */
+
+    --font-display: 'TW-Display', 'Space Grotesk', 'Arial Narrow', sans-serif;
+    --font-body:    'TW-Body', 'Inter', -apple-system, sans-serif;
+    --font-mono:    'TW-Mono', 'IBM Plex Mono', 'SF Mono', monospace;
+  }
+
+  @font-face{
+    font-family:'TW-Display';
+    src: local('Space Grotesk');
+  }
+
+  *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+  html,body{
+    margin:0; padding:0; width:100%; height:100%;
+    background:var(--void); color:var(--paper);
+    font-family:var(--font-body);
+    overflow:hidden;
+    overscroll-behavior:none;
+  }
+
+  #app{ position:fixed; inset:0; }
+
+  /* ============ shared HUD chrome ============ */
+  .eyebrow{
+    font-family:var(--font-mono);
+    font-size:11px;
+    letter-spacing:.16em;
+    text-transform:uppercase;
+    color:var(--amber);
+  }
+  .hairline{ height:1px; background:var(--hairline); width:100%; }
+
+  /* ============ SCREEN: SPLASH ============ */
+  #screen-splash{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column; align-items:center; justify-content:space-between;
+    padding: 8vh 24px 6vh;
+    background:
+      radial-gradient(circle at 50% 30%, rgba(255,176,32,0.10), transparent 55%),
+      var(--void);
+    text-align:center;
+  }
+  .brand-mark{ margin-top:6vh; }
+  .brand-mark svg{ width:64px; height:64px; }
+  .wordmark{
+    font-family:var(--font-display);
+    font-weight:700;
+    font-size:clamp(34px, 10vw, 52px);
+    letter-spacing:-0.02em;
+    line-height:.95;
+    margin:18px 0 6px;
+  }
+  .wordmark span{ color:var(--amber); }
+  .tagline{
+    color:var(--paper-dim);
+    font-size:14px;
+    max-width:280px;
+    margin:0 auto;
+  }
+
+  /* NFC pulse — signature element */
+  .pulse-wrap{ position:relative; width:180px; height:180px; display:flex; align-items:center; justify-content:center; }
+  .pulse-ring{
+    position:absolute; border-radius:50%;
+    border:1px solid var(--amber);
+    opacity:0;
+    animation: pulse 2.6s cubic-bezier(.2,.7,.3,1) infinite;
+  }
+  .pulse-ring:nth-child(2){ animation-delay:.65s; }
+  .pulse-ring:nth-child(3){ animation-delay:1.3s; }
+  @keyframes pulse{
+    0%{ width:20px; height:20px; opacity:.9; }
+    100%{ width:180px; height:180px; opacity:0; }
+  }
+  .tap-icon{ position:relative; z-index:2; width:46px; height:46px; color:var(--amber); }
+
+  .progress-block{ width:100%; max-width:320px; }
+  .progress-track{
+    width:100%; height:2px; background:var(--hairline); position:relative; overflow:hidden; margin-top:14px;
+  }
+  .progress-fill{
+    position:absolute; left:0; top:0; height:100%; width:0%;
+    background:var(--amber);
+    transition: width .25s ease;
+  }
+  .progress-label{
+    display:flex; justify-content:space-between;
+    font-family:var(--font-mono); font-size:11px; color:var(--paper-dim); margin-top:8px;
+  }
+
+  .btn{
+    font-family:var(--font-display);
+    font-weight:700;
+    font-size:15px;
+    letter-spacing:.02em;
+    border:none;
+    padding:16px 28px;
+    border-radius:2px;
+    cursor:pointer;
+    display:inline-flex; align-items:center; justify-content:center; gap:10px;
+    transition: transform .12s ease, opacity .12s ease;
+  }
+  .btn:active{ transform: scale(.97); }
+  .btn-primary{ background:var(--amber); color:var(--void); width:100%; max-width:320px; }
+  .btn-primary:disabled{ opacity:.35; pointer-events:none; }
+  .btn-ghost{ background:transparent; color:var(--paper); border:1px solid var(--hairline); }
+
+  .hidden{ display:none !important; }
+
+  /* ============ SCREEN: PERMISSION PRIMER ============ */
+  #screen-permission{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column; justify-content:flex-end;
+    background: linear-gradient(180deg, rgba(15,16,22,0) 0%, var(--void) 45%), var(--panel);
+    padding:24px; padding-bottom: calc(28px + env(safe-area-inset-bottom));
+  }
+  .primer-card{
+    background:var(--panel-2);
+    border:1px solid var(--hairline);
+    border-radius:3px;
+    padding:22px;
+    margin-bottom:18px;
+  }
+  .primer-card h2{
+    font-family:var(--font-display); font-size:20px; margin:0 0 8px;
+  }
+  .primer-card p{ color:var(--paper-dim); font-size:14px; line-height:1.5; margin:0 0 14px; }
+  .primer-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+  .primer-list li{
+    display:flex; gap:10px; align-items:flex-start;
+    font-size:13px; color:var(--paper);
+  }
+  .primer-list li .dot{ width:5px; height:5px; margin-top:6px; background:var(--amber); flex-shrink:0; }
+
+  /* ============ SCREEN: AR VIEW ============ */
+  #screen-ar{ position:absolute; inset:0; background:#000; z-index:1; }
+  #ar-container{ position:absolute; inset:0; z-index:1; }
+  #ar-container video{
+    position:absolute; inset:0; width:100% !important; height:100% !important; object-fit:cover; z-index:1 !important; display:block !important; opacity:1 !important; visibility:visible !important;
+  }
+  #ar-container canvas{
+    position:absolute; inset:0; width:100% !important; height:100% !important; object-fit:cover; z-index:2 !important; background:transparent !important; pointer-events:none;
+  }
+
+  .hud-top{
+    position:absolute; top:0; left:0; right:0;
+    padding: calc(14px + env(safe-area-inset-top)) 16px 14px;
+    display:flex; justify-content:space-between; align-items:flex-start;
+    background:linear-gradient(180deg, rgba(0,0,0,.55), transparent);
+    z-index:5;
+    pointer-events:none;
+  }
+  .status-chip{
+    font-family:var(--font-mono); font-size:11px; letter-spacing:.08em;
+    display:flex; align-items:center; gap:7px;
+    background:rgba(15,16,22,.55);
+    border:1px solid var(--hairline);
+    padding:7px 10px; border-radius:20px;
+    pointer-events:auto;
+  }
+  .status-dot{ width:7px; height:7px; border-radius:50%; background:var(--danger); transition:background .2s; }
+  .status-dot.locked{ background:var(--cyan); box-shadow:0 0 8px var(--cyan); }
+  .status-dot.searching{ background:var(--amber); animation:blink 1s infinite; }
+  @keyframes blink{ 50%{ opacity:.3; } }
+
+  .hud-bottom{
+    position:absolute; bottom:0; left:0; right:0;
+    padding: 18px 16px calc(20px + env(safe-area-inset-bottom));
+    display:flex; align-items:center; justify-content:space-between;
+    background:linear-gradient(0deg, rgba(0,0,0,.6), transparent);
+    z-index:5;
+  }
+  .icon-btn{
+    width:52px; height:52px; border-radius:50%;
+    background:rgba(23,25,34,.7);
+    border:1px solid var(--hairline);
+    color:var(--paper);
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+  }
+  .icon-btn svg{ width:22px; height:22px; }
+  .shutter{
+    width:70px; height:70px; border-radius:50%;
+    background:var(--paper);
+    border:4px solid rgba(243,241,234,.35);
+    cursor:pointer;
+  }
+  .shutter:active{ transform:scale(.94); }
+
+  .reticle-hint{
+    position:absolute; left:50%; top:44%; transform:translate(-50%,-50%);
+    display:flex; flex-direction:column; align-items:center; gap:10px;
+    color:var(--paper-dim); font-family:var(--font-mono); font-size:11px;
+    letter-spacing:.08em; text-transform:uppercase;
+    pointer-events:none; z-index:4;
+    transition:opacity .3s;
+  }
+  .reticle-hint.hide{ opacity:0; }
+  .reticle-box{
+    width:150px; height:150px; position:relative;
+  }
+  .reticle-box i{
+    position:absolute; width:22px; height:22px; border-color:var(--amber); border-style:solid;
+  }
+  .reticle-box i:nth-child(1){ top:0; left:0; border-width:2px 0 0 2px; }
+  .reticle-box i:nth-child(2){ top:0; right:0; border-width:2px 2px 0 0; }
+  .reticle-box i:nth-child(3){ bottom:0; left:0; border-width:0 0 2px 2px; }
+  .reticle-box i:nth-child(4){ bottom:0; right:0; border-width:0 2px 2px 0; }
+
+  .capture-flash{
+    position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; z-index:20;
+  }
+  .capture-flash.fire{ animation:flash .35s ease; }
+  @keyframes flash{ 0%{opacity:0;} 12%{opacity:.9;} 100%{opacity:0;} }
+
+  /* Toast for share / unlock */
+  #toast{
+    position:absolute; left:50%; bottom:118px; transform:translateX(-50%) translateY(12px);
+    background:var(--panel-2); border:1px solid var(--hairline);
+    padding:11px 16px; border-radius:24px; font-size:13px;
+    display:flex; align-items:center; gap:8px;
+    opacity:0; pointer-events:none; transition:opacity .25s, transform .25s;
+    z-index:10; white-space:nowrap;
+  }
+  #toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+  /* ============ SCREEN: UNSUPPORTED ============ */
+  #screen-unsupported{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding:32px; text-align:center; background:var(--void);
+  }
+  #screen-unsupported h2{ font-family:var(--font-display); font-size:22px; color:var(--danger); margin-bottom:10px; }
+  #screen-unsupported p{ color:var(--paper-dim); font-size:14px; max-width:300px; line-height:1.6; }
+
+  @media (prefers-reduced-motion: reduce){
+    .pulse-ring{ animation:none; opacity:.3; }
+    .status-dot.searching{ animation:none; }
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ===================== SPLASH ===================== -->
+  <section id="screen-splash">
+    <div class="eyebrow">TAPWEAR · PHYGITAL SYSTEM</div>
+
+    <div class="pulse-wrap">
+      <div class="pulse-ring"></div>
+      <div class="pulse-ring"></div>
+      <div class="pulse-ring"></div>
+      <svg class="tap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+        <path d="M8 12a4 4 0 0 1 8 0M5.5 9.5a7.5 7.5 0 0 1 13 0M12 12v6"/>
+        <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/>
+      </svg>
+    </div>
+
+    <div>
+      <div class="wordmark">DROP<span>.</span>001</div>
+      <div class="tagline">The print on your sleeve is a portal. Point your camera at it once the scan begins.</div>
+    </div>
+
+    <div class="progress-block">
+      <button id="btn-start" class="btn btn-primary" disabled>PREPARING EXPERIENCE…</button>
+      <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
+      <div class="progress-label">
+        <span id="progress-text">LOADING ASSETS</span>
+        <span id="progress-pct">0%</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== PERMISSION PRIMER ===================== -->
+  <section id="screen-permission" class="hidden">
+    <div class="primer-card">
+      <div class="eyebrow" style="margin-bottom:8px;">BEFORE WE START</div>
+      <h2>This needs your camera</h2>
+      <p>Nothing is recorded or uploaded. Every frame is processed on your device only, just to find the artwork and lock the animation to it.</p>
+      <ul class="primer-list">
+        <li><span class="dot"></span>Used live, in real time — no video is stored or sent anywhere</li>
+        <li><span class="dot"></span>Only looks for the printed artwork pattern, nothing else</li>
+        <li><span class="dot"></span>You can stop the experience at any time</li>
+      </ul>
+    </div>
+    <button id="btn-enable-camera" class="btn btn-primary">ENABLE CAMERA</button>
+  </section>
+
+  <!-- ===================== AR VIEW ===================== -->
+  <section id="screen-ar" class="hidden">
+    <div id="ar-container"></div>
+
+    <div class="hud-top">
+      <div class="status-chip">
+        <span id="status-dot" class="status-dot searching"></span>
+        <span id="status-text">SEARCHING…</span>
+      </div>
+      <div style="display:flex; gap:6px; pointer-events:auto; flex-wrap:wrap; justify-content:flex-end;">
+        <div class="status-chip" id="btn-preview-3d" role="button" style="background:var(--amber); color:var(--void); font-weight:bold; cursor:pointer;">
+          <span id="preview-3d-text">👁️ PREVIEW 3D</span>
+        </div>
+        <div class="status-chip" id="btn-size-down" role="button" style="cursor:pointer;" title="Make 3D model smaller">
+          <span>➖ SIZE</span>
+        </div>
+        <div class="status-chip" id="btn-size-up" role="button" style="cursor:pointer;" title="Make 3D model larger">
+          <span>➕ SIZE</span>
+        </div>
+        <div class="status-chip" id="btn-show-marker" role="button" style="cursor:pointer;">
+          <span>🖼️ MARKER</span>
+        </div>
+        <div class="status-chip" id="lens-toggle" role="button">
+          <span id="lens-label">MAIN LENS</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="reticle-hint" class="reticle-hint">
+      <div class="reticle-box"><i></i><i></i><i></i><i></i></div>
+      <span>Frame the printed artwork (or click PREVIEW 3D)</span>
+    </div>
+
+    <div class="hud-bottom">
+      <div class="icon-btn" id="btn-close" title="Exit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </div>
+      <div class="shutter" id="btn-capture" title="Capture"></div>
+      <div class="icon-btn" id="btn-audio" title="Toggle audio">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9v6h4l5 5V4L8 9H4z"/><path id="audio-wave" d="M16 8a5 5 0 0 1 0 8"/></svg>
+      </div>
+    </div>
+
+    <div class="capture-flash" id="capture-flash"></div>
+    <div id="toast"></div>
+
+    <!-- MARKER MODAL OVERLAY -->
+    <div id="modal-marker" class="hidden" style="position:fixed; inset:0; background:rgba(15,16,22,0.92); z-index:100; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:20px;">
+      <div style="background:var(--panel-2); border:1px solid var(--hairline); padding:24px; border-radius:8px; max-width:380px; width:100%; text-align:center; position:relative; box-shadow:0 12px 32px rgba(0,0,0,0.6);">
+        <button id="btn-close-marker" style="position:absolute; top:12px; right:12px; background:none; border:none; color:var(--paper-dim); font-size:22px; cursor:pointer;">✕</button>
+        <h3 style="margin:0 0 8px; color:var(--amber); font-family:var(--font-display);">AR Target Marker</h3>
+        <p style="font-size:13px; color:var(--paper-dim); margin-bottom:16px;">Point your camera at this image to lock the 3D model, or click <strong>PREVIEW 3D</strong> to see it right now!</p>
+        <img src="assets/t1.jpg" style="width:100%; max-height:300px; object-fit:contain; border-radius:6px; border:1px solid var(--hairline);" />
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== UNSUPPORTED FALLBACK ===================== -->
+  <section id="screen-unsupported" class="hidden">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" style="color:var(--danger); margin-bottom:14px;">
+      <circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/>
+    </svg>
+    <h2>This device can't run the AR view</h2>
+    <p id="unsupported-reason">Your browser is missing camera or graphics support this experience needs. Try opening this link in Safari (iOS) or Chrome (Android).</p>
+  </section>
+
+</div>
+
+<!-- ===================== LIBRARIES ===================== -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.157.0/examples/jsm/"
+  }
+}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.min.js"></script>
+<script type="module">
+  import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+  window.GLTFLoader = GLTFLoader;
+</script>
+<script type="module" src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js"></script>
+<script type="module" src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"></script>
+
+<script>
+/* =====================================================================
+   TAPWEAR WebAR — reference implementation
+   Maps directly to the spec sections:
+     §5.1 Performance      -> asset preload + progress UI, capped particle count
+     §5.2 Tracking          -> MindAR image tracking + One-Euro-style smoothing
+     §5.3 Privacy           -> gesture-gated getUserMedia, on-device only, primer screen
+     §5.4 Cross-platform    -> capability check -> #screen-unsupported fallback
+     §5.5 Content updates   -> CONFIG.contentUrl stub for CMS-driven asset swap
+   ===================================================================== */
+
+const CONFIG = {
+  // Target AR Marker compiled file (generated from assets/t1.jpg)
+  targetUrl: "assets/t1.mind",
+
+  // §5.5 — in production, fetch this from your CMS/asset server per campaign/garment ID
+  // read from the NFC URL, e.g. tapwear.app/ar?drop=001
+  contentUrl: null,
+
+  maxParticles: 220,          // §5.1 performance budget
+  smoothing: 0.35,             // one-euro-ish lerp factor, tune for jitter vs. lag
+};
+
+let compiledMindUrl = null;
+
+async function getTargetSrc() {
+  const url = CONFIG.targetUrl;
+  if (url.endsWith('.mind')) {
+    return url;
+  }
+  if (compiledMindUrl) {
+    return compiledMindUrl;
+  }
+
+  // Wait for MindAR Compiler to load
+  while (!window.MINDAR || !window.MINDAR.IMAGE || !window.MINDAR.IMAGE.Compiler) {
+    await new Promise(r => setTimeout(r, 50));
+  }
+
+  // Compile image target (.jpg / .png) to MindAR format in-browser using WebAssembly/Worker
+  if (els.progressText) {
+    els.progressText.textContent = 'COMPILING AR MARKER…';
+    els.progressFill.style.width = '40%';
+    els.progressPct.textContent = '40%';
+  }
+
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.src = url;
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = () => reject(new Error('Failed to load target image: ' + url));
+  });
+
+  const compiler = new window.MINDAR.IMAGE.Compiler();
+  await compiler.compileImageTargets([img], (progress) => {
+    const pct = Math.round(progress);
+    if (els.progressText) {
+      els.progressText.textContent = `COMPILING MARKER (${pct}%)`;
+      els.progressFill.style.width = `${pct}%`;
+      els.progressPct.textContent = `${pct}%`;
+    }
+  });
+
+  const exportedBuffer = await compiler.exportData();
+  const blob = new Blob([exportedBuffer], { type: 'application/octet-stream' });
+  compiledMindUrl = URL.createObjectURL(blob);
+  return compiledMindUrl;
+}
+
+const els = {
+  splash: document.getElementById('screen-splash'),
+  permission: document.getElementById('screen-permission'),
+  ar: document.getElementById('screen-ar'),
+  unsupported: document.getElementById('screen-unsupported'),
+  unsupportedReason: document.getElementById('unsupported-reason'),
+  btnStart: document.getElementById('btn-start'),
+  btnEnableCamera: document.getElementById('btn-enable-camera'),
+  progressFill: document.getElementById('progress-fill'),
+  progressText: document.getElementById('progress-text'),
+  progressPct: document.getElementById('progress-pct'),
+  statusDot: document.getElementById('status-dot'),
+  statusText: document.getElementById('status-text'),
+  reticleHint: document.getElementById('reticle-hint'),
+  lensToggle: document.getElementById('lens-toggle'),
+  lensLabel: document.getElementById('lens-label'),
+  btnClose: document.getElementById('btn-close'),
+  btnCapture: document.getElementById('btn-capture'),
+  btnAudio: document.getElementById('btn-audio'),
+  captureFlash: document.getElementById('capture-flash'),
+  toast: document.getElementById('toast'),
+  arContainer: document.getElementById('ar-container'),
+  btnPreview3D: document.getElementById('btn-preview-3d'),
+  preview3DText: document.getElementById('preview-3d-text'),
+  btnSizeDown: document.getElementById('btn-size-down'),
+  btnSizeUp: document.getElementById('btn-size-up'),
+  btnShowMarker: document.getElementById('btn-show-marker'),
+  modalMarker: document.getElementById('modal-marker'),
+  btnCloseMarker: document.getElementById('btn-close-marker'),
+};
+
+let mindarThree, renderer, scene, camera, anchor;
+let audioCtx, audioEnabled = true, bgAudioSource;
+let currentFacing = 'environment';
+let modelScale = 0.04;
+
+// ---------------------------------------------------------------
+// 0. Capability check (§5.4 cross-platform compatibility)
+// ---------------------------------------------------------------
+function checkSupport(){
+  const hasWebRTC = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  const hasWebGL = (() => {
+    try {
+      const c = document.createElement('canvas');
+      return !!(c.getContext('webgl') || c.getContext('experimental-webgl'));
+    } catch(e){ return false; }
+  })();
+  if (!hasWebRTC || !hasWebGL){
+    els.unsupportedReason.textContent = !hasWebRTC
+      ? "Camera access isn't available in this browser. Open this link in Safari (iOS) or Chrome (Android) instead of an in-app browser."
+      : "This device's browser doesn't support the 3D graphics this experience needs.";
+    els.unsupported.classList.remove('hidden');
+    return false;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------
+// 1. Splash / preload (§5.1, §2 step 2)
+// ---------------------------------------------------------------
+function runPreload(){
+  const steps = [
+    { label: 'LOADING ASSETS', pct: 30 },
+    { label: 'WARMING TRACKER', pct: 70 },
+    { label: 'READY', pct: 100 },
+  ];
+  let i = 0;
+  const tick = () => {
+    if (i >= steps.length){
+      els.btnStart.disabled = false;
+      els.btnStart.textContent = 'TAP TO BEGIN';
+      return;
+    }
+    els.progressText.textContent = steps[i].label;
+    els.progressFill.style.width = steps[i].pct + '%';
+    els.progressPct.textContent = steps[i].pct + '%';
+    i++;
+    setTimeout(tick, 420);
+  };
+  tick();
+}
+
+els.btnStart.addEventListener('click', () => {
+  els.splash.classList.add('hidden');
+  els.permission.classList.remove('hidden');
+});
+
+// ---------------------------------------------------------------
+// 2. Permission-gated camera start (§5.3, §2 step 3)
+// ---------------------------------------------------------------
+els.btnEnableCamera.addEventListener('click', async () => {
+  els.btnEnableCamera.disabled = true;
+  els.btnEnableCamera.textContent = 'REQUESTING…';
+  try {
+    await initAR();
+    els.permission.classList.add('hidden');
+    els.ar.classList.remove('hidden');
+  } catch (err){
+    console.error(err);
+    els.btnEnableCamera.disabled = false;
+    els.btnEnableCamera.textContent = 'ENABLE CAMERA';
+    showToast("Camera access failed — check permissions or site settings.");
+  }
+});
+
+// ---------------------------------------------------------------
+// 3. MindAR + Three.js setup (§3 tracking + rendering layers)
+// ---------------------------------------------------------------
+async function initAR(){
+  while (!window.MINDAR || !window.MINDAR.IMAGE || !window.MINDAR.IMAGE.MindARThree) {
+    await new Promise(r => setTimeout(r, 50));
+  }
+
+  const targetSrc = await getTargetSrc();
+
+  let startErr = null;
+  const tryStart = async (facing) => {
+    mindarThree = new window.MINDAR.IMAGE.MindARThree({
+      container: els.arContainer,
+      imageTargetSrc: targetSrc,
+      facingMode: facing,
+      filterMinCF: 0.0001,   // One-Euro filter tuning -> less jitter
+      filterBeta: 0.001,     // -> less lag  (§5.2)
+      missTolerance: 5,      // frames to tolerate before declaring target lost -> graceful re-acquisition
+      warmupTolerance: 3,
+    });
+
+    ({ renderer, scene, camera } = mindarThree);
+    if (renderer) {
+      renderer.setClearColor(0x000000, 0);
+    }
+    anchor = mindarThree.addAnchor(0); // target index 0 = the garment artwork
+
+    buildSceneContent(anchor.group);
+
+    anchor.onTargetFound = () => setLockState(true);
+    anchor.onTargetLost  = () => setLockState(false);
+
+    await mindarThree.start();
+
+    // Ensure video element visibility and active video stream playback
+    const video = els.arContainer.querySelector('video');
+    if (video) {
+      video.style.zIndex = '1';
+      video.style.display = 'block';
+      video.style.visibility = 'visible';
+      video.style.opacity = '1';
+      video.setAttribute('playsinline', '');
+      video.setAttribute('webkit-playsinline', '');
+      video.muted = true;
+      if (video.paused) {
+        try { await video.play(); } catch(e) { console.warn("Video play error:", e); }
+      }
+    }
+    if (renderer && renderer.domElement) {
+      renderer.domElement.style.zIndex = '2';
+      renderer.domElement.style.background = 'transparent';
+    }
+
+    renderer.setAnimationLoop(renderLoop);
+  };
+
+  try {
+    await tryStart(currentFacing);
+  } catch (err) {
+    console.warn(`Camera start failed with facingMode='${currentFacing}', trying fallback camera:`, err);
+    startErr = err;
+    const fallbackFacing = currentFacing === 'environment' ? 'user' : 'environment';
+    try {
+      if (mindarThree && mindarThree.controller) {
+        try { mindarThree.stop(); } catch(e) {}
+      }
+      await tryStart(fallbackFacing);
+      currentFacing = fallbackFacing;
+      els.lensLabel.textContent = currentFacing === 'environment' ? 'MAIN LENS' : 'FRONT LENS';
+    } catch (err2) {
+      console.error("Camera fallback also failed:", err2);
+      throw startErr || err2;
+    }
+  }
+}
+
+function setLockState(locked){
+  els.statusDot.classList.toggle('locked', locked);
+  els.statusDot.classList.toggle('searching', !locked);
+  els.statusText.textContent = locked ? 'LOCKED' : 'SEARCHING…';
+  els.reticleHint.classList.toggle('hide', locked);
+  if (locked){
+    playUnlockSting();
+    showToast('Artwork locked — enjoy the drop');
+  }
+}
+
+// ---------------------------------------------------------------
+// 4. 3D content: GLB model + animated overlay + particles
+// ---------------------------------------------------------------
+let animMesh, monsterModel, mixer, clock = new THREE.Clock();
+let particleSystem, particleVelocities;
+let forcePreview = false;
+
+function buildSceneContent(group){
+  const hemiLight = new THREE.HemisphereLight(0xffffff, 0x333333, 1.8);
+  group.add(hemiLight);
+
+  const dirLight = new THREE.DirectionalLight(0xffb020, 2.5);
+  dirLight.position.set(2, 4, 3);
+  group.add(dirLight);
+
+  const pointLight = new THREE.PointLight(0x4fe3d0, 2.0, 10);
+  pointLight.position.set(-1, 1, 2);
+  group.add(pointLight);
+
+  // Particle field
+  const count = CONFIG.maxParticles;
+  const positions = new Float32Array(count * 3);
+  particleVelocities = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++){
+    positions[i*3+0] = (Math.random() - 0.5) * 1.5;
+    positions[i*3+1] = (Math.random() - 0.5) * 1.5;
+    positions[i*3+2] = Math.random() * 0.8;
+    particleVelocities[i*3+0] = (Math.random() - 0.5) * 0.002;
+    particleVelocities[i*3+1] = Math.random() * 0.003 + 0.0008;
+    particleVelocities[i*3+2] = 0;
+  }
+  const pGeo = new THREE.BufferGeometry();
+  pGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const pMat = new THREE.PointsMaterial({ color: 0xfff2d6, size: 0.015, transparent: true, opacity: 0.85 });
+  particleSystem = new THREE.Points(pGeo, pMat);
+  group.add(particleSystem);
+
+  // Load 3D GLB Model: assets/3d/monster/monster_01.glb
+  if (window.GLTFLoader) {
+    showToast('Loading 3D Monster Model…');
+    const loader = new window.GLTFLoader();
+    loader.load('assets/3d/monster/monster_01.glb', (gltf) => {
+      monsterModel = gltf.scene;
+      monsterModel.scale.set(modelScale, modelScale, modelScale);
+      monsterModel.position.set(0, -0.05, 0.05);
+
+      if (gltf.animations && gltf.animations.length > 0) {
+        mixer = new THREE.AnimationMixer(monsterModel);
+        gltf.animations.forEach(clip => mixer.clipAction(clip).play());
+      }
+      group.add(monsterModel);
+      console.log('3D Monster Model loaded successfully!');
+      showToast('3D Monster Model Loaded!');
+    }, undefined, (err) => {
+      console.warn('GLB load error, using fallback geometry:', err);
+      createPlaceholderMesh(group);
+    });
+  } else {
+    createPlaceholderMesh(group);
+  }
+}
+
+function createPlaceholderMesh(group){
+  const geo = new THREE.IcosahedronGeometry(0.35, 1);
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xffb020, metalness: 0.35, roughness: 0.25, flatShading: true,
+  });
+  animMesh = new THREE.Mesh(geo, mat);
+  animMesh.position.set(0, 0, 0.15);
+  group.add(animMesh);
+}
+
+function renderLoop(){
+  const delta = clock ? clock.getDelta() : 0.016;
+  const t = performance.now() * 0.001;
+
+  if (mixer) {
+    mixer.update(delta);
+  }
+
+  if (monsterModel) {
+    // Make monster face the camera
+    if (camera) {
+      const camWorldPos = new THREE.Vector3();
+      camera.getWorldPosition(camWorldPos);
+      monsterModel.lookAt(camWorldPos);
+    }
+    // Gentle bobbing animation
+    monsterModel.position.y = -0.05 + Math.sin(t * 1.5) * 0.02;
+  } else if (animMesh) {
+    if (camera) {
+      const camWorldPos = new THREE.Vector3();
+      camera.getWorldPosition(camWorldPos);
+      animMesh.lookAt(camWorldPos);
+    }
+  }
+
+  if (particleSystem) {
+    const pos = particleSystem.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++){
+      let y = pos.getY(i) + particleVelocities[i*3+1];
+      if (y > 0.6) y = -0.2;
+      pos.setY(i, y);
+      pos.setX(i, pos.getX(i) + particleVelocities[i*3+0]);
+    }
+    pos.needsUpdate = true;
+  }
+
+  // Force 3D Model preview if user enabled PREVIEW 3D mode
+  if (forcePreview && anchor && anchor.group) {
+    anchor.group.visible = true;
+  }
+
+  renderer.render(scene, camera);
+}
+
+// ---------------------------------------------------------------
+// 5. Spatial audio (§3, Web Audio API) — plays only once locked
+// ---------------------------------------------------------------
+function playUnlockSting(){
+  if (!audioEnabled) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    const panner = audioCtx.createStereoPanner ? audioCtx.createStereoPanner() : null;
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(660, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(990, audioCtx.currentTime + 0.18);
+    gain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.25, audioCtx.currentTime + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.5);
+    osc.connect(gain);
+    (panner ? gain.connect(panner).connect(audioCtx.destination) : gain.connect(audioCtx.destination));
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.55);
+  } catch(e){ /* audio is optional, fail silently */ }
+}
+
+els.btnAudio.addEventListener('click', () => {
+  audioEnabled = !audioEnabled;
+  els.btnAudio.style.opacity = audioEnabled ? '1' : '.4';
+});
+
+// ---------------------------------------------------------------
+// 6. Lens selector (§2 step 4, §6 feature list)
+// ---------------------------------------------------------------
+els.lensToggle.addEventListener('click', async () => {
+  currentFacing = currentFacing === 'environment' ? 'user' : 'environment';
+  els.lensLabel.textContent = currentFacing === 'environment' ? 'MAIN LENS' : 'FRONT LENS';
+  showToast('Switching camera…');
+  try {
+    await mindarThree.stop();
+    await initAR();
+  } catch(e){
+    showToast('Could not switch camera on this device.');
+  }
+});
+
+// ---------------------------------------------------------------
+// 7. Screenshot capture + share (§6 feature list)
+// ---------------------------------------------------------------
+els.btnCapture.addEventListener('click', async () => {
+  els.captureFlash.classList.remove('fire'); void els.captureFlash.offsetWidth;
+  els.captureFlash.classList.add('fire');
+
+  try {
+    const canvas = els.arContainer.querySelector('canvas');
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+    const file = new File([blob], 'tapwear-drop-001.png', { type: 'image/png' });
+
+    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })){
+      await navigator.share({ files: [file], title: 'My TAPWEAR drop', text: 'Unlocked via NFC tap ✨' });
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'tapwear-drop-001.png'; a.click();
+      URL.revokeObjectURL(url);
+      showToast('Saved — share it from your gallery');
+    }
+  } catch(e){
+    showToast('Could not capture — try again');
+  }
+});
+
+// ---------------------------------------------------------------
+// 8. Exit
+// ---------------------------------------------------------------
+els.btnClose.addEventListener('click', () => {
+  if (mindarThree) mindarThree.stop();
+  window.location.reload();
+});
+
+// ---------------------------------------------------------------
+// Utility
+// ---------------------------------------------------------------
+let toastTimer;
+function showToast(msg){
+  els.toast.textContent = msg;
+  els.toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => els.toast.classList.remove('show'), 2400);
+}
+
+// ---------------------------------------------------------------
+// 9. Preview 3D mode & Marker Modal controls
+// ---------------------------------------------------------------
+if (els.btnPreview3D) {
+  els.btnPreview3D.addEventListener('click', () => {
+    forcePreview = !forcePreview;
+    els.btnPreview3D.style.background = forcePreview ? 'var(--cyan)' : 'var(--amber)';
+    els.btnPreview3D.style.color = 'var(--void)';
+    els.preview3DText.textContent = forcePreview ? '✨ 3D VISIBLE' : '👁️ PREVIEW 3D';
+    if (forcePreview && anchor && anchor.group) {
+      anchor.group.visible = true;
+    }
+    showToast(forcePreview ? '3D Model Preview Enabled' : 'AR Target Tracking Mode');
+  });
+}
+
+if (els.btnSizeDown) {
+  els.btnSizeDown.addEventListener('click', () => {
+    modelScale = Math.max(0.008, modelScale * 0.75);
+    if (monsterModel) monsterModel.scale.set(modelScale, modelScale, modelScale);
+    if (animMesh) animMesh.scale.set(modelScale * 25, modelScale * 25, modelScale * 25);
+    showToast(`Model size reduced`);
+  });
+}
+
+if (els.btnSizeUp) {
+  els.btnSizeUp.addEventListener('click', () => {
+    modelScale = Math.min(0.5, modelScale * 1.35);
+    if (monsterModel) monsterModel.scale.set(modelScale, modelScale, modelScale);
+    if (animMesh) animMesh.scale.set(modelScale * 25, modelScale * 25, modelScale * 25);
+    showToast(`Model size increased`);
+  });
+}
+
+if (els.btnShowMarker) {
+  els.btnShowMarker.addEventListener('click', () => {
+    els.modalMarker.classList.remove('hidden');
+  });
+}
+
+if (els.btnCloseMarker) {
+  els.btnCloseMarker.addEventListener('click', () => {
+    els.modalMarker.classList.add('hidden');
+  });
+}
+
+// ---------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------
+if (checkSupport()){
+  runPreload();
+}
+</script>
+</body>
+</html>
