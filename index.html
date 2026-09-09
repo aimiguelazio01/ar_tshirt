@@ -1052,8 +1052,10 @@ const els = {
 let mindarThree, renderer, scene, camera, anchor;
 let audioCtx, audioEnabled = true, bgAudioSource;
 let currentFacing = 'environment';
-let modelScale = 0.866;
-let baseMarkerScale = 0.43;
+let modelScale = 1.02;
+let baseMarkerScale = 1.02;
+let characterOffsetY = -0.04;
+let simOffsetY = -0.05;
 let basePosZ = 0.05;
 let preloadedGLTF = null;
 let planesModel = null;
@@ -1728,10 +1730,10 @@ function attachMonsterModel(group){
     monsterModel.userData.size = size;
     monsterModel.userData.center = center;
 
-    // MindAR marker width = 1.0 (from x=-0.5 to x=+0.5).
-    // Set 3D character scale to fit marker size exactly (100% marker width = 1.0):
-    const targetMarkerWidth = 1.0;
-    baseMarkerScale = targetMarkerWidth / (size.x || 2.323);
+    // MindAR marker height = 1.599854 (from y=-0.80 to y=+0.80), width = 1.0.
+    // Upscale 3D character to match marker size (height 1.60):
+    const targetMarkerHeight = 1.599854;
+    baseMarkerScale = targetMarkerHeight / (size.y || 1.5685);
     modelScale = baseMarkerScale;
     monsterModel.scale.set(modelScale, modelScale, modelScale);
 
@@ -1739,8 +1741,8 @@ function attachMonsterModel(group){
       els.scaleLabel.textContent = `🎯 100% MARKER`;
     }
 
-    // Center on marker in X, align down to shirt artwork in Y, and sit on shirt surface in +Z
-    const characterOffsetY = -0.58;
+    // Center on marker in X, align nicely over shirt artwork in Y, and sit on shirt surface in +Z
+    characterOffsetY = -0.04;
     const posX = -center.x * modelScale;
     const posY = -center.y * modelScale + characterOffsetY;
     basePosZ = (-box.min.z * modelScale) + 0.05;
@@ -2673,7 +2675,7 @@ function startSimulatorMode() {
 
   const aspect = window.innerWidth / window.innerHeight;
   simCamera = new THREE.PerspectiveCamera(45, aspect, 0.1, 1000);
-  simCamera.position.set(0, -0.12, 3.4);
+  simCamera.position.set(0, -0.05, 3.4);
 
   simRenderer = new THREE.WebGLRenderer({ antialias: true });
   simRenderer.setSize(window.innerWidth, window.innerHeight);
@@ -2690,6 +2692,7 @@ function startSimulatorMode() {
   simScene.add(pointLight);
 
   const modelGroup = new THREE.Group();
+  modelGroup.rotation.set(0, 0, 0);
   simScene.add(modelGroup);
 
   // Floating particles
@@ -2723,10 +2726,14 @@ function startSimulatorMode() {
     const box = new THREE.Box3().setFromObject(simMonster);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    const simScale = 1.0 / (maxDim || 2.3);
+    simMonster.userData.box = box;
+    simMonster.userData.size = size;
+    simMonster.userData.center = center;
+
+    const targetMarkerHeight = 1.599854;
+    const simScale = targetMarkerHeight / (size.y || 1.5685);
     simMonster.scale.set(simScale, simScale, simScale);
-    const simOffsetY = -0.68;
+    simOffsetY = -0.05;
     simMonster.position.set(-center.x * simScale, -center.y * simScale + simOffsetY, -center.z * simScale);
 
 
@@ -3063,7 +3070,7 @@ function applyModelScale(newScale, showToastMsg = false) {
       const c = monsterModel.userData.center;
       const b = monsterModel.userData.box;
       const posX = -c.x * modelScale;
-      const posY = -c.y * modelScale - 0.58;
+      const posY = -c.y * modelScale + characterOffsetY;
       basePosZ = (-b.min.z * modelScale) + 0.05;
       monsterGarmentPos = new THREE.Vector3(posX, posY, basePosZ);
       monsterModel.position.copy(monsterGarmentPos);
@@ -3077,6 +3084,14 @@ function applyModelScale(newScale, showToastMsg = false) {
   }
   if (simMonster) {
     simMonster.scale.set(modelScale, modelScale, modelScale);
+    if (simMonster.userData && simMonster.userData.center) {
+      const c = simMonster.userData.center;
+      simMonster.position.set(-c.x * modelScale, -c.y * modelScale + simOffsetY, -c.z * modelScale);
+      if (planesModel && isSimulatorMode) {
+        planesModel.position.set(-c.x * modelScale, -c.y * modelScale + simOffsetY, -c.z * modelScale);
+        planesModel.scale.set(modelScale, modelScale, modelScale);
+      }
+    }
   }
   const pct = baseMarkerScale > 0 ? Math.round((modelScale / baseMarkerScale) * 100) : Math.round(modelScale * 100);
   if (els.scaleLabel) {
