@@ -17,12 +17,15 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         '.glb': 'model/gltf-binary',
     })
     def do_POST(self):
-        if self.path == '/upload_mind':
+        if self.path == '/upload_mind' or self.path.startswith('/upload_mind'):
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length)
             assets_dir = os.path.join(os.getcwd(), 'assets')
             os.makedirs(assets_dir, exist_ok=True)
-            mind_path = os.path.join(assets_dir, 't1.mind')
+            filename = 'monster_tshirt.mind'
+            if '?' in self.path and 'file=' in self.path:
+                filename = self.path.split('file=')[1].split('&')[0]
+            mind_path = os.path.join(assets_dir, filename)
             with open(mind_path, 'wb') as f:
                 f.write(post_data)
             print(f"[SERVER] Successfully saved {len(post_data)} bytes to {mind_path}")

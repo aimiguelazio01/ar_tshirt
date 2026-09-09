@@ -1,0 +1,2313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>TAPWEAR — Tap. Scan. Unlock.</title>
+<style>
+  :root{
+    /* ---- Token system ---- */
+    --void:      #0F1016;   /* base background, indigo-black not pure black */
+    --panel:     #171922;   /* raised surface */
+    --panel-2:   #1F2230;
+    --hairline:  #33374A;
+    --paper:     #F3F1EA;   /* off-white type */
+    --paper-dim: #A9ACBE;
+    --amber:     #FFB020;   /* primary accent — tap / energy */
+    --amber-dim: #7A5A18;
+    --cyan:      #4FE3D0;   /* lock-confirmed state */
+    --danger:    #FF5470;   /* error / unsupported */
+
+    --font-display: 'TW-Display', 'Space Grotesk', 'Arial Narrow', sans-serif;
+    --font-body:    'TW-Body', 'Inter', -apple-system, sans-serif;
+    --font-mono:    'TW-Mono', 'IBM Plex Mono', 'SF Mono', monospace;
+  }
+
+  @font-face{
+    font-family:'TW-Display';
+    src: local('Space Grotesk');
+  }
+
+  *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+  html,body{
+    margin:0; padding:0; width:100%; height:100%;
+    background:var(--void); color:var(--paper);
+    font-family:var(--font-body);
+    overflow:hidden;
+    overscroll-behavior:none;
+  }
+
+  #app{ position:fixed; inset:0; }
+
+  /* ============ shared HUD chrome ============ */
+  .eyebrow{
+    font-family:var(--font-mono);
+    font-size:11px;
+    letter-spacing:.16em;
+    text-transform:uppercase;
+    color:var(--amber);
+  }
+  .hairline{ height:1px; background:var(--hairline); width:100%; }
+
+  /* ============ SCREEN: SPLASH ============ */
+  #screen-splash{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column; align-items:center; justify-content:space-between;
+    padding: 8vh 24px 6vh;
+    background:
+      radial-gradient(circle at 50% 30%, rgba(255,176,32,0.10), transparent 55%),
+      var(--void);
+    text-align:center;
+  }
+  .brand-mark{ margin-top:6vh; }
+  .brand-mark svg{ width:64px; height:64px; }
+  .wordmark{
+    font-family:var(--font-display);
+    font-weight:700;
+    font-size:clamp(34px, 10vw, 52px);
+    letter-spacing:-0.02em;
+    line-height:.95;
+    margin:18px 0 6px;
+  }
+  .wordmark span{ color:var(--amber); }
+  .tagline{
+    color:var(--paper-dim);
+    font-size:14px;
+    max-width:280px;
+    margin:0 auto;
+  }
+
+  /* NFC pulse — signature element */
+  .pulse-wrap{ position:relative; width:180px; height:180px; display:flex; align-items:center; justify-content:center; }
+  .pulse-ring{
+    position:absolute; border-radius:50%;
+    border:1px solid var(--amber);
+    opacity:0;
+    animation: pulse 2.6s cubic-bezier(.2,.7,.3,1) infinite;
+  }
+  .pulse-ring:nth-child(2){ animation-delay:.65s; }
+  .pulse-ring:nth-child(3){ animation-delay:1.3s; }
+  @keyframes pulse{
+    0%{ width:20px; height:20px; opacity:.9; }
+    100%{ width:180px; height:180px; opacity:0; }
+  }
+  .tap-icon{ position:relative; z-index:2; width:46px; height:46px; color:var(--amber); }
+
+  .progress-block{ width:100%; max-width:320px; }
+  .progress-track{
+    width:100%; height:2px; background:var(--hairline); position:relative; overflow:hidden; margin-top:14px;
+  }
+  .progress-fill{
+    position:absolute; left:0; top:0; height:100%; width:0%;
+    background:var(--amber);
+    transition: width .25s ease;
+  }
+  .progress-label{
+    display:flex; justify-content:space-between;
+    font-family:var(--font-mono); font-size:11px; color:var(--paper-dim); margin-top:8px;
+  }
+
+  .btn{
+    font-family:var(--font-display);
+    font-weight:700;
+    font-size:15px;
+    letter-spacing:.02em;
+    border:none;
+    padding:16px 28px;
+    border-radius:2px;
+    cursor:pointer;
+    display:inline-flex; align-items:center; justify-content:center; gap:10px;
+    transition: transform .12s ease, opacity .12s ease;
+  }
+  .btn:active{ transform: scale(.97); }
+  .btn-primary{ background:var(--amber); color:var(--void); width:100%; max-width:320px; }
+  .btn-primary:disabled{ opacity:.35; pointer-events:none; }
+  .btn-ghost{ background:transparent; color:var(--paper); border:1px solid var(--hairline); }
+
+  .hidden{ display:none !important; }
+
+  /* ============ SCREEN: PERMISSION PRIMER ============ */
+  #screen-permission{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column; justify-content:flex-end;
+    background: linear-gradient(180deg, rgba(15,16,22,0) 0%, var(--void) 45%), var(--panel);
+    padding:24px; padding-bottom: calc(28px + env(safe-area-inset-bottom));
+  }
+  .primer-card{
+    background:var(--panel-2);
+    border:1px solid var(--hairline);
+    border-radius:3px;
+    padding:22px;
+    margin-bottom:18px;
+  }
+  .primer-card h2{
+    font-family:var(--font-display); font-size:20px; margin:0 0 8px;
+  }
+  .primer-card p{ color:var(--paper-dim); font-size:14px; line-height:1.5; margin:0 0 14px; }
+  .primer-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+  .primer-list li{
+    display:flex; gap:10px; align-items:flex-start;
+    font-size:13px; color:var(--paper);
+  }
+  .primer-list li .dot{ width:5px; height:5px; margin-top:6px; background:var(--amber); flex-shrink:0; }
+
+  /* ============ SCREEN: AR VIEW ============ */
+  #screen-ar{ position:absolute; inset:0; background:#000; z-index:1; }
+  #ar-container{ position:absolute; inset:0; z-index:1; }
+  #ar-container video{
+    position:absolute; inset:0; width:100% !important; height:100% !important; object-fit:cover; z-index:1 !important; display:block !important; opacity:1 !important; visibility:visible !important;
+  }
+  #ar-container canvas{
+    position:absolute; inset:0; width:100% !important; height:100% !important; object-fit:cover; z-index:2 !important; background:transparent !important; pointer-events:none;
+  }
+
+  .hud-top{
+    position:absolute; top:0; left:0; right:0;
+    padding: calc(14px + env(safe-area-inset-top)) 16px 14px;
+    display:flex; justify-content:space-between; align-items:flex-start;
+    background:linear-gradient(180deg, rgba(0,0,0,.55), transparent);
+    z-index:5;
+    pointer-events:none;
+  }
+  .status-chip{
+    font-family:var(--font-mono); font-size:11px; letter-spacing:.08em;
+    display:flex; align-items:center; gap:7px;
+    background:rgba(15,16,22,.55);
+    border:1px solid var(--hairline);
+    padding:7px 10px; border-radius:20px;
+    pointer-events:auto;
+  }
+  .status-dot{ width:7px; height:7px; border-radius:50%; background:var(--danger); transition:background .2s; }
+  .status-dot.locked{ background:var(--cyan); box-shadow:0 0 8px var(--cyan); }
+  .status-dot.searching{ background:var(--amber); animation:blink 1s infinite; }
+  @keyframes blink{ 50%{ opacity:.3; } }
+
+  .hud-bottom{
+    position:absolute; bottom:0; left:0; right:0;
+    padding: 18px 16px calc(20px + env(safe-area-inset-bottom));
+    display:flex; align-items:center; justify-content:space-between;
+    background:linear-gradient(0deg, rgba(0,0,0,.6), transparent);
+    z-index:5;
+  }
+  .icon-btn{
+    width:52px; height:52px; border-radius:50%;
+    background:rgba(23,25,34,.7);
+    border:1px solid var(--hairline);
+    color:var(--paper);
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+  }
+  .icon-btn svg{ width:22px; height:22px; }
+  .shutter{
+    width:70px; height:70px; border-radius:50%;
+    background:var(--paper);
+    border:4px solid rgba(243,241,234,.35);
+    cursor:pointer;
+  }
+  .shutter:active{ transform:scale(.94); }
+
+  .reticle-hint{
+    position:absolute; left:50%; top:44%; transform:translate(-50%,-50%);
+    display:flex; flex-direction:column; align-items:center; gap:10px;
+    color:var(--paper-dim); font-family:var(--font-mono); font-size:11px;
+    letter-spacing:.08em; text-transform:uppercase;
+    pointer-events:none; z-index:4;
+    transition:opacity .3s;
+  }
+  .reticle-hint.hide{ opacity:0; }
+  .reticle-box{
+    width:150px; height:150px; position:relative;
+  }
+  .reticle-box i{
+    position:absolute; width:22px; height:22px; border-color:var(--amber); border-style:solid;
+  }
+  .reticle-box i:nth-child(1){ top:0; left:0; border-width:2px 0 0 2px; }
+  .reticle-box i:nth-child(2){ top:0; right:0; border-width:2px 2px 0 0; }
+  .reticle-box i:nth-child(3){ bottom:0; left:0; border-width:0 0 2px 2px; }
+  .reticle-box i:nth-child(4){ bottom:0; right:0; border-width:0 2px 2px 0; }
+
+  .capture-flash{
+    position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; z-index:20;
+  }
+  .capture-flash.fire{ animation:flash .35s ease; }
+  @keyframes flash{ 0%{opacity:0;} 12%{opacity:.9;} 100%{opacity:0;} }
+
+  /* Toast for share / unlock */
+  #toast{
+    position:absolute; left:50%; bottom:118px; transform:translateX(-50%) translateY(12px);
+    background:var(--panel-2); border:1px solid var(--hairline);
+    padding:11px 16px; border-radius:24px; font-size:13px;
+    display:flex; align-items:center; gap:8px;
+    opacity:0; pointer-events:none; transition:opacity .25s, transform .25s;
+    z-index:10; white-space:nowrap;
+  }
+  #toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+  /* ============ SCREEN: UNSUPPORTED ============ */
+  #screen-unsupported{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding:32px; text-align:center; background:var(--void);
+  }
+  #screen-unsupported h2{ font-family:var(--font-display); font-size:22px; color:var(--danger); margin-bottom:10px; }
+  #screen-unsupported p{ color:var(--paper-dim); font-size:14px; max-width:300px; line-height:1.6; }
+
+  @media (prefers-reduced-motion: reduce){
+    .pulse-ring{ animation:none; opacity:.3; }
+    .status-dot.searching{ animation:none; }
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ===================== SPLASH ===================== -->
+  <section id="screen-splash">
+    <div class="eyebrow">TAPWEAR · PHYGITAL SYSTEM</div>
+
+    <div class="pulse-wrap">
+      <div class="pulse-ring"></div>
+      <div class="pulse-ring"></div>
+      <div class="pulse-ring"></div>
+      <svg class="tap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+        <path d="M8 12a4 4 0 0 1 8 0M5.5 9.5a7.5 7.5 0 0 1 13 0M12 12v6"/>
+        <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/>
+      </svg>
+    </div>
+
+    <div>
+      <div class="wordmark">DROP<span>.</span>001</div>
+      <div class="tagline">The print on your sleeve is a portal. Point your camera at it once the scan begins.</div>
+    </div>
+
+    <div class="progress-block">
+      <button id="btn-start" class="btn btn-primary" disabled>PREPARING EXPERIENCE…</button>
+      <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
+      <div class="progress-label">
+        <span id="progress-text">LOADING ASSETS</span>
+        <span id="progress-pct">0%</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== PERMISSION PRIMER ===================== -->
+  <section id="screen-permission" class="hidden">
+    <div class="primer-card">
+      <div class="eyebrow" style="margin-bottom:8px;">BEFORE WE START</div>
+      <h2>Camera & 3D Setup</h2>
+      <p>Used live in real-time on your device to lock the 3D monster model onto the printed artwork.</p>
+      <ul class="primer-list">
+        <li><span class="dot"></span>Live on-device only — zero video is recorded or sent</li>
+        <li><span class="dot"></span>Looks for the garment artwork pattern</li>
+        <li><span class="dot"></span>Works with desktop webcam, laptop camera, or mobile</li>
+      </ul>
+
+      <!-- Camera selection dropdown (auto-populated if multiple cameras) -->
+      <div id="camera-select-wrap" style="margin-top:16px; display:none; text-align:left;">
+        <label class="eyebrow" style="display:block; margin-bottom:6px; font-size:10px;">Select Camera Device</label>
+        <select id="camera-select" style="width:100%; background:var(--panel); color:var(--paper); border:1px solid var(--hairline); padding:10px; border-radius:4px; font-family:var(--font-mono); font-size:12px; outline:none;"></select>
+      </div>
+
+      <!-- Diagnostic error card (shown if camera fails) -->
+      <div id="camera-error-box" class="hidden" style="margin-top:16px; background:rgba(255,84,112,0.12); border:1px solid var(--danger); border-radius:4px; padding:14px; text-align:left;">
+        <div style="font-family:var(--font-display); color:var(--danger); font-weight:700; font-size:14px; margin-bottom:4px;" id="camera-error-title">Camera Issue Detected</div>
+        <div style="font-size:12px; color:var(--paper-dim); line-height:1.45;" id="camera-error-desc">Camera initialization failed.</div>
+        <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="btn-retry-camera" class="btn btn-primary" style="padding:8px 14px; font-size:12px; width:auto;">🔄 RETRY CAMERA</button>
+          <button id="btn-fallback-simulator" class="btn btn-ghost" style="padding:8px 14px; font-size:12px; width:auto;">👁️ PREVIEW 3D INSTEAD</button>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:10px; width:100%; max-width:320px;">
+      <button id="btn-enable-camera" class="btn btn-primary">ENABLE CAMERA</button>
+      <button id="btn-start-simulator" class="btn btn-ghost">👁️ TEST 3D (WITHOUT CAMERA)</button>
+    </div>
+  </section>
+
+  <!-- ===================== AR VIEW ===================== -->
+  <section id="screen-ar" class="hidden">
+    <div id="ar-container"></div>
+
+    <div class="hud-top">
+      <div class="status-chip">
+        <span id="status-dot" class="status-dot searching"></span>
+        <span id="status-text">SEARCHING…</span>
+      </div>
+      <div style="display:flex; gap:6px; pointer-events:auto; flex-wrap:wrap; justify-content:flex-end;">
+        <div class="status-chip" id="btn-size-down" role="button" style="cursor:pointer;" title="Make 3D model smaller">
+          <span>➖ SIZE</span>
+        </div>
+        <div class="status-chip" id="btn-size-reset" role="button" style="cursor:pointer;" title="Reset or toggle marker scale">
+          <span id="scale-label">🎯 100% MARKER</span>
+        </div>
+        <div class="status-chip" id="btn-size-up" role="button" style="cursor:pointer;" title="Make 3D model larger">
+          <span>➕ SIZE</span>
+        </div>
+        <div class="status-chip" id="gesture-chip" role="button" style="cursor:pointer;" title="MediaPipe Pose: Raise arms (elbows & wrists above shoulders) to hide planes">
+          <span id="gesture-text">👇 ARMS DOWN (PLANES ON)</span>
+        </div>
+        <div class="status-chip" id="btn-show-marker" role="button" style="cursor:pointer;">
+          <span>🖼️ MARKER</span>
+        </div>
+        <div class="status-chip" id="lens-toggle" role="button">
+          <span id="lens-label">MAIN LENS</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="reticle-hint" class="reticle-hint">
+      <div class="reticle-box"><i></i><i></i><i></i><i></i></div>
+      <span>Frame the printed artwork on your T-shirt</span>
+    </div>
+
+    <div class="hud-bottom">
+      <div class="icon-btn" id="btn-close" title="Exit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </div>
+      <div class="shutter" id="btn-capture" title="Capture"></div>
+      <div class="icon-btn" id="btn-audio" title="Toggle audio">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9v6h4l5 5V4L8 9H4z"/><path id="audio-wave" d="M16 8a5 5 0 0 1 0 8"/></svg>
+      </div>
+    </div>
+
+    <div class="capture-flash" id="capture-flash"></div>
+    <div id="toast"></div>
+
+    <!-- MediaPipe Hand Fingertip Debug Cursor (Landmark 8) -->
+    <div id="hand-debug-cursor" style="position:fixed; width:22px; height:22px; border-radius:50%; background:rgba(79, 227, 208, 0.9); border:2.5px solid #ffffff; box-shadow:0 0 16px #4fe3d0, inset 0 0 6px #ffffff; pointer-events:none; transform:translate(-50%, -50%); z-index:99; display:none;"></div>
+
+    <!-- MARKER MODAL OVERLAY -->
+    <div id="modal-marker" class="hidden" style="position:fixed; inset:0; background:rgba(15,16,22,0.92); z-index:100; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:20px;">
+      <div style="background:var(--panel-2); border:1px solid var(--hairline); padding:24px; border-radius:8px; max-width:380px; width:100%; text-align:center; position:relative; box-shadow:0 12px 32px rgba(0,0,0,0.6);">
+        <button id="btn-close-marker" style="position:absolute; top:12px; right:12px; background:none; border:none; color:var(--paper-dim); font-size:22px; cursor:pointer;">✕</button>
+        <h3 style="margin:0 0 8px; color:var(--amber); font-family:var(--font-display);">AR Target Marker</h3>
+        <p style="font-size:13px; color:var(--paper-dim); margin-bottom:16px;">Point your camera at the printed artwork on the T-shirt to experience the AR animation.</p>
+        <img src="assets/t1.jpg" style="width:100%; max-height:300px; object-fit:contain; border-radius:6px; border:1px solid var(--hairline);" />
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== UNSUPPORTED FALLBACK ===================== -->
+  <section id="screen-unsupported" class="hidden">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" style="color:var(--danger); margin-bottom:14px;">
+      <circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/>
+    </svg>
+    <h2>This device can't run the AR view</h2>
+    <p id="unsupported-reason">Your browser is missing camera or graphics support this experience needs. Try opening this link in Safari (iOS) or Chrome (Android).</p>
+  </section>
+
+</div>
+
+<!-- ===================== LIBRARIES ===================== -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.157.0/examples/jsm/"
+  }
+}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.min.js"></script>
+<script type="module">
+  import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+  import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+  import { FilesetResolver, PoseLandmarker, HandLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
+  window.GLTFLoader = GLTFLoader;
+  window.SkeletonUtils = SkeletonUtils;
+  window.FilesetResolver = FilesetResolver;
+  window.PoseLandmarker = PoseLandmarker;
+  window.HandLandmarker = HandLandmarker;
+</script>
+<script type="module" src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js"></script>
+<script type="module" src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"></script>
+
+<script>
+/* =====================================================================
+   TAPWEAR WebAR — Camera & Tracking Engine
+   Includes desktop webcam polyfill, device enumeration,
+   container cleanup, and standalone 3D simulator mode.
+   ===================================================================== */
+
+// Remote diagnostic logger
+(function(){
+  function sendLog(type, str) {
+    try {
+      const img = new Image();
+      img.src = '/log?' + type + '=' + encodeURIComponent(str);
+    } catch(e){}
+  }
+  window.addEventListener('error', (e) => {
+    sendLog('error', (e.message || '') + ' at ' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  const origLog = console.log.bind(console);
+  console.log = function(...args) {
+    origLog(...args);
+    sendLog('log', args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+  };
+  const origWarn = console.warn.bind(console);
+  console.warn = function(...args) {
+    origWarn(...args);
+    sendLog('warn', args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+  };
+  const origErr = console.error.bind(console);
+  console.error = function(...args) {
+    origErr(...args);
+    sendLog('error', args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+  };
+})();
+
+// ---------------------------------------------------------------
+// Camera Polyfill / Resilient Shimming
+// ---------------------------------------------------------------
+if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+  const nativeGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+  navigator.mediaDevices.getUserMedia = async function(constraints) {
+    let c = constraints ? JSON.parse(JSON.stringify(constraints)) : { video: true, audio: false };
+
+    // On desktop PC/laptop with external or single webcam, 'facingMode: environment' often hangs or throws AbortError
+    if (!isMobile && c && c.video && c.video.facingMode === 'environment') {
+      console.log('[CameraShim] Desktop PC detected: removing facingMode:environment constraint');
+      delete c.video.facingMode;
+      if (Object.keys(c.video).length === 0) {
+        c.video = true;
+      }
+    }
+
+    // On mobile devices, optimize facingMode & resolution for fast hardware startup
+    if (isMobile && c && c.video && typeof c.video === 'object') {
+      // 1. Relax exact facingMode to ideal for broad manufacturer compatibility
+      if (c.video.facingMode && typeof c.video.facingMode === 'object' && c.video.facingMode.exact) {
+        c.video.facingMode = { ideal: c.video.facingMode.exact };
+      }
+
+      // 2. High-speed camera negotiation:
+      // Without explicit ideal resolution, Android rear cameras default to maximum sensor capability (4K/1080p),
+      // causing 3-5s camera hardware negotiation, autofocus hunting, and heavy WebAssembly buffer overhead.
+      // 1280x720 ideal lets Android camera HAL initialize the rear sensor immediately (<300ms) with fast 30fps stream.
+      if (!c.video.width && !c.video.height) {
+        c.video.width = { ideal: 1280 };
+        c.video.height = { ideal: 720 };
+      }
+    }
+
+    try {
+      return await nativeGUM(c);
+    } catch (err) {
+      console.warn('[CameraShim] Primary getUserMedia failed:', err, 'Constraints:', c);
+      // Auto-fallback: try relaxed constraints with preferred facing mode
+      if (c && c.video) {
+        let facingPref = 'environment';
+        if (typeof c.video === 'object' && c.video.facingMode) {
+          facingPref = c.video.facingMode.ideal || c.video.facingMode.exact || c.video.facingMode;
+        }
+        try {
+          console.log('[CameraShim] Retrying with relaxed facing preference:', facingPref);
+          return await nativeGUM({ audio: false, video: { facingMode: { ideal: facingPref } } });
+        } catch (err2) {
+          console.warn('[CameraShim] Relaxed fallback failed, trying generic video:', err2);
+          try {
+            return await nativeGUM({ audio: false, video: true });
+          } catch (err3) {
+            console.warn('[CameraShim] All getUserMedia fallbacks failed');
+          }
+        }
+      }
+      throw err;
+    }
+  };
+}
+
+const CONFIG = {
+  // Target AR Marker compiled file (generated from assets/t1.jpg)
+  targetUrl: "assets/t1.mind",
+
+  // 3D Character model inside glb folder
+  modelUrl: "assets/glb/monster.glb",
+
+  // Interactive 3D Planes model (four planes positioned in front of character)
+  planesUrl: "./planes.glb",
+
+  // §5.5 — in production, fetch this from your CMS/asset server per campaign/garment ID
+  // read from the NFC URL, e.g. tapwear.app/ar?drop=001
+  contentUrl: null,
+
+  maxParticles: 220,          // §5.1 performance budget
+  smoothing: 0.35,             // one-euro-ish lerp factor, tune for jitter vs. lag
+};
+
+const SHOW_HAND_DEBUG = true;
+
+let compiledMindUrl = null;
+
+async function getTargetSrc() {
+  if (compiledMindUrl) {
+    return compiledMindUrl;
+  }
+  const url = CONFIG.targetUrl;
+  if (url.endsWith('.mind')) {
+    return url;
+  }
+
+  // Wait for MindAR Compiler to load
+  while (!window.MINDAR || !window.MINDAR.IMAGE || !window.MINDAR.IMAGE.Compiler) {
+    await new Promise(r => setTimeout(r, 50));
+  }
+
+  // Compile image target (.jpg / .png) to MindAR format in-browser using WebAssembly/Worker
+  if (els.progressText) {
+    els.progressText.textContent = 'COMPILING AR MARKER…';
+    els.progressFill.style.width = '40%';
+    els.progressPct.textContent = '40%';
+  }
+
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.src = url;
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = () => reject(new Error('Failed to load target image: ' + url));
+  });
+
+  const compiler = new window.MINDAR.IMAGE.Compiler();
+  await compiler.compileImageTargets([img], (progress) => {
+    const pct = Math.round(progress);
+    if (els.progressText) {
+      els.progressText.textContent = `COMPILING MARKER (${pct}%)`;
+      els.progressFill.style.width = `${pct}%`;
+      els.progressPct.textContent = `${pct}%`;
+    }
+  });
+
+  const exportedBuffer = await compiler.exportData();
+  const blob = new Blob([exportedBuffer], { type: 'application/octet-stream' });
+  compiledMindUrl = URL.createObjectURL(blob);
+  return compiledMindUrl;
+}
+
+const els = {
+  splash: document.getElementById('screen-splash'),
+  permission: document.getElementById('screen-permission'),
+  ar: document.getElementById('screen-ar'),
+  unsupported: document.getElementById('screen-unsupported'),
+  unsupportedReason: document.getElementById('unsupported-reason'),
+  btnStart: document.getElementById('btn-start'),
+  btnEnableCamera: document.getElementById('btn-enable-camera'),
+  cameraSelectWrap: document.getElementById('camera-select-wrap'),
+  cameraSelect: document.getElementById('camera-select'),
+  cameraErrorBox: document.getElementById('camera-error-box'),
+  cameraErrorTitle: document.getElementById('camera-error-title'),
+  cameraErrorDesc: document.getElementById('camera-error-desc'),
+  btnRetryCamera: document.getElementById('btn-retry-camera'),
+  btnFallbackSimulator: document.getElementById('btn-fallback-simulator'),
+  btnStartSimulator: document.getElementById('btn-start-simulator'),
+  progressFill: document.getElementById('progress-fill'),
+  progressText: document.getElementById('progress-text'),
+  progressPct: document.getElementById('progress-pct'),
+  statusDot: document.getElementById('status-dot'),
+  statusText: document.getElementById('status-text'),
+  reticleHint: document.getElementById('reticle-hint'),
+  lensToggle: document.getElementById('lens-toggle'),
+  lensLabel: document.getElementById('lens-label'),
+  btnClose: document.getElementById('btn-close'),
+  btnCapture: document.getElementById('btn-capture'),
+  btnAudio: document.getElementById('btn-audio'),
+  captureFlash: document.getElementById('capture-flash'),
+  toast: document.getElementById('toast'),
+  arContainer: document.getElementById('ar-container'),
+  btnSizeDown: document.getElementById('btn-size-down'),
+  btnSizeUp: document.getElementById('btn-size-up'),
+  btnSizeReset: document.getElementById('btn-size-reset'),
+  scaleLabel: document.getElementById('scale-label'),
+  gestureChip: document.getElementById('gesture-chip'),
+  gestureText: document.getElementById('gesture-text'),
+  btnShowMarker: document.getElementById('btn-show-marker'),
+  modalMarker: document.getElementById('modal-marker'),
+  btnCloseMarker: document.getElementById('btn-close-marker'),
+  handDebugCursor: document.getElementById('hand-debug-cursor'),
+};
+
+let mindarThree, renderer, scene, camera, anchor;
+let audioCtx, audioEnabled = true, bgAudioSource;
+let currentFacing = 'environment';
+let modelScale = 0.866;
+let baseMarkerScale = 0.43;
+let basePosZ = 0.05;
+let preloadedGLTF = null;
+let preloadedPlanesGLTF = null;
+let planesModel = null;
+let interactivePlanes = [];
+let isPlaneInteractionActive = false;
+
+// MediaPipe Pose Gesture State:
+// When arms are down: planes are visible (arePlanesDisappeared = false).
+// When arms are raised (elbows and wrists above shoulders): planes are invisible (arePlanesDisappeared = true).
+let arePlanesDisappeared = false;
+let targetPlaneOpacity = 0.88;
+let currentPlaneOpacity = 0.88;
+let handRaisedDebounceCount = 0;
+let handLoweredDebounceCount = 0;
+const GESTURE_TRIGGER_FRAMES = 2;
+let headBone = null, headRestRot = null, neckBone = null, neckRestRot = null;
+let simHeadBone = null, simHeadRestRot = null;
+let detectedCameras = [];
+let isSimulatorMode = false;
+let simAnimId = null, simRenderer, simScene, simCamera, simMonster, simMixer;
+let isDragging = false, prevMouseX = 0, prevMouseY = 0;
+
+// ---------------------------------------------------------------
+// 0. Capability check & Device Enumeration
+// ---------------------------------------------------------------
+function checkSupport(){
+  const hasWebRTC = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  const hasWebGL = (() => {
+    try {
+      const c = document.createElement('canvas');
+      return !!(c.getContext('webgl') || c.getContext('experimental-webgl'));
+    } catch(e){ return false; }
+  })();
+  if (!hasWebRTC || !hasWebGL){
+    els.unsupportedReason.textContent = !hasWebRTC
+      ? "Camera access isn't available in this browser. Open this link in Safari (iOS) or Chrome (Android) instead of an in-app browser."
+      : "This device's browser doesn't support the 3D graphics this experience needs.";
+    els.unsupported.classList.remove('hidden');
+    return false;
+  }
+  return true;
+}
+
+async function updateCameraList() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    detectedCameras = devices.filter(d => d.kind === 'videoinput');
+    if (els.cameraSelect && detectedCameras.length > 0) {
+      els.cameraSelect.innerHTML = '<option value="">Auto (Main / Rear Camera)</option>';
+      detectedCameras.forEach((cam, idx) => {
+        const opt = document.createElement('option');
+        opt.value = cam.deviceId;
+        const isBack = /back|rear|environment|world/i.test(cam.label);
+        const isFront = /front|user|selfie|face/i.test(cam.label);
+        let tag = '';
+        if (isBack) tag = ' [Main / Rear]';
+        else if (isFront) tag = ' [Front / Selfie]';
+        opt.textContent = (cam.label || `Camera ${idx + 1}`) + tag;
+        els.cameraSelect.appendChild(opt);
+      });
+      // Always keep Auto (empty value) by default so facingMode controls the lens
+      els.cameraSelect.value = '';
+
+      const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      if (detectedCameras.length > 1 && !isMobileDevice) {
+        els.cameraSelectWrap.style.display = 'block';
+      } else {
+        els.cameraSelectWrap.style.display = 'none';
+      }
+    }
+  } catch(e) {
+    console.warn("Could not enumerate camera devices:", e);
+  }
+}
+
+// ---------------------------------------------------------------
+// Container & Track Cleanup
+// ---------------------------------------------------------------
+function cleanARContainer() {
+  if (mindarThree) {
+    try { mindarThree.stop(); } catch(e) {}
+    mindarThree = null;
+  }
+  if (simAnimId) {
+    cancelAnimationFrame(simAnimId);
+    simAnimId = null;
+  }
+  if (mixer) {
+    try { mixer.stopAllAction(); } catch(e) {}
+    mixer = null;
+  }
+  if (simMixer) {
+    try { simMixer.stopAllAction(); } catch(e) {}
+    simMixer = null;
+  }
+  monsterModel = null;
+  simMonster = null;
+  animMesh = null;
+  onHandLost();
+  resetAllPlanes();
+  interactivePlanes = [];
+  planesModel = null;
+  headBone = null;
+  headRestRot = null;
+  neckBone = null;
+  neckRestRot = null;
+  simHeadBone = null;
+  simHeadRestRot = null;
+  anchor = null;
+  monsterGarmentPos = null;
+  renderer = null;
+  scene = null;
+  camera = null;
+  const videos = els.arContainer.querySelectorAll('video');
+  videos.forEach(v => {
+    try {
+      if (v.srcObject && v.srcObject.getTracks) {
+        v.srcObject.getTracks().forEach(t => t.stop());
+      }
+    } catch(e) {}
+    v.remove();
+  });
+  const canvases = els.arContainer.querySelectorAll('canvas');
+  canvases.forEach(c => c.remove());
+}
+
+// ---------------------------------------------------------------
+// Error Feedback & Diagnostics
+// ---------------------------------------------------------------
+function showCameraError(err) {
+  if (!els.cameraErrorBox) return;
+  els.cameraErrorBox.classList.remove('hidden');
+  let title = "Camera Issue Detected";
+  let desc = "Could not activate the camera stream.";
+
+  const errStr = (err && (err.name || err.message || (typeof err === 'string' ? err : ''))) || '';
+  if (errStr.includes('NotAllowed') || errStr.includes('PermissionDenied')) {
+    title = "Camera Permission Denied";
+    desc = "Camera access was blocked by your browser. Please click the camera/lock icon in your address bar to allow camera access, then click 'Retry Camera'.";
+  } else if (errStr.includes('NotReadable') || errStr.includes('TrackStart')) {
+    title = "Camera In Use by Another App";
+    desc = "Another program (such as Zoom, Microsoft Teams, Discord, OBS, or another browser tab) is currently using your webcam. Please close it and click 'Retry Camera'.";
+  } else if (errStr.includes('Abort') || errStr.includes('Timeout')) {
+    title = "Camera Timeout / Device Busy";
+    desc = "The camera took too long to respond. Ensure your webcam is firmly plugged in and that Windows Camera Privacy ('Let desktop apps access your camera') is enabled.";
+  } else if (errStr.includes('NotFound') || errStr.includes('DevicesNotFound')) {
+    title = "No Camera Detected";
+    desc = "No video camera was found. You can test the experience right now using 'Preview 3D Instead'.";
+  } else {
+    desc = `The camera stream could not be started (${errStr || 'device timeout or in use'}). You can retry or click 'Preview 3D Instead'.`;
+  }
+
+  els.cameraErrorTitle.textContent = title;
+  els.cameraErrorDesc.textContent = desc;
+}
+
+// ---------------------------------------------------------------
+// 1. Splash / preload
+// ---------------------------------------------------------------
+async function runPreload(){
+  els.progressText.textContent = 'CONNECTING…';
+  els.progressFill.style.width = '15%';
+  els.progressPct.textContent = '15%';
+
+  // Wait for GLTFLoader and MINDAR to be ready
+  let waitCount = 0;
+  while (!window.GLTFLoader && waitCount < 100) {
+    await new Promise(r => setTimeout(r, 40));
+    waitCount++;
+  }
+
+  // Preload 3D Monster Model (26MB) and planes.glb in parallel
+  if (window.GLTFLoader) {
+    els.progressText.textContent = 'DOWNLOADING 3D ASSETS…';
+    try {
+      const loader = new window.GLTFLoader();
+      const p1 = new Promise((resolve) => {
+        loader.load(
+          CONFIG.modelUrl,
+          (gltf) => {
+            preloadedGLTF = gltf;
+            console.log('[Preload] 3D Monster Model cached successfully from', CONFIG.modelUrl);
+            resolve();
+          },
+          (xhr) => {
+            if (xhr.lengthComputable && xhr.total > 0) {
+              const pct = Math.min(85, Math.round((xhr.loaded / xhr.total) * 85));
+              els.progressFill.style.width = pct + '%';
+              els.progressPct.textContent = pct + '%';
+              els.progressText.textContent = `DOWNLOADING 3D ASSETS (${pct}%)`;
+            }
+          },
+          (err) => {
+            console.warn('[Preload] GLB preload warning, will load on demand:', err);
+            resolve();
+          }
+        );
+      });
+
+      const p2 = new Promise((resolve) => {
+        loader.load(
+          CONFIG.planesUrl,
+          (gltf) => {
+            preloadedPlanesGLTF = gltf;
+            console.log('[Planes] planes.glb preloaded successfully from', CONFIG.planesUrl);
+            resolve();
+          },
+          undefined,
+          (err) => {
+            console.warn('[Planes] Preload error, will load on demand:', err);
+            resolve();
+          }
+        );
+      });
+
+      await Promise.all([p1, p2]);
+    } catch(e) {
+      console.warn('[Preload] Error during GLB preload:', e);
+    }
+  }
+
+  els.progressText.textContent = 'INITIALIZING TRACKER…';
+  els.progressFill.style.width = '92%';
+  els.progressPct.textContent = '92%';
+
+  // Preload MindAR marker (.mind file) into an in-memory Blob URL for 0ms tracking setup latency
+  try {
+    const mindRes = await fetch(CONFIG.targetUrl);
+    if (mindRes.ok) {
+      const mindBlob = await mindRes.blob();
+      compiledMindUrl = URL.createObjectURL(mindBlob);
+      console.log('[Preload] Target marker .mind cached as Blob URL successfully');
+    }
+  } catch(e) {
+    console.warn('[Preload] Target marker preload failed, will load direct:', e);
+  }
+
+  // Pre-initialize MediaPipe Pose Landmarker
+  initPoseTracking();
+
+  await new Promise(r => setTimeout(r, 150));
+
+  els.progressText.textContent = 'READY';
+  els.progressFill.style.width = '100%';
+  els.progressPct.textContent = '100%';
+  els.btnStart.disabled = false;
+  els.btnStart.textContent = 'TAP TO BEGIN';
+}
+
+els.btnStart.addEventListener('click', () => {
+  els.splash.classList.add('hidden');
+  els.permission.classList.remove('hidden');
+  updateCameraList();
+});
+
+// ---------------------------------------------------------------
+// 2. Permission-gated camera start
+// ---------------------------------------------------------------
+async function handleStartCamera() {
+  els.btnEnableCamera.disabled = true;
+  els.btnEnableCamera.textContent = 'STARTING CAMERA…';
+  if (els.cameraErrorBox) els.cameraErrorBox.classList.add('hidden');
+
+  // Immediately display the AR view & HUD so the 3D character is visible instantaneously
+  els.permission.classList.add('hidden');
+  els.ar.classList.remove('hidden');
+  els.statusText.textContent = 'STARTING MAIN LENS…';
+  els.statusDot.className = 'status-dot searching';
+
+  try {
+    await initAR();
+    // Refresh camera dropdown with real device names now that permission is granted
+    updateCameraList();
+  } catch (err){
+    const safeErr = err || new Error("Camera initialization timed out or was rejected");
+    console.error('Camera startup error:', safeErr);
+    els.ar.classList.add('hidden');
+    els.permission.classList.remove('hidden');
+    els.btnEnableCamera.disabled = false;
+    els.btnEnableCamera.textContent = 'ENABLE CAMERA';
+    showCameraError(safeErr);
+    showToast("Camera access failed — see diagnostic instructions.");
+  }
+}
+
+els.btnEnableCamera.addEventListener('click', handleStartCamera);
+if (els.btnRetryCamera) {
+  els.btnRetryCamera.addEventListener('click', handleStartCamera);
+}
+if (els.btnStartSimulator) {
+  els.btnStartSimulator.addEventListener('click', startSimulatorMode);
+}
+if (els.btnFallbackSimulator) {
+  els.btnFallbackSimulator.addEventListener('click', startSimulatorMode);
+}
+
+// ---------------------------------------------------------------
+// 3. MindAR + Three.js setup
+// ---------------------------------------------------------------
+async function initAR(){
+  cleanARContainer();
+
+  while (!window.MINDAR || !window.MINDAR.IMAGE || !window.MINDAR.IMAGE.MindARThree) {
+    await new Promise(r => setTimeout(r, 50));
+  }
+
+  const targetSrc = await getTargetSrc();
+  // Only use selectedDeviceId if user manually selected a specific device in the dropdown
+  const selectedDeviceId = (els.cameraSelect && els.cameraSelect.value) ? els.cameraSelect.value : null;
+
+  const tryStart = async (facing, deviceId) => {
+    const config = {
+      container: els.arContainer,
+      imageTargetSrc: targetSrc,
+      uiLoading: "no",
+      uiScanning: "no",
+      uiError: "no",
+      filterMinCF: 0.0001,   // One-Euro filter tuning -> less jitter
+      filterBeta: 0.001,     // -> less lag
+      missTolerance: 5,      // frames to tolerate before declaring target lost
+      warmupTolerance: 3,
+    };
+
+    if (deviceId) {
+      if (facing === 'user') {
+        config.userDeviceId = deviceId;
+      } else {
+        config.environmentDeviceId = deviceId;
+      }
+    }
+
+    mindarThree = new window.MINDAR.IMAGE.MindARThree(config);
+
+    // Explicitly configure shouldFaceUser: false for Main lens (rear), true for Front lens (selfie)
+    mindarThree.shouldFaceUser = (facing === 'user');
+
+    ({ renderer, scene, camera } = mindarThree);
+    if (renderer) {
+      renderer.setClearColor(0x000000, 0);
+    }
+    anchor = mindarThree.addAnchor(0); // target index 0 = garment artwork
+
+    buildSceneContent(anchor.group);
+
+    anchor.onTargetFound = () => setLockState(true);
+    anchor.onTargetLost  = () => setLockState(false);
+
+    // Start rendering preview IMMEDIATELY so 3D character is visible from frame 1
+    renderer.setAnimationLoop(renderLoop);
+
+    await mindarThree.start();
+
+    if (!isPoseTrackerReady) {
+      initPoseTracking();
+    }
+
+    currentFacing = mindarThree.shouldFaceUser ? 'user' : 'environment';
+    els.lensLabel.textContent = currentFacing === 'environment' ? 'MAIN LENS' : 'FRONT LENS';
+    els.statusText.textContent = currentFacing === 'environment' ? 'MAIN LENS ACTIVE' : 'FRONT LENS ACTIVE';
+
+    // Ensure video element visibility and active video stream playback
+    const video = els.arContainer.querySelector('video');
+    if (video) {
+      video.style.zIndex = '1';
+      video.style.display = 'block';
+      video.style.visibility = 'visible';
+      video.style.opacity = '1';
+      video.setAttribute('playsinline', '');
+      video.setAttribute('webkit-playsinline', '');
+      video.muted = true;
+      if (video.paused) {
+        try { await video.play(); } catch(e) { console.warn("Video play error:", e); }
+      }
+    }
+    if (renderer && renderer.domElement) {
+      renderer.domElement.style.zIndex = '2';
+      renderer.domElement.style.background = 'transparent';
+    }
+  };
+
+  try {
+    await tryStart(currentFacing, selectedDeviceId);
+  } catch (err) {
+    console.warn(`Initial camera start failed with ${currentFacing}:`, err);
+    cleanARContainer();
+
+    // If explicit deviceId was passed, retry with pure facingMode
+    if (selectedDeviceId) {
+      try {
+        console.log("Retrying camera start with pure facingMode...");
+        await tryStart(currentFacing, null);
+        return;
+      } catch (err2) {
+        console.warn("Retry without deviceId failed:", err2);
+      }
+    }
+
+    // Only if environment totally failed, try user lens fallback
+    const fallbackFacing = currentFacing === 'environment' ? 'user' : 'environment';
+    try {
+      await tryStart(fallbackFacing, null);
+    } catch (err3) {
+      console.error("Camera fallback also failed:", err3);
+      throw err || err3;
+    }
+  }
+}
+
+let isTargetLocked = false;
+let arRotY = 0, arRotX = 0;
+let isArDragging = false, arPrevX = 0, arPrevY = 0;
+let monsterGarmentPos = null;
+
+function setLockState(locked){
+  isTargetLocked = !!locked;
+  els.statusDot.classList.toggle('locked', isTargetLocked);
+  els.statusDot.classList.toggle('searching', !isTargetLocked);
+  els.statusText.textContent = isTargetLocked ? 'ARTWORK TRACKED' : (currentFacing === 'environment' ? 'SCANNING FOR T-SHIRT…' : 'FRONT LENS ACTIVE');
+  els.reticleHint.classList.toggle('hide', isTargetLocked);
+
+  if (monsterModel) {
+    monsterModel.visible = isTargetLocked;
+  }
+
+  if (planesModel) {
+    planesModel.visible = isTargetLocked && !arePlanesDisappeared;
+  }
+
+  isPlaneInteractionActive = isTargetLocked && !arePlanesDisappeared;
+
+  if (!isPlaneInteractionActive) {
+    resetAllPlanes();
+    clearActivePlane();
+  }
+
+  if (isTargetLocked){
+    playUnlockSting();
+  } else {
+    console.log('[MindAR] Target lost');
+  }
+}
+
+// ---------------------------------------------------------------
+// 4. 3D content: GLB model + animated overlay + particles
+// ---------------------------------------------------------------
+let animMesh, monsterModel, mixer, clock = new THREE.Clock();
+let particleSystem, particleVelocities;
+
+function buildSceneContent(group){
+  // 1. Scene illumination — ambient + directional lights added to SCENE directly
+  const ambLight = new THREE.AmbientLight(0xffffff, 2.5);
+  const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444455, 2.0);
+  const dirLight = new THREE.DirectionalLight(0xffb020, 2.8);
+  dirLight.position.set(2, 4, 3);
+  const frontLight = new THREE.DirectionalLight(0xffffff, 2.2);
+  frontLight.position.set(0, 0, 4);
+  const pointLight = new THREE.PointLight(0x4fe3d0, 2.2, 10);
+  pointLight.position.set(-1, 1, 2);
+
+  const lightContainer = scene || group;
+  lightContainer.add(ambLight);
+  lightContainer.add(hemiLight);
+  lightContainer.add(dirLight);
+  lightContainer.add(frontLight);
+  lightContainer.add(pointLight);
+
+  // 2. Particle field
+  const count = CONFIG.maxParticles;
+  const positions = new Float32Array(count * 3);
+  particleVelocities = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++){
+    positions[i*3+0] = (Math.random() - 0.5) * 1.5;
+    positions[i*3+1] = (Math.random() - 0.5) * 1.5;
+    positions[i*3+2] = Math.random() * 0.8;
+    particleVelocities[i*3+0] = (Math.random() - 0.5) * 0.002;
+    particleVelocities[i*3+1] = Math.random() * 0.003 + 0.0008;
+    particleVelocities[i*3+2] = 0;
+  }
+  const pGeo = new THREE.BufferGeometry();
+  pGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const pMat = new THREE.PointsMaterial({ color: 0xfff2d6, size: 0.015, transparent: true, opacity: 0.85 });
+  particleSystem = new THREE.Points(pGeo, pMat);
+  group.add(particleSystem);
+
+  // 3. Attach 3D Monster Model
+  attachMonsterModel(group);
+
+  // 4. Attach 4 Interactive Planes from planes.glb
+  attachPlanesModel(group);
+}
+
+function attachMonsterModel(group){
+  const instantiateModel = (gltf) => {
+    // Clone scene using SkeletonUtils for full skinned mesh/skeleton integrity
+    monsterModel = window.SkeletonUtils ? window.SkeletonUtils.clone(gltf.scene) : gltf.scene.clone(true);
+
+    monsterModel.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = false;
+        child.receiveShadow = false;
+        if (child.material) {
+          child.material.side = THREE.DoubleSide;
+          child.material.transparent = false;
+          child.material.needsUpdate = true;
+        }
+      }
+    });
+
+    // Auto-scale and center using exact model bounding box
+    const box = new THREE.Box3().setFromObject(monsterModel);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+
+    monsterModel.userData.box = box;
+    monsterModel.userData.size = size;
+    monsterModel.userData.center = center;
+
+    // MindAR marker width = 1.0 (from x=-0.5 to x=+0.5).
+    // Set 3D character scale to the 5-clicks size on "+ SIZE" (1.15^5 = 2.01x / ~201% scale):
+    const targetMarkerWidth = 1.0;
+    baseMarkerScale = targetMarkerWidth / (size.x || 2.323);
+    const scaleFactor5Clicks = Math.pow(1.15, 5); // 5 clicks on + SIZE (~201%)
+    modelScale = baseMarkerScale * scaleFactor5Clicks;
+    monsterModel.scale.set(modelScale, modelScale, modelScale);
+
+    if (els.scaleLabel) {
+      els.scaleLabel.textContent = `🎯 201% MARKER`;
+    }
+
+    // Center on marker in X, Y and sit on the shirt surface protruding into +Z (towards camera)
+    const posX = -center.x * modelScale;
+    const posY = -center.y * modelScale;
+    basePosZ = (-box.min.z * modelScale) + 0.05;
+    monsterGarmentPos = new THREE.Vector3(posX, posY, basePosZ);
+
+    monsterModel.position.copy(monsterGarmentPos);
+    monsterModel.rotation.set(0, 0, 0);
+    monsterModel.visible = isTargetLocked;
+    group.add(monsterModel);
+
+    // Sync planesModel position & scale if it preloaded earlier
+    if (planesModel) {
+      planesModel.scale.set(modelScale, modelScale, modelScale);
+      planesModel.position.copy(monsterGarmentPos);
+      planesModel.rotation.set(0, 0, 0);
+      planesModel.visible = isTargetLocked && !arePlanesDisappeared;
+    }
+
+    // Locate C_head_01 and c_neck bones for realistic head and neck tracking
+    headBone = monsterModel.getObjectByName('C_head_01');
+    neckBone = monsterModel.getObjectByName('c_neck');
+    if (headBone) {
+      headRestRot = {
+        x: headBone.rotation.x,
+        y: headBone.rotation.y,
+        z: headBone.rotation.z
+      };
+      console.log('[AR] Found C_head_01 bone for head tracking. Rest rotation:', headRestRot);
+    } else {
+      console.warn('[AR] C_head_01 bone not found on monster model');
+    }
+    if (neckBone) {
+      neckRestRot = {
+        x: neckBone.rotation.x,
+        y: neckBone.rotation.y,
+        z: neckBone.rotation.z
+      };
+      console.log('[AR] Found c_neck bone for natural neck articulation. Rest rotation:', neckRestRot);
+    }
+
+    if (gltf.animations && gltf.animations.length > 0) {
+      mixer = new THREE.AnimationMixer(monsterModel);
+      gltf.animations.forEach(clip => mixer.clipAction(clip).play());
+    }
+
+    console.log('[AR] 3D Monster attached. Garment Pos:', monsterGarmentPos, 'Scale:', modelScale);
+    showToast('3D Monster Model Active ✨');
+  };
+
+  if (preloadedGLTF) {
+    instantiateModel(preloadedGLTF);
+  } else if (window.GLTFLoader) {
+    showToast('Loading 3D Monster Model…');
+    const loader = new window.GLTFLoader();
+    loader.load(CONFIG.modelUrl, (gltf) => {
+      preloadedGLTF = gltf;
+      instantiateModel(gltf);
+    }, undefined, (err) => {
+      console.warn('GLB load error, using fallback geometry:', err);
+      createPlaceholderMesh(group);
+    });
+  } else {
+    createPlaceholderMesh(group);
+  }
+}
+
+// ---------------------------------------------------------------
+// 4b. Attach planes.glb & Setup 4 Interactive Meshes
+// ---------------------------------------------------------------
+function attachPlanesModel(group){
+  const instantiatePlanes = (gltf) => {
+    planesModel = gltf.scene.clone(true);
+    interactivePlanes = [];
+    console.log('[Planes] planes.glb loaded');
+
+    // 4 vibrant holographic palettes with glowing emissive illumination
+    const planePalettes = [
+      { color: 0x00f0ff, emissive: 0x005577 }, // Cyan Hologram
+      { color: 0xffb700, emissive: 0x774400 }, // Neon Amber
+      { color: 0xb038ff, emissive: 0x550088 }, // Cyber Purple
+      { color: 0x00ff88, emissive: 0x006633 }, // Matrix Emerald
+    ];
+
+    let meshIdx = 0;
+    planesModel.traverse((child) => {
+      if (child.isMesh) {
+        console.log('[Planes] Mesh:', child.name);
+        child.castShadow = false;
+        child.receiveShadow = false;
+
+        // Normalize Houdini Z depth:
+        // In Houdini, planes were authored at Z = 2.02 to 3.03 (behind the camera in AR).
+        // The monster chest is at Z = 0.48.
+        // Bring planes forward to sit in a floating layer in front of the chest: Z = 0.58 to 0.80.
+        const posAttr = child.geometry.attributes.position;
+        if (posAttr && !child.userData.zNormalized) {
+          for (let v = 0; v < posAttr.count; v++) {
+            const origZ = posAttr.getZ(v);
+            const newZ = 0.58 + (origZ - 2.02) * 0.22;
+            posAttr.setZ(v, newZ);
+          }
+          posAttr.needsUpdate = true;
+          child.geometry.computeBoundingBox();
+          child.geometry.computeBoundingSphere();
+          child.userData.zNormalized = true;
+        }
+
+        const pal = planePalettes[meshIdx % planePalettes.length];
+        meshIdx++;
+
+        child.material = new THREE.MeshStandardMaterial({
+          color: pal.color,
+          emissive: pal.emissive,
+          emissiveIntensity: 0.7,
+          roughness: 0.15,
+          metalness: 0.2,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: currentPlaneOpacity,
+          depthWrite: false
+        });
+        child.material.needsUpdate = true;
+        child.userData.originalColor = child.material.color.clone();
+        interactivePlanes.push(child);
+      }
+    });
+
+    if (modelScale) {
+      planesModel.scale.set(modelScale, modelScale, modelScale);
+    }
+    if (monsterGarmentPos) {
+      planesModel.position.copy(monsterGarmentPos);
+    }
+
+    planesModel.rotation.set(0, 0, 0);
+    planesModel.visible = isTargetLocked && !arePlanesDisappeared;
+    group.add(planesModel);
+    isPlaneInteractionActive = isTargetLocked && !arePlanesDisappeared;
+  };
+
+  if (preloadedPlanesGLTF) {
+    instantiatePlanes(preloadedPlanesGLTF);
+  } else if (window.GLTFLoader) {
+    const loader = new window.GLTFLoader();
+    loader.load(CONFIG.planesUrl, (gltf) => {
+      preloadedPlanesGLTF = gltf;
+      instantiatePlanes(gltf);
+    }, undefined, (err) => {
+      console.warn('[Planes] Error loading planes.glb:', err);
+    });
+  }
+}
+
+// ---------------------------------------------------------------
+// 4c. MediaPipe PoseLandmarker Tracking (Elbows & Wrists above Shoulders)
+// ---------------------------------------------------------------
+let poseLandmarker = null;
+let isPoseTrackerReady = false;
+let hasPoseDetected = false;
+let lastPoseInferenceTime = 0;
+const POSE_INFERENCE_INTERVAL_MS = 35; // Responsive pose inference (~28 fps)
+
+async function initPoseTracking() {
+  if (poseLandmarker) return;
+  if (els.gestureText) {
+    els.gestureText.textContent = '⏳ POSE AI LOADING...';
+  }
+
+  let waitCount = 0;
+  while ((!window.FilesetResolver || !window.PoseLandmarker) && waitCount < 100) {
+    await new Promise(r => setTimeout(r, 50));
+    waitCount++;
+  }
+  if (!window.FilesetResolver || !window.PoseLandmarker) {
+    console.warn('[PoseTracking] MediaPipe tasks-vision libraries not ready');
+    if (els.gestureText) els.gestureText.textContent = '⚠️ POSE LOAD FAIL';
+    return;
+  }
+
+  const modelCandidates = [
+    "assets/models/pose_landmarker_lite.task",
+    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
+  ];
+
+  let vision = null;
+  try {
+    vision = await window.FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+    );
+  } catch (vErr) {
+    console.warn('[PoseTracking] FilesetResolver error:', vErr);
+  }
+
+  if (!vision) {
+    if (els.gestureText) els.gestureText.textContent = '⚠️ WASM ERROR';
+    return;
+  }
+
+  // Robust multi-tier fallback: GPU local -> CPU local -> GPU CDN -> CPU CDN
+  const attempts = [
+    { model: modelCandidates[0], delegate: "GPU" },
+    { model: modelCandidates[0], delegate: "CPU" },
+    { model: modelCandidates[1], delegate: "GPU" },
+    { model: modelCandidates[1], delegate: "CPU" },
+  ];
+
+  for (const config of attempts) {
+    try {
+      console.log(`[PoseTracking] Attempting ${config.delegate} with ${config.model}...`);
+      poseLandmarker = await window.PoseLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: config.model,
+          delegate: config.delegate
+        },
+        runningMode: "VIDEO",
+        numPoses: 1
+      });
+      isPoseTrackerReady = true;
+      console.log(`[PoseTracking] Successfully initialized with ${config.delegate} (${config.model})`);
+      updateGestureHUD(!arePlanesDisappeared);
+      return;
+    } catch (err) {
+      console.warn(`[PoseTracking] ${config.delegate} failed for ${config.model}:`, err);
+    }
+  }
+
+  console.error('[PoseTracking] All PoseLandmarker initialization attempts failed');
+  if (els.gestureText) {
+    els.gestureText.textContent = '⚠️ POSE FAIL (TAP)';
+  }
+}
+
+// Coordinate mapping function:
+// Converts MediaPipe landmark (x, y in [0, 1]) to Three.js NDC (-1 to +1)
+function handToNDC(landmark, video, container) {
+  const Cw = (container && container.clientWidth) ? container.clientWidth : window.innerWidth;
+  const Ch = (container && container.clientHeight) ? container.clientHeight : window.innerHeight;
+  const Vw = (video && video.videoWidth) ? video.videoWidth : 1280;
+  const Vh = (video && video.videoHeight) ? video.videoHeight : 720;
+
+  const isMirrored = (currentFacing === 'user');
+  const vx = isMirrored ? (1 - landmark.x) : landmark.x;
+  const vy = landmark.y;
+
+  const scale = Math.max(Cw / Vw, Ch / Vh);
+  const renW = Vw * scale;
+  const renH = Vh * scale;
+  const offX = (Cw - renW) / 2;
+  const offY = (Ch - renH) / 2;
+
+  const screenX = vx * renW + offX;
+  const screenY = vy * renH + offY;
+
+  const ndcX =  (screenX / Cw) * 2 - 1;
+  const ndcY = -(screenY / Ch) * 2 + 1;
+
+  return { ndcX, ndcY, screenX, screenY };
+}
+
+let activePlane = null;
+let pendingHitPlane = null;
+let hitConfirmationCount = 0;
+const HIT_THRESHOLD = 2;
+let exitToleranceCounter = 0;
+const EXIT_TOLERANCE_FRAMES = 3;
+let smoothNdcX = 0, smoothNdcY = 0;
+let hasPreviousFinger = false;
+const pointer = new THREE.Vector2();
+const raycaster = new THREE.Raycaster();
+
+function setActivePlane(planeMesh) {
+  if (activePlane === planeMesh) return;
+  resetAllPlanes();
+  activePlane = planeMesh;
+  activePlane.material.color.setHex(0xffffff); // Highlight white on touch
+  playPopSound();
+  showToast(`Plane: ${planeMesh.name || 'Unlocked'}`);
+  console.log('[Planes] Touched plane:', planeMesh.name);
+}
+
+function clearActivePlane() {
+  if (activePlane) {
+    if (activePlane.userData && activePlane.userData.originalColor) {
+      activePlane.material.color.copy(activePlane.userData.originalColor);
+    }
+    activePlane = null;
+  }
+}
+
+function resetAllPlanes() {
+  for (let i = 0; i < interactivePlanes.length; i++) {
+    const p = interactivePlanes[i];
+    if (p && p.userData && p.userData.originalColor) {
+      p.material.color.copy(p.userData.originalColor);
+    }
+  }
+  activePlane = null;
+}
+
+function onHandLost() {
+  hasPreviousFinger = false;
+  exitToleranceCounter = 0;
+  pendingHitPlane = null;
+  hitConfirmationCount = 0;
+  clearActivePlane();
+  const cursor = document.getElementById('hand-debug-cursor');
+  if (cursor) cursor.style.display = 'none';
+}
+
+// Check if MediaPipe elbows and wrists are above shoulders
+// Landmarks: 11=left_shoulder, 12=right_shoulder, 13=left_elbow, 14=right_elbow, 15=left_wrist, 16=right_wrist
+function areElbowsAndWristsAboveShoulders(landmarks) {
+  if (!landmarks || landmarks.length < 17) return false;
+  const leftShoulder = landmarks[11];
+  const rightShoulder = landmarks[12];
+  const leftElbow = landmarks[13];
+  const rightElbow = landmarks[14];
+  const leftWrist = landmarks[15];
+  const rightWrist = landmarks[16];
+
+  // In normalized image space: y = 0.0 is TOP of frame, y = 1.0 is BOTTOM of frame.
+  // "above shoulders" means y < shoulder.y.
+  // We include a small 0.02 (2%) tolerance for natural body geometry.
+  const TOLERANCE = 0.02;
+
+  // Left arm raised: both left elbow AND left wrist are above left shoulder
+  const leftArmRaised = (leftElbow.y < (leftShoulder.y + TOLERANCE)) && (leftWrist.y < (leftShoulder.y + TOLERANCE));
+
+  // Right arm raised: both right elbow AND right wrist are above right shoulder
+  const rightArmRaised = (rightElbow.y < (rightShoulder.y + TOLERANCE)) && (rightWrist.y < (rightShoulder.y + TOLERANCE));
+
+  return leftArmRaised || rightArmRaised;
+}
+
+function updateGestureHUD(isArmsRaised) {
+  if (!els.gestureChip || !els.gestureText) return;
+  if (!isPoseTrackerReady) {
+    els.gestureText.textContent = '⏳ POSE AI LOADING...';
+    els.gestureChip.style.background = '';
+    els.gestureChip.style.color = '';
+    els.gestureChip.style.fontWeight = 'normal';
+    return;
+  }
+  if (isArmsRaised) {
+    els.gestureText.textContent = '✋ ARMS RAISED (PLANES OFF)';
+    els.gestureChip.style.background = 'var(--amber)';
+    els.gestureChip.style.color = 'var(--void)';
+    els.gestureChip.style.fontWeight = 'bold';
+  } else {
+    els.gestureText.textContent = '👇 ARMS DOWN (PLANES ON)';
+    els.gestureChip.style.background = '';
+    els.gestureChip.style.color = '';
+    els.gestureChip.style.fontWeight = 'normal';
+  }
+}
+
+function updatePoseTracking(video) {
+  if (!poseLandmarker || !video) return;
+  if (video.paused || video.ended || video.readyState < 2) return;
+  if (!video.videoWidth || !video.videoHeight) return;
+
+  const now = performance.now();
+  const safeTimestamp = Math.max(Math.round(now), Math.round(lastPoseInferenceTime) + 1);
+  if (safeTimestamp - lastPoseInferenceTime < POSE_INFERENCE_INTERVAL_MS) {
+    return;
+  }
+  lastPoseInferenceTime = safeTimestamp;
+
+  let results;
+  try {
+    results = poseLandmarker.detectForVideo(video, safeTimestamp);
+  } catch(e) {
+    console.warn('[PoseTracking] detectForVideo exception:', e);
+    return;
+  }
+
+  let isPoseSatisfied = false;
+
+  if (results && results.landmarks && results.landmarks.length > 0) {
+    if (!hasPoseDetected) {
+      hasPoseDetected = true;
+      console.log('[PoseTracking] Body pose detected');
+    }
+
+    const landmarks = results.landmarks[0];
+    if (areElbowsAndWristsAboveShoulders(landmarks)) {
+      isPoseSatisfied = true;
+    }
+
+    // Raycast index finger (19=left_index, 20=right_index) against interactive planes when visible
+    const indexTip = landmarks[19] || landmarks[20] || landmarks[15] || landmarks[16];
+    if (indexTip && !arePlanesDisappeared && isPlaneInteractionActive && camera && interactivePlanes.length > 0) {
+      const { ndcX, ndcY } = handToNDC(indexTip, video, els.arContainer);
+      pointer.set(ndcX, ndcY);
+      if (planesModel) planesModel.updateMatrixWorld(true);
+      raycaster.setFromCamera(pointer, camera);
+      const hits = raycaster.intersectObjects(interactivePlanes, false);
+      if (hits.length > 0) {
+        setActivePlane(hits[0].object);
+      } else {
+        clearActivePlane();
+      }
+    }
+  } else {
+    if (hasPoseDetected) {
+      hasPoseDetected = false;
+      console.log('[PoseTracking] Body pose lost');
+      onHandLost();
+    }
+  }
+
+  // When arms are raised -> planes become INVISIBLE.
+  // When arms are down -> planes become VISIBLE.
+  if (isPoseSatisfied) {
+    handRaisedDebounceCount++;
+    handLoweredDebounceCount = 0;
+    if (handRaisedDebounceCount >= GESTURE_TRIGGER_FRAMES) {
+      if (!arePlanesDisappeared) {
+        arePlanesDisappeared = true;
+        targetPlaneOpacity = 0.0;
+        showToast('✋ Arms Raised — Planes Hidden');
+        console.log('[PoseTracking] Arms raised above shoulders -> hiding planes.glb');
+        updateGestureHUD(true);
+      }
+    }
+  } else {
+    handLoweredDebounceCount++;
+    handRaisedDebounceCount = 0;
+    if (handLoweredDebounceCount >= GESTURE_TRIGGER_FRAMES) {
+      if (arePlanesDisappeared) {
+        arePlanesDisappeared = false;
+        targetPlaneOpacity = 0.88;
+        showToast('👇 Arms Down — Planes Visible ✨');
+        console.log('[PoseTracking] Arms down -> showing planes.glb');
+        updateGestureHUD(false);
+      }
+    }
+  }
+}
+
+window.testHandPointer = function(ndcX, ndcY) {
+  if (ndcX === null || ndcX === undefined) {
+    onHandLost();
+    return;
+  }
+  if (!hasHandDetected) {
+    hasHandDetected = true;
+    console.log('[HandTracking] Hand detected');
+  }
+  pointer.set(ndcX, ndcY);
+  if (planesModel) {
+    planesModel.updateMatrixWorld(true);
+  }
+  if (camera && interactivePlanes.length > 0) {
+    raycaster.setFromCamera(pointer, camera);
+    const hits = raycaster.intersectObjects(interactivePlanes, false);
+    if (hits.length > 0) {
+      setActivePlane(hits[0].object);
+      return hits[0].object.name;
+    } else {
+      clearActivePlane();
+      return null;
+    }
+  }
+  return null;
+};
+
+function createPlaceholderMesh(group){
+  const geo = new THREE.IcosahedronGeometry(0.35, 1);
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xffb020, metalness: 0.35, roughness: 0.25, flatShading: true,
+  });
+  animMesh = new THREE.Mesh(geo, mat);
+  animMesh.position.set(0, 0, 0.15);
+  group.add(animMesh);
+}
+
+function renderLoop(){
+  const delta = clock ? clock.getDelta() : 0.016;
+  const t = performance.now() * 0.001;
+
+  if (mixer) {
+    mixer.update(delta);
+  }
+
+  // Head-only tracking: Keep the whole body facing forward on the garment, rotate only "C_head_01" bone
+  if (isTargetLocked && monsterModel && camera && anchor && anchor.group && anchor.group.visible) {
+    monsterModel.rotation.set(0, 0, 0);
+
+    const m = anchor.group.matrix.elements;
+    const isValidMatrix = m && (m[0] !== 0 || m[5] !== 0 || m[10] !== 0) && !isNaN(m[0]);
+    if (isValidMatrix && headBone && headRestRot) {
+      anchor.group.updateMatrixWorld(true);
+      const det = anchor.group.matrixWorld.determinant();
+      if (Math.abs(det) > 0.0001) {
+        const camWorldPos = new THREE.Vector3();
+        camera.getWorldPosition(camWorldPos);
+
+        const invParent = new THREE.Matrix4().copy(anchor.group.matrixWorld).invert();
+        const localCamPos = camWorldPos.applyMatrix4(invParent);
+
+        // Position of head bone in anchor group's local coordinate space
+        const headWorldPos = new THREE.Vector3();
+        headBone.getWorldPosition(headWorldPos);
+        const localHeadPos = headWorldPos.applyMatrix4(invParent);
+
+        const dx = localCamPos.x - localHeadPos.x;
+        const dy = localCamPos.y - localHeadPos.y;
+        const dz = localCamPos.z - localHeadPos.z;
+
+        // Calculate yaw (horizontal head turn) and pitch (tilt up/down)
+        const targetYaw = Math.atan2(dx, dz);
+        const distXZ = Math.sqrt(dx * dx + dz * dz);
+        const targetPitch = Math.atan2(dy, distXZ);
+
+        // Physiological clamp (+/- 55 deg yaw, +/- 30 deg pitch) for realistic articulation without mesh twisting
+        const clampedYaw = Math.max(-0.95, Math.min(0.95, targetYaw));
+        const clampedPitch = Math.max(-0.5, Math.min(0.5, targetPitch));
+
+        if (neckBone && neckRestRot) {
+          // Distribute 30% of rotation to neck, 70% to head for organic skin deformation
+          const neckTargetY = neckRestRot.y + clampedYaw * 0.30;
+          const neckTargetX = neckRestRot.x - clampedPitch * 0.30;
+          neckBone.rotation.y += (neckTargetY - neckBone.rotation.y) * 0.2;
+          neckBone.rotation.x += (neckTargetX - neckBone.rotation.x) * 0.2;
+          neckBone.rotation.z = neckRestRot.z;
+
+          const headTargetY = headRestRot.y + clampedYaw * 0.70;
+          const headTargetX = headRestRot.x - clampedPitch * 0.70;
+          headBone.rotation.y += (headTargetY - headBone.rotation.y) * 0.25;
+          headBone.rotation.x += (headTargetX - headBone.rotation.x) * 0.25;
+          headBone.rotation.z = headRestRot.z;
+        } else {
+          const destY = headRestRot.y + clampedYaw;
+          const destX = headRestRot.x - clampedPitch;
+          headBone.rotation.y += (destY - headBone.rotation.y) * 0.25;
+          headBone.rotation.x += (destX - headBone.rotation.x) * 0.25;
+          headBone.rotation.z = headRestRot.z;
+        }
+      }
+    }
+    // Subtle idle breathing motion along Z
+    monsterModel.position.z = basePosZ + Math.sin(t * 2.0) * 0.012;
+  } else if (animMesh && camera && anchor && anchor.group && anchor.group.visible) {
+    anchor.group.updateMatrixWorld(true);
+    const camWorldPos = new THREE.Vector3();
+    camera.getWorldPosition(camWorldPos);
+    const invParent = new THREE.Matrix4().copy(anchor.group.matrixWorld).invert();
+    const localCamPos = camWorldPos.applyMatrix4(invParent);
+    const dx = localCamPos.x - animMesh.position.x;
+    const dz = localCamPos.z - animMesh.position.z;
+    animMesh.rotation.y = Math.atan2(dx, dz);
+  }
+
+  if (particleSystem) {
+    const pos = particleSystem.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++){
+      let y = pos.getY(i) + particleVelocities[i*3+1];
+      if (y > 0.6) y = -0.2;
+      pos.setY(i, y);
+      pos.setX(i, pos.getX(i) + particleVelocities[i*3+0]);
+    }
+    pos.needsUpdate = true;
+  }
+
+  // Update MediaPipe Pose Tracking (Elbows & Wrists above Shoulders)
+  const video = els.arContainer ? els.arContainer.querySelector('video') : null;
+  if (video) {
+    updatePoseTracking(video);
+  }
+
+  // MediaPipe Hand Gesture: Smooth visibility and opacity fade for planes.glb
+  if (planesModel) {
+    const FADE_RATE = 0.20;
+    currentPlaneOpacity += (targetPlaneOpacity - currentPlaneOpacity) * FADE_RATE;
+
+    if (currentPlaneOpacity < 0.03 || !isTargetLocked) {
+      planesModel.visible = false;
+      isPlaneInteractionActive = false;
+    } else {
+      planesModel.visible = true;
+      isPlaneInteractionActive = true;
+      for (let i = 0; i < interactivePlanes.length; i++) {
+        const pMat = interactivePlanes[i].material;
+        if (pMat) {
+          pMat.opacity = currentPlaneOpacity;
+          pMat.transparent = true;
+        }
+      }
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+
+// ---------------------------------------------------------------
+// 5. Spatial audio (§3, Web Audio API) — plays only once locked
+// ---------------------------------------------------------------
+function playUnlockSting(){
+  if (!audioEnabled) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    const panner = audioCtx.createStereoPanner ? audioCtx.createStereoPanner() : null;
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(660, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(990, audioCtx.currentTime + 0.18);
+    gain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.25, audioCtx.currentTime + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.5);
+    osc.connect(gain);
+    (panner ? gain.connect(panner).connect(audioCtx.destination) : gain.connect(audioCtx.destination));
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.55);
+  } catch(e){ /* audio is optional, fail silently */ }
+}
+
+els.btnAudio.addEventListener('click', () => {
+  audioEnabled = !audioEnabled;
+  els.btnAudio.style.opacity = audioEnabled ? '1' : '.4';
+});
+
+// ---------------------------------------------------------------
+// Standalone 3D Simulator Mode
+// ---------------------------------------------------------------
+function startSimulatorMode() {
+  cleanARContainer();
+  isSimulatorMode = true;
+  els.permission.classList.add('hidden');
+  els.ar.classList.remove('hidden');
+
+  els.statusDot.className = 'status-dot locked';
+  els.statusText.textContent = 'SIMULATOR MODE';
+  els.reticleHint.classList.add('hide');
+
+  // Set up Three.js standalone scene
+  simScene = new THREE.Scene();
+  simScene.background = new THREE.Color(0x0F1016);
+
+  const aspect = window.innerWidth / window.innerHeight;
+  simCamera = new THREE.PerspectiveCamera(50, aspect, 0.1, 1000);
+  simCamera.position.set(0, 0, 2.8);
+
+  simRenderer = new THREE.WebGLRenderer({ antialias: true });
+  simRenderer.setSize(window.innerWidth, window.innerHeight);
+  simRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  els.arContainer.appendChild(simRenderer.domElement);
+
+  const hemiLight = new THREE.HemisphereLight(0xffffff, 0x222233, 2.0);
+  simScene.add(hemiLight);
+  const dirLight = new THREE.DirectionalLight(0xffb020, 2.5);
+  dirLight.position.set(2, 4, 3);
+  simScene.add(dirLight);
+  const pointLight = new THREE.PointLight(0x4fe3d0, 2.5, 10);
+  pointLight.position.set(-1, 1, 2);
+  simScene.add(pointLight);
+
+  const modelGroup = new THREE.Group();
+  simScene.add(modelGroup);
+
+  // Floating particles
+  const count = CONFIG.maxParticles;
+  const positions = new Float32Array(count * 3);
+  const vels = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++){
+    positions[i*3+0] = (Math.random() - 0.5) * 3;
+    positions[i*3+1] = (Math.random() - 0.5) * 3;
+    positions[i*3+2] = (Math.random() - 0.5) * 1.5;
+    vels[i*3+0] = (Math.random() - 0.5) * 0.001;
+    vels[i*3+1] = Math.random() * 0.002 + 0.0005;
+    vels[i*3+2] = 0;
+  }
+  const pGeo = new THREE.BufferGeometry();
+  pGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const pMat = new THREE.PointsMaterial({ color: 0xffb020, size: 0.018, transparent: true, opacity: 0.8 });
+  const pSystem = new THREE.Points(pGeo, pMat);
+  simScene.add(pSystem);
+
+  // Load Model
+  function setupSimModel(gltf) {
+    simMonster = window.SkeletonUtils ? window.SkeletonUtils.clone(gltf.scene) : gltf.scene.clone(true);
+    simMonster.traverse(child => {
+      if (child.isMesh && child.material) {
+        child.material.side = THREE.DoubleSide;
+        child.material.transparent = false;
+        child.material.needsUpdate = true;
+      }
+    });
+    const box = new THREE.Box3().setFromObject(simMonster);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const simScale = 1.8 / (maxDim || 2.3);
+    simMonster.scale.set(simScale, simScale, simScale);
+    simMonster.position.set(-center.x * simScale, -center.y * simScale, -center.z * simScale);
+
+    simHeadBone = simMonster.getObjectByName('C_head_01');
+    if (simHeadBone) {
+      simHeadRestRot = {
+        x: simHeadBone.rotation.x,
+        y: simHeadBone.rotation.y,
+        z: simHeadBone.rotation.z
+      };
+    }
+
+    if (gltf.animations && gltf.animations.length > 0) {
+      simMixer = new THREE.AnimationMixer(simMonster);
+      gltf.animations.forEach(clip => simMixer.clipAction(clip).play());
+    }
+    modelGroup.add(simMonster);
+
+    // Setup interactive planes in simulator
+    function setupSimPlanes(pGltf) {
+      if (!pGltf) return;
+      planesModel = pGltf.scene.clone(true);
+      interactivePlanes = [];
+
+      const planePalettes = [
+        { color: 0x00f0ff, emissive: 0x005577 }, // Cyan Hologram
+        { color: 0xffb700, emissive: 0x774400 }, // Neon Amber
+        { color: 0xb038ff, emissive: 0x550088 }, // Cyber Purple
+        { color: 0x00ff88, emissive: 0x006633 }, // Matrix Emerald
+      ];
+
+      let meshIdx = 0;
+      planesModel.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = false;
+          child.receiveShadow = false;
+
+          const posAttr = child.geometry.attributes.position;
+          if (posAttr && !child.userData.zNormalized) {
+            for (let v = 0; v < posAttr.count; v++) {
+              const origZ = posAttr.getZ(v);
+              const newZ = 0.58 + (origZ - 2.02) * 0.22;
+              posAttr.setZ(v, newZ);
+            }
+            posAttr.needsUpdate = true;
+            child.geometry.computeBoundingBox();
+            child.geometry.computeBoundingSphere();
+            child.userData.zNormalized = true;
+          }
+
+          const pal = planePalettes[meshIdx % planePalettes.length];
+          meshIdx++;
+
+          child.material = new THREE.MeshStandardMaterial({
+            color: pal.color,
+            emissive: pal.emissive,
+            emissiveIntensity: 0.7,
+            roughness: 0.15,
+            metalness: 0.2,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: currentPlaneOpacity,
+            depthWrite: false
+          });
+          child.userData.originalColor = child.material.color.clone();
+          interactivePlanes.push(child);
+        }
+      });
+      planesModel.scale.set(simScale, simScale, simScale);
+      planesModel.position.set(-center.x * simScale, -center.y * simScale, -center.z * simScale);
+      planesModel.visible = !arePlanesDisappeared;
+      modelGroup.add(planesModel);
+    }
+
+    if (preloadedPlanesGLTF) {
+      setupSimPlanes(preloadedPlanesGLTF);
+    } else if (window.GLTFLoader) {
+      const pLoader = new window.GLTFLoader();
+      pLoader.load(CONFIG.planesUrl, (pGltf) => {
+        preloadedPlanesGLTF = pGltf;
+        setupSimPlanes(pGltf);
+      });
+    }
+
+    showToast('3D Monster Active — Drag to rotate!');
+  }
+
+  if (preloadedGLTF) {
+    setupSimModel(preloadedGLTF);
+  } else if (window.GLTFLoader) {
+    showToast('Loading 3D Monster Model…');
+    const loader = new window.GLTFLoader();
+    loader.load(CONFIG.modelUrl, (gltf) => {
+      preloadedGLTF = gltf;
+      setupSimModel(gltf);
+    }, undefined, () => {
+      createPlaceholderMesh(modelGroup);
+    });
+  } else {
+    createPlaceholderMesh(modelGroup);
+  }
+
+  // Pointer drag to orbit/rotate
+  const onPointerDown = (e) => {
+    isDragging = true;
+    prevMouseX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+    prevMouseY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
+  };
+  const onPointerMove = (e) => {
+    if (!isDragging) return;
+    const clientX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+    const clientY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
+    const deltaX = clientX - prevMouseX;
+    const deltaY = clientY - prevMouseY;
+    modelGroup.rotation.y += deltaX * 0.01;
+    modelGroup.rotation.x += deltaY * 0.005;
+    prevMouseX = clientX;
+    prevMouseY = clientY;
+  };
+  const onPointerUp = () => { isDragging = false; };
+
+  window.addEventListener('mousedown', onPointerDown);
+  window.addEventListener('mousemove', onPointerMove);
+  window.addEventListener('mouseup', onPointerUp);
+  window.addEventListener('touchstart', onPointerDown, { passive: true });
+  window.addEventListener('touchmove', onPointerMove, { passive: true });
+  window.addEventListener('touchend', onPointerUp);
+
+  const simClock = new THREE.Clock();
+  const simLoop = () => {
+    simAnimId = requestAnimationFrame(simLoop);
+    const delta = simClock.getDelta();
+
+    if (simMixer) simMixer.update(delta);
+    if (!isDragging) {
+      modelGroup.rotation.y += 0.004;
+    }
+
+    // Head-only tracking in simulator mode
+    if (simHeadBone && simHeadRestRot) {
+      modelGroup.updateMatrixWorld(true);
+      const invGroup = new THREE.Matrix4().copy(modelGroup.matrixWorld).invert();
+      const localCam = simCamera.position.clone().applyMatrix4(invGroup);
+      const headWorld = new THREE.Vector3();
+      simHeadBone.getWorldPosition(headWorld);
+      const localHead = headWorld.applyMatrix4(invGroup);
+
+      const dx = localCam.x - localHead.x;
+      const dy = localCam.y - localHead.y;
+      const dz = localCam.z - localHead.z;
+
+      const targetYaw = Math.atan2(dx, dz);
+      const distXZ = Math.sqrt(dx * dx + dz * dz);
+      const targetPitch = Math.atan2(dy, distXZ);
+
+      const clampedYaw = Math.max(-1.15, Math.min(1.15, targetYaw));
+      const clampedPitch = Math.max(-0.6, Math.min(0.6, targetPitch));
+
+      simHeadBone.rotation.y += (simHeadRestRot.y + clampedYaw - simHeadBone.rotation.y) * 0.15;
+      simHeadBone.rotation.x += (simHeadRestRot.x - clampedPitch - simHeadBone.rotation.x) * 0.15;
+      simHeadBone.rotation.z = simHeadRestRot.z;
+    }
+
+    const pos = pGeo.attributes.position;
+    for (let i = 0; i < pos.count; i++){
+      let y = pos.getY(i) + vels[i*3+1];
+      if (y > 1.5) y = -1.5;
+      pos.setY(i, y);
+    }
+    pos.needsUpdate = true;
+
+    // MediaPipe Hand Gesture: Smooth visibility and opacity fade for planes.glb
+    if (planesModel) {
+      const FADE_RATE = 0.20;
+      currentPlaneOpacity += (targetPlaneOpacity - currentPlaneOpacity) * FADE_RATE;
+      if (currentPlaneOpacity < 0.03) {
+        planesModel.visible = false;
+      } else {
+        planesModel.visible = true;
+        for (let i = 0; i < interactivePlanes.length; i++) {
+          const pMat = interactivePlanes[i].material;
+          if (pMat) {
+            pMat.opacity = currentPlaneOpacity;
+            pMat.transparent = true;
+          }
+        }
+      }
+    }
+
+    simRenderer.render(simScene, simCamera);
+  };
+  simLoop();
+
+  window.addEventListener('resize', () => {
+    if (!simCamera || !simRenderer) return;
+    simCamera.aspect = window.innerWidth / window.innerHeight;
+    simCamera.updateProjectionMatrix();
+    simRenderer.setSize(window.innerWidth, window.innerHeight);
+  });
+}
+
+// ---------------------------------------------------------------
+// 6. Lens selector (§2 step 4, §6 feature list)
+// ---------------------------------------------------------------
+els.lensToggle.addEventListener('click', async () => {
+  if (isSimulatorMode) {
+    showToast('Lens toggle is for live camera mode.');
+    return;
+  }
+  showToast('Switching camera…');
+  els.statusText.textContent = 'SWITCHING LENS…';
+  els.statusDot.className = 'status-dot searching';
+
+  try {
+    if (mindarThree) {
+      mindarThree.shouldFaceUser = !mindarThree.shouldFaceUser;
+      mindarThree.stop();
+      await mindarThree.start();
+
+      currentFacing = mindarThree.shouldFaceUser ? 'user' : 'environment';
+      els.lensLabel.textContent = currentFacing === 'environment' ? 'MAIN LENS' : 'FRONT LENS';
+      els.statusText.textContent = currentFacing === 'environment' ? 'MAIN LENS ACTIVE' : 'FRONT LENS ACTIVE';
+      showToast(currentFacing === 'environment' ? 'Switched to MAIN LENS' : 'Switched to FRONT LENS');
+
+      // Ensure new video stream element is styled and playing
+      const video = els.arContainer.querySelector('video');
+      if (video) {
+        video.style.zIndex = '1';
+        video.style.display = 'block';
+        video.style.visibility = 'visible';
+        video.setAttribute('playsinline', '');
+        video.setAttribute('webkit-playsinline', '');
+        video.muted = true;
+        if (video.paused) {
+          try { await video.play(); } catch(e) {}
+        }
+      }
+    } else {
+      currentFacing = currentFacing === 'environment' ? 'user' : 'environment';
+      els.lensLabel.textContent = currentFacing === 'environment' ? 'MAIN LENS' : 'FRONT LENS';
+      cleanARContainer();
+      await initAR();
+    }
+  } catch(e) {
+    console.error("Error switching camera:", e);
+    showToast('Could not switch camera on this device.');
+  }
+});
+
+// ---------------------------------------------------------------
+// 7. Screenshot capture + share (§6 feature list)
+// ---------------------------------------------------------------
+els.btnCapture.addEventListener('click', async () => {
+  els.captureFlash.classList.remove('fire'); void els.captureFlash.offsetWidth;
+  els.captureFlash.classList.add('fire');
+
+  try {
+    const canvas = els.arContainer.querySelector('canvas');
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+    const file = new File([blob], 'tapwear-drop-001.png', { type: 'image/png' });
+
+    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })){
+      await navigator.share({ files: [file], title: 'My TAPWEAR drop', text: 'Unlocked via NFC tap ✨' });
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'tapwear-drop-001.png'; a.click();
+      URL.revokeObjectURL(url);
+      showToast('Saved — share it from your gallery');
+    }
+  } catch(e){
+    showToast('Could not capture — try again');
+  }
+});
+
+// ---------------------------------------------------------------
+// 8. Exit
+// ---------------------------------------------------------------
+els.btnClose.addEventListener('click', () => {
+  cleanARContainer();
+  window.location.reload();
+});
+
+// ---------------------------------------------------------------
+// Utility
+// ---------------------------------------------------------------
+let toastTimer;
+function showToast(msg){
+  els.toast.textContent = msg;
+  els.toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => els.toast.classList.remove('show'), 2400);
+}
+
+// ---------------------------------------------------------------
+// 9. Preview 3D mode & Marker Modal controls
+// ---------------------------------------------------------------
+if (els.arContainer) {
+  els.arContainer.addEventListener('pointerdown', (e) => {
+    if (e.target.closest && (e.target.closest('.hud-top') || e.target.closest('.hud-bottom') || e.target.closest('#modal-marker'))) return;
+    isArDragging = true;
+    arPrevX = e.clientX;
+    arPrevY = e.clientY;
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (!isArDragging) return;
+    const dx = e.clientX - arPrevX;
+    const dy = e.clientY - arPrevY;
+    arPrevX = e.clientX;
+    arPrevY = e.clientY;
+    arRotY += dx * 0.008;
+    arRotX += dy * 0.008;
+    arRotX = Math.max(-0.6, Math.min(0.6, arRotX));
+  });
+  window.addEventListener('pointerup', () => { isArDragging = false; });
+  window.addEventListener('pointercancel', () => { isArDragging = false; });
+}
+
+function applyModelScale(newScale, showToastMsg = false) {
+  modelScale = Math.max(0.05, Math.min(4.0, newScale));
+  if (monsterModel) {
+    monsterModel.scale.set(modelScale, modelScale, modelScale);
+    if (monsterModel.userData && monsterModel.userData.center && monsterModel.userData.box) {
+      const c = monsterModel.userData.center;
+      const b = monsterModel.userData.box;
+      const posX = -c.x * modelScale;
+      const posY = -c.y * modelScale;
+      basePosZ = (-b.min.z * modelScale) + 0.05;
+      monsterGarmentPos = new THREE.Vector3(posX, posY, basePosZ);
+      monsterModel.position.copy(monsterGarmentPos);
+    }
+  }
+  if (planesModel) {
+    planesModel.scale.set(modelScale, modelScale, modelScale);
+    if (monsterGarmentPos) {
+      planesModel.position.copy(monsterGarmentPos);
+    }
+  }
+  if (simMonster) {
+    simMonster.scale.set(modelScale, modelScale, modelScale);
+  }
+  const pct = baseMarkerScale > 0 ? Math.round((modelScale / baseMarkerScale) * 100) : Math.round(modelScale * 100);
+  if (els.scaleLabel) {
+    els.scaleLabel.textContent = `🎯 ${pct}% MARKER`;
+  }
+  if (showToastMsg) {
+    showToast(`Character Scale: ${pct}% (Marker Matched)`);
+  }
+}
+
+if (els.btnSizeDown) {
+  els.btnSizeDown.addEventListener('click', () => {
+    applyModelScale(modelScale * 0.85, true);
+  });
+}
+
+if (els.btnSizeUp) {
+  els.btnSizeUp.addEventListener('click', () => {
+    applyModelScale(modelScale * 1.15, true);
+  });
+}
+
+if (els.btnSizeReset) {
+  els.btnSizeReset.addEventListener('click', () => {
+    // Toggle between user's preferred 5-clicks size (201%) and base 100% marker width
+    const preferredScale = baseMarkerScale * Math.pow(1.15, 5);
+    const pct = baseMarkerScale > 0 ? Math.round((modelScale / baseMarkerScale) * 100) : 201;
+    if (Math.abs(pct - 201) < 8) {
+      applyModelScale(baseMarkerScale, true);
+    } else {
+      applyModelScale(preferredScale, true);
+    }
+  });
+}
+
+// Mouse wheel to zoom/scale 3D character in AR view
+if (els.arContainer) {
+  els.arContainer.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.08 : 0.92;
+    applyModelScale(modelScale * factor, true);
+  }, { passive: false });
+}
+
+// Touch pinch to zoom on mobile
+let initialPinchDist = 0;
+let initialPinchScale = 1.0;
+window.addEventListener('touchstart', (e) => {
+  if (e.touches && e.touches.length === 2) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    initialPinchDist = Math.hypot(dx, dy);
+    initialPinchScale = modelScale;
+  }
+}, { passive: true });
+window.addEventListener('touchmove', (e) => {
+  if (e.touches && e.touches.length === 2 && initialPinchDist > 10) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    const currentDist = Math.hypot(dx, dy);
+    const newScale = initialPinchScale * (currentDist / initialPinchDist);
+    applyModelScale(newScale, false);
+  }
+}, { passive: true });
+
+if (els.btnShowMarker) {
+  els.btnShowMarker.addEventListener('click', () => {
+    els.modalMarker.classList.remove('hidden');
+  });
+}
+
+if (els.btnCloseMarker) {
+  els.btnCloseMarker.addEventListener('click', () => {
+    els.modalMarker.classList.add('hidden');
+  });
+}
+
+if (els.gestureChip) {
+  els.gestureChip.addEventListener('click', () => {
+    arePlanesDisappeared = !arePlanesDisappeared;
+    targetPlaneOpacity = arePlanesDisappeared ? 0.0 : 0.88;
+    updateGestureHUD(arePlanesDisappeared);
+    showToast(arePlanesDisappeared ? '✋ Arms Raised — Planes Hidden' : '👇 Arms Down — Planes Visible ✨');
+  });
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'h' || e.key === 'H' || e.key === 'p' || e.key === 'P') {
+    arePlanesDisappeared = !arePlanesDisappeared;
+    targetPlaneOpacity = arePlanesDisappeared ? 0.0 : 0.88;
+    updateGestureHUD(arePlanesDisappeared);
+    showToast(arePlanesDisappeared ? '✋ Arms Raised — Planes Hidden' : '👇 Arms Down — Planes Visible ✨');
+  }
+});
+
+window.testPoseGesture = window.testHandGesture = function(raiseArms) {
+  arePlanesDisappeared = !!raiseArms;
+  targetPlaneOpacity = arePlanesDisappeared ? 0.0 : 0.88;
+  updateGestureHUD(arePlanesDisappeared);
+  showToast(arePlanesDisappeared ? '✋ Arms Raised — Planes Hidden' : '👇 Arms Down — Planes Visible ✨');
+};
+
+// ---------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------
+if (checkSupport()){
+  runPreload();
+}
+</script>
+</body>
+</html>

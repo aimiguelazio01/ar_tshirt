@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stitch Design Gallery - WebAR Apparel Experience</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --surface: #0e141a;
+      --surface-container: #1b2027;
+      --surface-container-high: #252a31;
+      --outline: #272b3c;
+      --primary: #ff9e00;
+      --secondary: #00c9b7;
+      --on-surface: #dee3ec;
+      --text-muted: #7e8597;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--surface);
+      color: var(--on-surface);
+      font-family: 'Inter', sans-serif;
+      padding: 2rem 1.5rem 4rem;
+      min-height: 100vh;
+    }
+    header {
+      max-width: 1280px;
+      margin: 0 auto 2.5rem;
+      border-bottom: 1px solid var(--outline);
+      padding-bottom: 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    .brand-title {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--primary);
+      background: rgba(255, 158, 0, 0.12);
+      border: 1px solid rgba(255, 158, 0, 0.3);
+      padding: 0.2rem 0.6rem;
+      border-radius: 4px;
+      letter-spacing: 0.05em;
+    }
+    .nav-links a {
+      color: var(--secondary);
+      text-decoration: none;
+      font-size: 0.9rem;
+      margin-left: 1.25rem;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .nav-links a:hover { text-decoration: underline; }
+    .grid {
+      max-width: 1280px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 1.75rem;
+    }
+    .card {
+      background: var(--surface-container);
+      border: 1px solid var(--outline);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .card:hover {
+      transform: translateY(-4px);
+      border-color: var(--primary);
+    }
+    .card-preview {
+      background: #000;
+      height: 460px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      border-bottom: 1px solid var(--outline);
+      position: relative;
+    }
+    .card-preview img {
+      max-height: 100%;
+      max-width: 100%;
+      object-fit: contain;
+    }
+    .card-body {
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      flex: 1;
+    }
+    .card-title {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.15rem;
+      color: #fff;
+    }
+    .card-actions {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: auto;
+    }
+    .btn {
+      flex: 1;
+      text-align: center;
+      padding: 0.65rem 0.75rem;
+      font-size: 0.85rem;
+      font-family: 'JetBrains Mono', monospace;
+      border-radius: 4px;
+      text-decoration: none;
+      font-weight: 500;
+      transition: all 0.15s ease;
+    }
+    .btn-primary {
+      background: var(--primary);
+      color: #12141c;
+    }
+    .btn-primary:hover { background: #ffb433; }
+    .btn-outline {
+      border: 1px solid var(--outline);
+      color: var(--on-surface);
+      background: var(--surface-container-high);
+    }
+    .btn-outline:hover { border-color: var(--secondary); color: var(--secondary); }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <div class="brand-title">
+        WebAR Apparel Experience <span class="badge">STITCH SCREENS</span>
+      </div>
+      <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.35rem;">
+        TAPWEAR × MVIRGILSTUDIO AR Design System &amp; Interactive Prototypes
+      </p>
+    </div>
+    <div class="nav-links">
+      <a href="/index.html">← Live App (index.html)</a>
+      <a href="/stitch/DESIGN.md" target="_blank">DESIGN.md</a>
+      <a href="/stitch/design_tokens.json" target="_blank">Tokens JSON</a>
+    </div>
+  </header>
+
+  <main class="grid">
+    <div class="card">
+      <div class="card-preview">
+        <img src="/stitch/screens/01_splash_preloader.png" alt="01 - Splash & Preloader">
+      </div>
+      <div class="card-body">
+        <div class="card-title">01 - Splash &amp; Preloader</div>
+        <div class="card-actions">
+          <a class="btn btn-primary" href="/stitch/screens/01_splash_preloader.html" target="_blank">Open Live HTML</a>
+          <a class="btn btn-outline" href="/stitch/screens/01_splash_preloader.png" target="_blank">View PNG</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-preview">
+        <img src="/stitch/screens/02_permission_priming.png" alt="02 - Permission Priming">
+      </div>
+      <div class="card-body">
+        <div class="card-title">02 - Permission Priming</div>
+        <div class="card-actions">
+          <a class="btn btn-primary" href="/stitch/screens/02_permission_priming.html" target="_blank">Open Live HTML</a>
+          <a class="btn btn-outline" href="/stitch/screens/02_permission_priming.png" target="_blank">View PNG</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-preview">
+        <img src="/stitch/screens/03_live_ar_viewport.png" alt="03 - Live AR Viewport">
+      </div>
+      <div class="card-body">
+        <div class="card-title">03 - Live AR Viewport</div>
+        <div class="card-actions">
+          <a class="btn btn-primary" href="/stitch/screens/03_live_ar_viewport.html" target="_blank">Open Live HTML</a>
+          <a class="btn btn-outline" href="/stitch/screens/03_live_ar_viewport.png" target="_blank">View PNG</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-preview">
+        <img src="/stitch/screens/04_artwork_reference_modal.png" alt="04 - Artwork Reference Modal">
+      </div>
+      <div class="card-body">
+        <div class="card-title">04 - Artwork Reference Modal</div>
+        <div class="card-actions">
+          <a class="btn btn-primary" href="/stitch/screens/04_artwork_reference_modal.html" target="_blank">Open Live HTML</a>
+          <a class="btn btn-outline" href="/stitch/screens/04_artwork_reference_modal.png" target="_blank">View PNG</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-preview">
+        <img src="/stitch/screens/05_standalone_3d_simulator_mode.png" alt="05 - Standalone 3D Simulator Mode">
+      </div>
+      <div class="card-body">
+        <div class="card-title">05 - Standalone 3D Simulator Mode</div>
+        <div class="card-actions">
+          <a class="btn btn-primary" href="/stitch/screens/05_standalone_3d_simulator_mode.html" target="_blank">Open Live HTML</a>
+          <a class="btn btn-outline" href="/stitch/screens/05_standalone_3d_simulator_mode.png" target="_blank">View PNG</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-preview">
+        <img src="/stitch/screens/06_hardware_fallback_alert.png" alt="06 - Hardware Fallback Alert">
+      </div>
+      <div class="card-body">
+        <div class="card-title">06 - Hardware Fallback Alert</div>
+        <div class="card-actions">
+          <a class="btn btn-primary" href="/stitch/screens/06_hardware_fallback_alert.html" target="_blank">Open Live HTML</a>
+          <a class="btn btn-outline" href="/stitch/screens/06_hardware_fallback_alert.png" target="_blank">View PNG</a>
+        </div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

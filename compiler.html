@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>MindAR Target Compiler for t1.jpg</title>
+  <title>MindAR Target Compiler for monster_tshirt.jpg</title>
   <script type="importmap">
   {
     "imports": {
@@ -17,22 +17,28 @@
   </style>
 </head>
 <body>
-  <h2>Compiling assets/t1.jpg to assets/t1.mind...</h2>
+  <h2 id="heading">Compiling assets/monster_tshirt.jpg to assets/monster_tshirt.mind...</h2>
   <div id="status">Waiting for MindAR Compiler...</div>
 
   <script type="module">
     async function run() {
       const status = document.getElementById('status');
+      const params = new URLSearchParams(window.location.search);
+      const targetImg = params.get('img') || 'assets/monster_tshirt.jpg';
+      const outputName = params.get('out') || 'monster_tshirt.mind';
+
+      document.getElementById('heading').textContent = `Compiling ${targetImg} to assets/${outputName}...`;
+
       while (!window.MINDAR || !window.MINDAR.IMAGE || !window.MINDAR.IMAGE.Compiler) {
         await new Promise(r => setTimeout(r, 100));
       }
-      status.textContent = 'Loading image assets/t1.jpg...';
+      status.textContent = `Loading image ${targetImg}...`;
       const img = new Image();
       img.crossOrigin = 'anonymous';
-      img.src = 'assets/t1.jpg';
+      img.src = targetImg;
       await new Promise((res, rej) => {
         img.onload = res;
-        img.onerror = () => rej(new Error('Could not load assets/t1.jpg'));
+        img.onerror = () => rej(new Error('Could not load ' + targetImg));
       });
 
       status.textContent = 'Extracting feature points (compiling)...';
@@ -45,13 +51,13 @@
       const buffer = await compiler.exportData();
       status.textContent = 'Exported buffer size: ' + buffer.byteLength + ' bytes. Uploading to server...';
 
-      const resp = await fetch('/upload_mind', {
+      const resp = await fetch('/upload_mind?file=' + encodeURIComponent(outputName), {
         method: 'POST',
         body: buffer
       });
 
       if (resp.ok) {
-        status.textContent = 'SUCCESS! assets/t1.mind compiled and saved (' + buffer.byteLength + ' bytes)!';
+        status.textContent = `SUCCESS! assets/${outputName} compiled and saved (` + buffer.byteLength + ' bytes)!';
         document.body.style.color = '#00ff66';
       } else {
         status.textContent = 'Upload failed with status ' + resp.status;
