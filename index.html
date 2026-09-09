@@ -943,7 +943,7 @@ const CONFIG = {
   targetUrl: "assets/monster_tshirt.mind",
 
   // 3D Character model inside assets/3d/monster folder
-  modelUrl: "assets/3d/monster/monster_blender_glb_anim.glb",
+  modelUrl: "assets/3d/monster/monster_anime_bs.glb",
 
   // §5.5 — in production, fetch this from your CMS/asset server per campaign/garment ID
   // read from the NFC URL, e.g. tapwear.app/ar?drop=001
@@ -1764,15 +1764,16 @@ function attachMonsterModel(group){
     if (gltf.animations && gltf.animations.length > 0) {
       mixer = new THREE.AnimationMixer(monsterModel);
       // Play default clip looped from frame 1 to frame 24 at 24 fps
-      const defaultClip = gltf.animations.find(c => c.name.toLowerCase() === 'default') ||
-                          gltf.animations.find(c => c.name.toLowerCase().includes('default')) ||
+      const defaultClip = gltf.animations.find(c => c && c.name && c.name.toLowerCase().includes('default')) ||
                           gltf.animations[0];
       if (defaultClip) {
-        const loopClip = THREE.AnimationUtils.subclip(defaultClip, 'loop_frame_1_24', 1, 25, 24);
+        const loopClip = (defaultClip.duration <= 1.1)
+          ? defaultClip
+          : THREE.AnimationUtils.subclip(defaultClip, 'loop_frame_1_24', 1, 25, 24);
         const action = mixer.clipAction(loopClip);
         action.setLoop(THREE.LoopRepeat);
         action.play();
-        console.log('[AR] Playing loop from frame 1 to 24 (duration: ' + loopClip.duration + 's)');
+        console.log('[AR] Playing character animation loop (duration: ' + loopClip.duration + 's, tracks: ' + loopClip.tracks.length + ')');
       }
     }
 
@@ -2732,15 +2733,16 @@ function startSimulatorMode() {
 
     if (gltf.animations && gltf.animations.length > 0) {
       simMixer = new THREE.AnimationMixer(simMonster);
-      const defaultClip = gltf.animations.find(c => c.name.toLowerCase() === 'default') ||
-                          gltf.animations.find(c => c.name.toLowerCase().includes('default')) ||
+      const defaultClip = gltf.animations.find(c => c && c.name && c.name.toLowerCase().includes('default')) ||
                           gltf.animations[0];
       if (defaultClip) {
-        const loopClip = THREE.AnimationUtils.subclip(defaultClip, 'loop_frame_1_24', 1, 25, 24);
+        const loopClip = (defaultClip.duration <= 1.1)
+          ? defaultClip
+          : THREE.AnimationUtils.subclip(defaultClip, 'loop_frame_1_24', 1, 25, 24);
         const action = simMixer.clipAction(loopClip);
         action.setLoop(THREE.LoopRepeat);
         action.play();
-        console.log('[Simulator] Playing loop from frame 1 to 24 (duration: ' + loopClip.duration + 's)');
+        console.log('[Simulator] Playing loop from frame 1 to 24 (duration: ' + loopClip.duration + 's, tracks: ' + loopClip.tracks.length + ')');
       }
     }
     modelGroup.add(simMonster);

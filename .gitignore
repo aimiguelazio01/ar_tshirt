@@ -6,3 +6,6 @@ Thumbs.db
 
 .vercel
 *.psd
+
+.vercel
+.env*
