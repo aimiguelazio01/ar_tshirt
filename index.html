@@ -2264,8 +2264,8 @@
             actionIdle.setLoop(THREE.LoopRepeat);
             actionIdle.play();
 
-            // 2. Reaction: frames 24 to 42 (one-shot)
-            const clipReact = THREE.AnimationUtils.subclip(defaultClip, 'react_24_42', 24, 42, 24);
+            // 2. Reaction (DON'T TOUCH): frames 25 to 72 (one-shot)
+            const clipReact = THREE.AnimationUtils.subclip(defaultClip, 'react_25_72', 25, 72, 24);
             actionReact = mixer.clipAction(clipReact);
             actionReact.setLoop(THREE.LoopOnce, 1);
             actionReact.clampWhenFinished = true;
@@ -3477,106 +3477,27 @@
     }
 
     function playCalmSequence() {
-      const isSim = isSimulatorMode;
-      const currIdle = isSim ? simActionIdle : actionIdle;
-      const currLoop42 = isSim ? simActionLoop42 : actionLoop42;
-      const currCalm = isSim ? simActionCalm : actionCalm;
-
-      if (countdownTimer) {
-        clearInterval(countdownTimer);
-        countdownTimer = null;
-      }
-
-      // Ensure button remains inactive while calming down
-      setPanicButtonActive(false);
-
-      // Fade out 42-60 loop
-      if (currLoop42 && currLoop42.isRunning()) {
-        currLoop42.fadeOut(0.12);
-      }
-
-      updatePanicButtonText("CALMING...");
-      updatePanicButtonIcon("self_improvement");
-      showToast("Monster calming down (Frames 61-85)... 🧘");
-
-      // Play recovery animation from frame 61 to 85 (one-shot)
-      if (currCalm) {
-        currCalm.reset();
-        currCalm.setLoop(THREE.LoopOnce, 1);
-        currCalm.clampWhenFinished = true;
-        currCalm.fadeIn(0.1);
-        currCalm.play();
-
-        // Duration of 61 to 85 is (85 - 61) / 24 = 1.0s
-        const calmDurationMs = (currCalm.getClip().duration || 1.0) * 1000;
-
-        setTimeout(() => {
-          // After frame 85 finishes, transition to frames 1 to 24 idle loop
-          if (currCalm) currCalm.fadeOut(0.15);
-          if (currIdle) {
-            currIdle.reset();
-            currIdle.setLoop(THREE.LoopRepeat);
-            currIdle.fadeIn(0.15);
-            currIdle.play();
-          }
-          isSequenceRunning = false;
-          setPanicButtonActive(true);
-          updatePanicButtonText("DON'T TOUCH");
-          updatePanicButtonIcon("warning");
-          showToast("Monster at peace (Idle Loop 1-24) ✨");
-          console.log("[Animation] Recovery complete -> restored frames 1-24 idle loop");
-        }, Math.max(100, calmDurationMs - 60));
-      } else {
-        // Fallback if calm clip missing
-        if (currIdle) currIdle.reset().play();
-        isSequenceRunning = false;
-        setPanicButtonActive(true);
-        updatePanicButtonText("DON'T TOUCH");
-        updatePanicButtonIcon("warning");
-      }
+      playIdleSequence();
     }
 
     function startThreeSecondCountdown() {
-      if (countdownTimer) {
-        clearInterval(countdownTimer);
-        countdownTimer = null;
-      }
-
-      // Button strictly inactive during countdown mode
-      setPanicButtonActive(false);
-
-      countdownSeconds = 3;
-      updatePanicButtonText("CALM IN 3s");
-      updatePanicButtonIcon("hourglass_top");
-
-      countdownTimer = setInterval(() => {
-        countdownSeconds--;
-        if (countdownSeconds > 0) {
-          setPanicButtonActive(false);
-          updatePanicButtonText(`CALM IN ${countdownSeconds}s`);
-          updatePanicButtonIcon(countdownSeconds === 2 ? "hourglass_bottom" : "hourglass_empty");
-        } else {
-          clearInterval(countdownTimer);
-          countdownTimer = null;
-          // Countdown reached 0: play frame 61 to 85, then return to frame 1-24 idle loop!
-          playCalmSequence();
-        }
-      }, 1000);
+      // Retained for backwards compatibility
     }
 
     function playDontTouchSequence() {
       const isSim = isSimulatorMode;
       const currIdle = isSim ? simActionIdle : actionIdle;
       const currReact = isSim ? simActionReact : actionReact;
-      const currLoop42 = isSim ? simActionLoop42 : actionLoop42;
-      const currCalm = isSim ? simActionCalm : actionCalm;
 
-      if (!currReact || !currLoop42) {
-        console.warn('[Animation] Reaction actions not ready');
+      if (!currReact) {
+        console.warn('[Animation] Reaction action (25-72) not ready');
+        isSequenceRunning = false;
+        setPanicButtonActive(true);
         return;
       }
 
-      console.log('[Animation] DON\'T TOUCH triggered: playing frame 24 to 42, then looping 42 to 60 with 3s countdown');
+      isSequenceRunning = true;
+      console.log('[Animation] DON\'T TOUCH triggered: playing frames 25 to 72');
 
       // Cancel any pending timers
       if (reactTimer) {
@@ -3588,16 +3509,18 @@
         countdownTimer = null;
       }
 
-      // Stop idle, 42-60 loop, calm, or arm actions if running
+      // Stop idle, calm, or other active gestures if running
+      const currLoop42 = isSim ? simActionLoop42 : actionLoop42;
+      const currCalm = isSim ? simActionCalm : actionCalm;
       const currArmUp = isSim ? simActionArmUp : actionArmUp;
       const currArmDown = isSim ? simActionArmDown : actionArmDown;
-      if (currIdle && currIdle.isRunning()) currIdle.fadeOut(0.1);
-      if (currLoop42 && currLoop42.isRunning()) currLoop42.fadeOut(0.1);
-      if (currCalm && currCalm.isRunning()) currCalm.fadeOut(0.1);
-      if (currArmUp && currArmUp.isRunning()) currArmUp.fadeOut(0.1);
-      if (currArmDown && currArmDown.isRunning()) currArmDown.fadeOut(0.1);
+      if (currIdle && currIdle.isRunning()) currIdle.fadeOut(0.12);
+      if (currLoop42 && currLoop42.isRunning()) currLoop42.fadeOut(0.12);
+      if (currCalm && currCalm.isRunning()) currCalm.fadeOut(0.12);
+      if (currArmUp && currArmUp.isRunning()) currArmUp.fadeOut(0.12);
+      if (currArmDown && currArmDown.isRunning()) currArmDown.fadeOut(0.12);
 
-      // Play reaction from frame 24 to 42 (one-shot)
+      // Play reaction animation from frame 25 to 72 (one-shot)
       currReact.reset();
       currReact.setLoop(THREE.LoopOnce, 1);
       currReact.clampWhenFinished = true;
@@ -3607,26 +3530,31 @@
       setPanicButtonActive(false);
       updatePanicButtonText("AGITATED!");
       updatePanicButtonIcon("electric_bolt");
+      showToast("⚠️ I SAID DON'T TOUCH! (Frames 25-72) 👹");
 
-      // Duration of frames 24 to 42: (42 - 24) / 24 = 0.75s
-      const reactDurationMs = (currReact.getClip().duration || 0.75) * 1000;
+      // Duration of frames 25 to 72: (72 - 25) / 24 = 1.958s
+      const reactDurationMs = (currReact.getClip().duration || ((72 - 25) / 24)) * 1000;
 
       reactTimer = setTimeout(() => {
+        // Return smoothly to idle loop (frames 1-24)
         if (currReact && currReact.isRunning()) {
-          currReact.fadeOut(0.12);
+          currReact.fadeOut(0.2);
         }
-        if (currLoop42) {
-          currLoop42.reset();
-          currLoop42.setLoop(THREE.LoopRepeat);
-          currLoop42.fadeIn(0.12);
-          currLoop42.play();
-          console.log('[Animation] Reaction complete -> now looping frames 42 to 60 with 3s countdown');
+        if (currIdle) {
+          currIdle.reset();
+          currIdle.setLoop(THREE.LoopRepeat);
+          currIdle.fadeIn(0.2);
+          currIdle.play();
         }
-        reactTimer = null;
 
-        // Start the 3-second countdown!
-        startThreeSecondCountdown();
-      }, Math.max(80, reactDurationMs - 60));
+        isSequenceRunning = false;
+        isPanicActive = false;
+        setPanicButtonActive(true);
+        updatePanicButtonText("DON'T TOUCH");
+        updatePanicButtonIcon("warning");
+        reactTimer = null;
+        console.log('[Animation] Frames 25-72 completed -> restored idle loop (frames 1-24)');
+      }, Math.max(100, reactDurationMs - 40));
     }
 
     function playIdleSequence() {
@@ -5055,7 +4983,7 @@
             simActionIdle.setLoop(THREE.LoopRepeat);
             simActionIdle.play();
 
-            const clipReact = THREE.AnimationUtils.subclip(defaultClip, 'sim_react_24_42', 24, 42, 24);
+            const clipReact = THREE.AnimationUtils.subclip(defaultClip, 'sim_react_25_72', 25, 72, 24);
             simActionReact = simMixer.clipAction(clipReact);
             simActionReact.setLoop(THREE.LoopOnce, 1);
             simActionReact.clampWhenFinished = true;
@@ -5656,8 +5584,8 @@
         btnPanic.addEventListener('click', (e) => {
           e.stopPropagation();
           e.preventDefault();
-          if (btnPanic.disabled || isSequenceRunning || countdownTimer !== null) {
-            console.log("[Panic] Button is inactive during countdown/sequence");
+          if (btnPanic.disabled || isSequenceRunning) {
+            console.log("[Panic] Button is inactive during sequence");
             return;
           }
           triggerPanicMode();
