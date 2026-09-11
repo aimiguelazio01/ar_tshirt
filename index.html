@@ -2264,10 +2264,10 @@
             actionIdle.setLoop(THREE.LoopRepeat);
             actionIdle.play();
 
-            // 2. Reaction (DON'T TOUCH): frames 25 to 72 (one-shot)
+            // 2. Reaction (DON'T TOUCH): frames 25 to 72 (loop one more time = 2 repetitions)
             const clipReact = THREE.AnimationUtils.subclip(defaultClip, 'react_25_72', 25, 72, 24);
             actionReact = mixer.clipAction(clipReact);
-            actionReact.setLoop(THREE.LoopOnce, 1);
+            actionReact.setLoop(THREE.LoopRepeat, 2);
             actionReact.clampWhenFinished = true;
 
             // 3. Secondary Loop: frames 42 to 60 (loopable)
@@ -3520,9 +3520,10 @@
       if (currArmUp && currArmUp.isRunning()) currArmUp.fadeOut(0.12);
       if (currArmDown && currArmDown.isRunning()) currArmDown.fadeOut(0.12);
 
-      // Play reaction animation from frame 25 to 72 (one-shot)
+      // Play reaction animation from frame 25 to 72 and loop one more time (total 2 cycles)
       currReact.reset();
-      currReact.setLoop(THREE.LoopOnce, 1);
+      currReact.setLoop(THREE.LoopRepeat, 2);
+      currReact.repetitions = 2;
       currReact.clampWhenFinished = true;
       currReact.fadeIn(0.08);
       currReact.play();
@@ -3530,10 +3531,11 @@
       setPanicButtonActive(false);
       updatePanicButtonText("AGITATED!");
       updatePanicButtonIcon("electric_bolt");
-      showToast("⚠️ I SAID DON'T TOUCH! (Frames 25-72) 👹");
+      showToast("⚠️ I SAID DON'T TOUCH! (Frames 25-72 x2) 👹");
 
-      // Duration of frames 25 to 72: (72 - 25) / 24 = 1.958s
-      const reactDurationMs = (currReact.getClip().duration || ((72 - 25) / 24)) * 1000;
+      // Duration for 2 full cycles of frames 25 to 72:
+      const singleCycleDuration = currReact.getClip().duration || ((72 - 25) / 24);
+      const reactDurationMs = singleCycleDuration * 2 * 1000;
 
       reactTimer = setTimeout(() => {
         // Return smoothly to idle loop (frames 1-24)
@@ -3553,7 +3555,7 @@
         updatePanicButtonText("DON'T TOUCH");
         updatePanicButtonIcon("warning");
         reactTimer = null;
-        console.log('[Animation] Frames 25-72 completed -> restored idle loop (frames 1-24)');
+        console.log('[Animation] Frames 25-72 (2 cycles) completed -> restored idle loop (frames 1-24)');
       }, Math.max(100, reactDurationMs - 40));
     }
 
@@ -4972,7 +4974,7 @@
 
             const clipReact = THREE.AnimationUtils.subclip(defaultClip, 'sim_react_25_72', 25, 72, 24);
             simActionReact = simMixer.clipAction(clipReact);
-            simActionReact.setLoop(THREE.LoopOnce, 1);
+            simActionReact.setLoop(THREE.LoopRepeat, 2);
             simActionReact.clampWhenFinished = true;
 
             const clipLoop42 = THREE.AnimationUtils.subclip(defaultClip, 'sim_loop_42_60', 42, 60, 24);
