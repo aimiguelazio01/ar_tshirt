@@ -3774,17 +3774,11 @@
         leftArmDownTimer = null;
       }
 
-      isPanicActive = true;
       playPanicAlarmSound();
-      showToast("⚠️ I SAID DON'T TOUCH! 👹");
+      showToast("⚠️ I SAID DON'T TOUCH! (Frames 25-72) 👹");
 
-      // Play animation from frame 24 to 42, then loop 42 to 60 with 3s countdown!
+      // Play animation from frame 25 to 72 (smooth, no flickering)
       playDontTouchSequence();
-
-      // Reset tremor after initial hit
-      setTimeout(() => {
-        isPanicActive = false;
-      }, 1000);
     }
 
     function toggleButtonState(targetMesh) {
@@ -4763,16 +4757,9 @@
           monsterModel.quaternion.copy(targetWorldQuat);
         }
 
-        if (isPanicActive) {
-          monsterModel.rotateZ(Math.sin(t * 32.0) * 0.05);
-        }
-
         // Subtle idle breathing motion along Z
         monsterModel.position.z = basePosZ + Math.sin(t * 2.0) * 0.012;
-        if (isPanicActive && monsterGarmentPos) {
-          monsterModel.position.x = monsterGarmentPos.x + Math.sin(t * 45.0) * 0.025;
-          monsterModel.position.y = monsterGarmentPos.y + Math.cos(t * 38.0) * 0.02;
-        } else if (monsterGarmentPos) {
+        if (monsterGarmentPos) {
           monsterModel.position.x = monsterGarmentPos.x;
           monsterModel.position.y = monsterGarmentPos.y;
         }
