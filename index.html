@@ -1302,48 +1302,265 @@
        - Performance Marks & Diagnostic Controls
        ===================================================================== */
 
-    // Performance diagnostics & conditional remote logger
-    const isDebugPerformance = new URLSearchParams(window.location.search).get('debugPerformance') === '1';
+    // ---------------------------------------------------------------
+    // Step 1: Trustworthy Local Performance Diagnostics & Isolation Switches
+    // ---------------------------------------------------------------
+    const urlParams = new URLSearchParams(window.location.search);
+    const isDebugPerformance = urlParams.get('debugPerformance') === '1';
     window.DEBUG_PERFORMANCE = isDebugPerformance;
 
-    // Remote diagnostic logger — strictly gated behind ?debugPerformance=1 to eliminate startup network drag
-    (function () {
-      if (!isDebugPerformance) return;
-      function sendLog(type, str) {
-        try {
-          const img = new Image();
-          img.src = '/log?' + type + '=' + encodeURIComponent(str);
-        } catch (e) { }
-      }
-      window.addEventListener('error', (e) => {
-        sendLog('error', (e.message || '') + ' at ' + (e.filename || '') + ':' + (e.lineno || ''));
+    // Independent bottleneck isolation switches
+    window.DISABLE_POSE = urlParams.get('noPose') === '1';
+    window.DISABLE_HANDS = urlParams.get('noHands') === '1';
+    window.DISABLE_VFX = urlParams.get('noVfx') === '1';
+
+    if (isDebugPerformance) {
+      console.log('🔧 [Diagnostics] Performance mode active. Isolation flags:', {
+        DISABLE_POSE: window.DISABLE_POSE,
+        DISABLE_HANDS: window.DISABLE_HANDS,
+        DISABLE_VFX: window.DISABLE_VFX
       });
-      const origLog = console.log.bind(console);
-      console.log = function (...args) {
-        origLog(...args);
-        sendLog('log', args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
-      };
-      const origWarn = console.warn.bind(console);
-      console.warn = function (...args) {
-        origWarn(...args);
-        sendLog('warn', args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
-      };
-      const origErr = console.error.bind(console);
-      console.error = function (...args) {
-        origErr(...args);
-        sendLog('error', args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
-      };
-    })();
+    }
+
+    // ---------------------------------------------------------------
+    // Step 3: Adaptive Mobile Rendering & Dynamic Hardware Policy
+    // ---------------------------------------------------------------
+    const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (window.innerWidth <= 768);
+
+    const QualityPolicy = {
+      isMobile: isMobileDevice,
+      profile: isMobileDevice ? 'balanced' : 'desktop', // 'desktop', 'balanced', or 'reduced'
+      consecutiveHighWindows: 0,
+      consecutiveLowWindows: 0,
+
+      getPolicy() {
+        if (!this.isMobile) {
+          return {
+            maxPixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+            maxBufferPixels: 2073600, // 1080p
+            particleMultiplier: 1.0,
+            enableSecondaryLights: true,
+            enableVfxBursts: true,
+            profile: 'desktop'
+          };
+        }
+        if (this.profile === 'reduced') {
+          return {
+            maxPixelRatio: 0.75,
+            maxBufferPixels: 650000,
+            particleMultiplier: 0.5,
+            enableSecondaryLights: false,
+            enableVfxBursts: false,
+            profile: 'reduced'
+          };
+        }
+        // balanced (default mobile)
+        return {
+          maxPixelRatio: 1.0,
+          maxBufferPixels: 1000000,
+          particleMultiplier: 1.0,
+          enableSecondaryLights: true,
+          enableVfxBursts: true,
+          profile: 'balanced'
+        };
+      },
+
+      applyToRenderer(targetRenderer, targetCamera) {
+        if (!targetRenderer) return;
+        const policy = this.getPolicy();
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        let dpr = Math.min(window.devicePixelRatio || 1, policy.maxPixelRatio);
+
+        // Cap drawing-buffer resolution to maxBufferPixels
+        const testPixels = width * dpr * height * dpr;
+        if (testPixels > policy.maxBufferPixels) {
+          dpr = Math.sqrt(policy.maxBufferPixels / (width * height));
+        }
+        dpr = Math.max(0.5, Math.min(dpr, policy.maxPixelRatio));
+
+        targetRenderer.setPixelRatio(dpr);
+        targetRenderer.setSize(width, height, false);
+
+        if (targetCamera) {
+          const asp = width / height;
+          targetCamera.aspect = asp;
+          targetCamera.updateProjectionMatrix();
+        }
+      },
+
+      recordWindow(windowStats) {
+        if (!this.isMobile) return;
+        const p90 = windowStats.p90;
+        if (p90 > 40) {
+          this.consecutiveHighWindows++;
+          this.consecutiveLowWindows = 0;
+          if (this.consecutiveHighWindows >= 3 && this.profile !== 'reduced') {
+            this.setProfile('reduced');
+          }
+        } else if (p90 < 30) {
+          this.consecutiveLowWindows++;
+          this.consecutiveHighWindows = 0;
+          if (this.consecutiveLowWindows >= 5 && this.profile !== 'balanced') {
+            this.setProfile('balanced');
+          }
+        } else {
+          this.consecutiveHighWindows = 0;
+          this.consecutiveLowWindows = 0;
+        }
+      },
+
+      setProfile(newProfile) {
+        if (this.profile === newProfile) return;
+        this.profile = newProfile;
+        this.consecutiveHighWindows = 0;
+        this.consecutiveLowWindows = 0;
+        console.log(`⚡ [QualityPolicy] Profile switched to: ${newProfile}`);
+
+        if (typeof renderer !== 'undefined' && renderer) this.applyToRenderer(renderer, typeof camera !== 'undefined' ? camera : null);
+        if (typeof simRenderer !== 'undefined' && simRenderer) this.applyToRenderer(simRenderer, typeof simCamera !== 'undefined' ? simCamera : null);
+
+        const enableLights = this.getPolicy().enableSecondaryLights;
+        if (typeof simScene !== 'undefined' && simScene) {
+          simScene.traverse(c => {
+            if (c.isPointLight) c.visible = enableLights;
+          });
+        }
+        if (typeof scene !== 'undefined' && scene) {
+          scene.traverse(c => {
+            if (c.isPointLight) c.visible = enableLights;
+          });
+        }
+      }
+    };
+    window.QualityPolicy = QualityPolicy;
+
+    // Local in-memory telemetry recording (zero network overhead, zero console hijacking)
+    const PerformanceDiagnostics = {
+      lastFrameTime: 0,
+      currentWindowStart: performance.now(),
+      currentWindowIntervals: [],
+      rollingWindows: [], // 2-second sampling windows
+      metrics: {
+        medianFrameInterval: 0,
+        p90FrameInterval: 0,
+        p95FrameInterval: 0,
+        medianFps: 0,
+        triangles: 0,
+        drawCalls: 0,
+        textures: 0,
+        geometries: 0,
+        drawingBufferWidth: 0,
+        drawingBufferHeight: 0,
+        pixelRatio: 1,
+        poseInferenceDuration: 0,
+        handInferenceDuration: 0,
+        poseHz: 0,
+        handHz: 0,
+        resultAge: 0,
+        sceneGeneration: 0,
+        activeLoops: 0
+      },
+      recordFrame(renderer) {
+        const now = performance.now();
+        if (this.lastFrameTime > 0) {
+          const interval = now - this.lastFrameTime;
+          this.currentWindowIntervals.push(interval);
+        }
+        this.lastFrameTime = now;
+
+        // Evaluate rolling 2-second windows
+        if (now - this.currentWindowStart >= 2000) {
+          this.evaluateWindow(now);
+          this.currentWindowStart = now;
+          this.currentWindowIntervals = [];
+        }
+
+        let active = 0;
+        if (typeof isCameraRunning !== 'undefined' && isCameraRunning && !isSimulatorMode && renderer) active++;
+        if (typeof isSimulatorMode !== 'undefined' && isSimulatorMode && simAnimId) active++;
+        this.metrics.activeLoops = active;
+        if (typeof sceneGeneration !== 'undefined') {
+          this.metrics.sceneGeneration = sceneGeneration;
+        }
+
+        if (renderer) {
+          if (renderer.info && renderer.info.render) {
+            this.metrics.drawCalls = renderer.info.render.calls || 0;
+            this.metrics.triangles = renderer.info.render.triangles || 0;
+          }
+          if (renderer.info && renderer.info.memory) {
+            this.metrics.textures = renderer.info.memory.textures || 0;
+            this.metrics.geometries = renderer.info.memory.geometries || 0;
+          }
+          if (renderer.domElement) {
+            this.metrics.drawingBufferWidth = renderer.domElement.width || 0;
+            this.metrics.drawingBufferHeight = renderer.domElement.height || 0;
+          }
+          if (typeof renderer.getPixelRatio === 'function') {
+            this.metrics.pixelRatio = renderer.getPixelRatio();
+          }
+        }
+      },
+      evaluateWindow(now) {
+        if (this.currentWindowIntervals.length === 0) return;
+        const sorted = [...this.currentWindowIntervals].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        const p90Idx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.90));
+        const p95Idx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95));
+        const median = sorted[mid];
+        const p90 = sorted[p90Idx];
+        const p95 = sorted[p95Idx];
+        this.metrics.medianFrameInterval = Number(median.toFixed(2));
+        this.metrics.p90FrameInterval = Number(p90.toFixed(2));
+        this.metrics.p95FrameInterval = Number(p95.toFixed(2));
+        this.metrics.medianFps = median > 0 ? Number((1000 / median).toFixed(1)) : 0;
+        this.rollingWindows.push({ time: Number(now.toFixed(0)), median: this.metrics.medianFrameInterval, p90: this.metrics.p90FrameInterval, p95: this.metrics.p95FrameInterval, count: sorted.length });
+        if (this.rollingWindows.length > 30) this.rollingWindows.shift();
+
+        if (typeof QualityPolicy !== 'undefined' && QualityPolicy.recordWindow) {
+          QualityPolicy.recordWindow({ median, p90, p95 });
+        }
+      },
+      recordInference(task, duration, age) {
+        if (task === 'pose') {
+          this.metrics.poseInferenceDuration = Number(duration.toFixed(1));
+        } else if (task === 'hand') {
+          this.metrics.handInferenceDuration = Number(duration.toFixed(1));
+        }
+        if (typeof age === 'number') {
+          this.metrics.resultAge = Number(age.toFixed(1));
+        }
+      },
+      getSnapshot() {
+        return {
+          ...this.metrics,
+          qualityProfile: (typeof QualityPolicy !== 'undefined') ? QualityPolicy.profile : 'desktop',
+          marks: performance.getEntriesByType('mark').map(m => ({ name: m.name, time: Number(m.startTime.toFixed(1)) })),
+          measures: performance.getEntriesByType('measure').map(m => ({ name: m.name, duration: Number(m.duration.toFixed(1)) }))
+        };
+      }
+    };
+    window.PerformanceDiagnostics = PerformanceDiagnostics;
 
     function logPerformanceSummary() {
       try {
-        const marks = performance.getEntriesByType('mark');
-        const measures = performance.getEntriesByType('measure');
-        console.group('⏱️ WebAR Performance Marks');
-        console.table(marks.map(m => ({ Mark: m.name, 'Time (ms)': m.startTime.toFixed(1) })));
-        if (measures.length > 0) {
-          console.table(measures.map(m => ({ Measure: m.name, 'Duration (ms)': m.duration.toFixed(1) })));
+        const snap = PerformanceDiagnostics.getSnapshot();
+        console.group('⏱️ WebAR Diagnostics & Performance Snapshot');
+        console.table(snap.marks);
+        if (snap.measures.length > 0) {
+          console.table(snap.measures);
         }
+        console.log('Rendering Metrics:', {
+          fps: snap.medianFps,
+          medianIntervalMs: snap.medianFrameInterval,
+          p95IntervalMs: snap.p95FrameInterval,
+          drawCalls: snap.drawCalls,
+          triangles: snap.triangles,
+          buffer: `${snap.drawingBufferWidth}x${snap.drawingBufferHeight} (DPR: ${snap.pixelRatio})`,
+          textures: snap.textures,
+          geometries: snap.geometries
+        });
         console.groupEnd();
       } catch (e) {}
     }
@@ -1472,7 +1689,7 @@
       targetUrl: "assets/versioned/monster_tshirt.mind",
 
       // 3D Character model: Primary is lossless EXT_meshopt compressed (1.64 MB, 50% lighter), with fallback
-      modelUrl: "assets/versioned/monster_anime_bs_v02.opt.glb",
+      modelUrl: "assets/versioned/monster_anime_bs_v02.b016e6cc.opt.glb",
       fallbackModelUrl: "assets/3d/monster/monster_anime_bs_v02.glb",
 
       // §5.5 — in production, fetch this from your CMS/asset server per campaign/garment ID
@@ -1624,6 +1841,7 @@
     let sharedLoader = null;
     let sceneGeneration = 0;
     let isFirstCharacterVisible = false;
+    let modeEntryMark = null;
     let optionalFeaturesStarted = false;
 
     function getSharedGLTFLoader() {
@@ -1738,9 +1956,22 @@
       if (els.progressText) {
         els.progressText.textContent = 'FAILED TO LOAD 3D MODEL';
       }
+      updateWelcomeBtn('RETRY_CAMERA');
       showToast('Model load error — Tap to retry', 8000, () => {
+        if (els.progressText) els.progressText.textContent = 'RETRYING 3D MODEL…';
         loadMonsterAsset().then(() => {
+          isAssetsLoaded = true;
+          if (els.progressText) {
+            els.progressText.textContent = 'READY';
+            els.progressFill.style.width = '100%';
+            els.progressPct.textContent = '100%';
+          }
+          if (isCameraRunning) {
+            updateWelcomeBtn('READY');
+          }
           showToast('Model loaded successfully!');
+        }).catch(e => {
+          showModelRetryUI(e);
         });
       });
     }
@@ -1760,8 +1991,13 @@
       isFirstCharacterVisible = true;
       performance.mark('character-visible');
       try {
-        performance.measure('time-to-first-character', 'navigationStart', 'character-visible');
-      } catch (e) {}
+        const start = modeEntryMark !== null ? modeEntryMark : 0;
+        performance.measure('time-to-first-character', { start, end: 'character-visible' });
+      } catch (e) {
+        try {
+          performance.measure('time-to-first-character');
+        } catch (e2) {}
+      }
 
       if (window.DEBUG_PERFORMANCE) {
         logPerformanceSummary();
@@ -1775,13 +2011,27 @@
       optionalFeaturesStarted = true;
 
       if (mode === 'simulator') {
-        scheduleIdleJob(() => {
-          ensureExplosionTexture().then(() => {
-            scheduleIdleJob(() => {
-              ensureStormTexture();
-            }, 1000);
-          });
-        }, 500);
+        if (!window.DISABLE_VFX) {
+          scheduleIdleJob(() => {
+            ensureExplosionTexture().then(() => {
+              scheduleIdleJob(() => {
+                ensureStormTexture();
+              }, 1000);
+            });
+          }, 500);
+        }
+        return;
+      }
+
+      if (window.DISABLE_POSE && window.DISABLE_HANDS) {
+        if (els.gestureText) {
+          els.gestureText.textContent = 'ℹ️ GESTURES DISABLED (ISOLATION)';
+        }
+        if (!window.DISABLE_VFX) {
+          scheduleIdleJob(() => {
+            Promise.all([ensureExplosionTexture(), ensureStormTexture()]).catch(() => {});
+          }, 500);
+        }
         return;
       }
 
@@ -1791,34 +2041,22 @@
 
       scheduleIdleJob(async () => {
         try {
-          const vision = await getSharedVisionFileset();
+          initTrackingWorker();
 
-          scheduleIdleJob(async () => {
-            try {
-              await initPoseTracking(vision);
-              performance.mark('pose-tracker-ready');
-            } catch (err) {
-              console.warn('[Queue] Pose tracking init skipped/failed:', err);
-            }
+          // If worker is not supported or constructor fails immediately, initialize fallback vision
+          if (!isWorkerSupported || !trackingWorker) {
+            const vision = await getSharedVisionFileset();
+            if (!window.DISABLE_POSE) await initPoseTracking(vision).catch(() => {});
+            if (!window.DISABLE_HANDS) await initHandTracking(vision).catch(() => {});
+          }
 
-            scheduleIdleJob(async () => {
-              try {
-                await initHandTracking(vision);
-                performance.mark('hand-tracker-ready');
-              } catch (err) {
-                console.warn('[Queue] Hand tracking init skipped/failed:', err);
-              }
-
-              scheduleIdleJob(async () => {
-                try {
-                  await Promise.all([ensureExplosionTexture(), ensureStormTexture()]);
-                  performance.mark('effects-ready');
-                } catch (err) {
-                  console.warn('[Queue] Effects textures init skipped/failed:', err);
-                }
-              }, 1000);
+          if (!window.DISABLE_VFX) {
+            scheduleIdleJob(() => {
+              Promise.all([ensureExplosionTexture(), ensureStormTexture()]).then(() => {
+                performance.mark('effects-ready');
+              }).catch(() => {});
             }, 1000);
-          }, 1000);
+          }
         } catch (e) {
           console.warn('[Queue] Optional features error:', e);
           if (els.gestureText) {
@@ -1829,24 +2067,54 @@
     }
 
     let isPageVisible = true;
+    let isDocumentHidden = false;
+    let simLoopRef = null;
+    let simCleanupFn = null;
+
     document.addEventListener('visibilitychange', () => {
-      isPageVisible = !document.hidden;
-      if (!isPageVisible) {
-        console.log('[App] Tab hidden — pausing inference');
+      isDocumentHidden = document.hidden;
+      isPageVisible = !isDocumentHidden;
+      if (isDocumentHidden) {
+        console.log('[Lifecycle] Page hidden — pausing animation loops & inference');
+        if (renderer && typeof renderer.setAnimationLoop === 'function') {
+          try { renderer.setAnimationLoop(null); } catch (e) {}
+        }
+        if (simAnimId) {
+          cancelAnimationFrame(simAnimId);
+          simAnimId = null;
+        }
       } else {
-        console.log('[App] Tab visible — resuming inference');
+        console.log('[Lifecycle] Page visible — resuming active loop');
+        if (!isSimulatorMode && isCameraRunning && renderer && typeof renderer.setAnimationLoop === 'function') {
+          renderer.setAnimationLoop(renderLoop);
+        }
+        if (isSimulatorMode && !simAnimId && typeof simLoopRef === 'function') {
+          simAnimId = requestAnimationFrame(simLoopRef);
+        }
       }
     });
 
-    // MediaPipe Pose Gesture State:
-    // When arms are down: planes are visible (arePlanesDisappeared = false).
-    // When arms are raised (elbows and wrists above shoulders): planes are invisible (arePlanesDisappeared = true).
+    // MediaPipe Pose Gesture State (Elapsed Time Debounce: >= 70ms)
     let arePlanesDisappeared = false;
     let targetPlaneOpacity = 0.88;
     let currentPlaneOpacity = 0.88;
-    let handRaisedDebounceCount = 0;
-    let handLoweredDebounceCount = 0;
-    const GESTURE_TRIGGER_FRAMES = 2;
+    let rightArmUpStartTime = 0;
+    let rightArmDownStartTime = 0;
+    let leftArmUpStartTime = 0;
+    let leftArmDownStartTime = 0;
+    let handRaisedStartTime = 0;
+    let handLoweredStartTime = 0;
+    const GESTURE_DEBOUNCE_MS = 70;
+
+    // Web Worker gesture tracking state
+    let trackingWorker = null;
+    let isWorkerSupported = typeof Worker !== 'undefined';
+    let isWorkerTrackingReady = false;
+    let isWorkerProcessing = false;
+    let offscreenCanvas = null;
+    let offscreenCtx = null;
+    let lastMainThreadInferenceTime = 0;
+    const MAIN_THREAD_FALLBACK_INTERVAL = 200; // 5 Hz fallback
     let headBone = null, headRestRot = null, neckBone = null, neckRestRot = null;
     let simHeadBone = null, simHeadRestRot = null;
     let detectedCameras = [];
@@ -1908,57 +2176,119 @@
       }
     }
 
+    function disposeSceneOwnedPlanes() {
+      if (!planesModel) return;
+      try {
+        planesModel.traverse(child => {
+          if (child.isMesh) {
+            if (child.geometry) {
+              child.geometry.dispose();
+            }
+            if (child.material) {
+              if (Array.isArray(child.material)) {
+                child.material.forEach(m => {
+                  if (m.map) m.map.dispose();
+                  m.dispose();
+                });
+              } else {
+                if (child.material.map) child.material.map.dispose();
+                child.material.dispose();
+              }
+            }
+          }
+        });
+        if (planesModel.userData && planesModel.userData.buttons) {
+          planesModel.userData.buttons.forEach(btn => {
+            if (btn.userData && btn.userData.canvasTex) {
+              btn.userData.canvasTex.dispose();
+            }
+          });
+        }
+        if (planesModel.parent) {
+          planesModel.parent.remove(planesModel);
+        }
+      } catch (e) {
+        console.warn('Error disposing planesModel:', e);
+      }
+      planesModel = null;
+      interactivePlanes = [];
+      activePlane = null;
+    }
+
     // ---------------------------------------------------------------
     // Container & Track Cleanup
     // ---------------------------------------------------------------
     function cleanARContainer() {
       sceneGeneration++;
       isCameraRunning = false;
-      if (mindarThree) {
-        try { mindarThree.stop(); } catch (e) { }
-        mindarThree = null;
+
+      // 1. Stop simulator resources, RAF loop, and remove window listeners
+      if (typeof simCleanupFn === 'function') {
+        simCleanupFn();
+        simCleanupFn = null;
       }
       if (simAnimId) {
         cancelAnimationFrame(simAnimId);
         simAnimId = null;
       }
-      if (mixer) {
-        try { mixer.stopAllAction(); } catch (e) { }
-        mixer = null;
-      }
       if (simMixer) {
         try { simMixer.stopAllAction(); } catch (e) { }
         simMixer = null;
       }
+
+      // 2. Stop AR animation loop before clearing renderer references
+      if (renderer && typeof renderer.setAnimationLoop === 'function') {
+        try { renderer.setAnimationLoop(null); } catch (e) { }
+      }
+
+      // 3. Stop MindAR camera tracking without destroying the instance
+      if (mindarThree) {
+        try { mindarThree.stop(); } catch (e) { }
+      }
+
+      if (mixer) {
+        try { mixer.stopAllAction(); } catch (e) { }
+        mixer = null;
+      }
+
+      // 4. Dispose departing scene-owned resources
       monsterModel = null;
       simMonster = null;
       animMesh = null;
       onHandLost();
-      resetAllPlanes();
-      interactivePlanes = [];
-      planesModel = null;
+      disposeSceneOwnedPlanes();
+
       headBone = null;
       headRestRot = null;
       neckBone = null;
       neckRestRot = null;
       simHeadBone = null;
       simHeadRestRot = null;
-      anchor = null;
       monsterGarmentPos = null;
-      renderer = null;
-      scene = null;
-      camera = null;
-      const videos = els.arContainer.querySelectorAll('video');
-      videos.forEach(v => {
-        try {
-          if (v.srcObject && v.srcObject.getTracks) {
-            v.srcObject.getTracks().forEach(t => t.stop());
+
+      if (anchor && anchor.group) {
+        while (anchor.group.children.length > 0) {
+          anchor.group.remove(anchor.group.children[0]);
+        }
+      }
+      if (scene) {
+        const toRemove = [];
+        scene.children.forEach(c => {
+          if (c !== (anchor && anchor.group) && (c.isLight || c.isPoints)) {
+            toRemove.push(c);
           }
-        } catch (e) { }
-        v.remove();
-      });
-      const canvases = els.arContainer.querySelectorAll('canvas');
-      canvases.forEach(c => c.remove());
+        });
+        toRemove.forEach(c => {
+          if (c.geometry) c.geometry.dispose();
+          if (c.material) c.material.dispose();
+          scene.remove(c);
+        });
+      }
+      if (particleSystem) {
+        if (particleSystem.geometry) particleSystem.geometry.dispose();
+        if (particleSystem.material) particleSystem.material.dispose();
+        particleSystem = null;
+      }
     }
 
     // ---------------------------------------------------------------
@@ -2150,21 +2480,24 @@
 
       try {
         await Promise.all([modelReady, markerReady]);
+        isAssetsLoaded = true;
+        if (els.progressText) {
+          els.progressText.textContent = 'READY';
+          els.progressFill.style.width = '100%';
+          els.progressPct.textContent = '100%';
+        }
+        if (isCameraRunning) {
+          updateWelcomeBtn('READY');
+        } else {
+          checkCameraAndAutoStart();
+        }
       } catch (err) {
-        console.warn('[Preload] Asset preload warning (will retry on demand):', err);
-      }
-
-      if (els.progressText) {
-        els.progressText.textContent = 'READY';
-        els.progressFill.style.width = '100%';
-        els.progressPct.textContent = '100%';
-      }
-
-      isAssetsLoaded = true;
-      if (isCameraRunning) {
-        updateWelcomeBtn('READY');
-      } else {
-        checkCameraAndAutoStart();
+        console.warn('[Preload] Asset preload failed:', err);
+        isAssetsLoaded = false;
+        if (els.progressText) {
+          els.progressText.textContent = 'PRELOAD FAILED — TAP TO RETRY';
+        }
+        updateWelcomeBtn('RETRY_CAMERA');
       }
     }
 
@@ -2175,6 +2508,8 @@
     const btnWelcomeSim = document.getElementById('btn-welcome-sim');
     if (btnWelcomeSim) {
       btnWelcomeSim.addEventListener('click', () => {
+        isWelcomeScreenActive = false;
+        modeEntryMark = performance.now();
         const welcomeEl = document.getElementById('screen-welcome');
         if (welcomeEl) welcomeEl.style.display = 'none';
         const arScreen = document.getElementById('screen-ar');
@@ -2274,28 +2609,38 @@
           }
         }
 
-        mindarThree = new window.MINDAR.IMAGE.MindARThree(config);
-        mindarThree.shouldFaceUser = (facing === 'user');
+        if (!mindarThree) {
+          mindarThree = new window.MINDAR.IMAGE.MindARThree(config);
+          mindarThree.shouldFaceUser = (facing === 'user');
 
-        ({ renderer, scene, camera } = mindarThree);
-        if (camera) {
-          camera.near = 0.05;
-          camera.updateProjectionMatrix();
+          ({ renderer, scene, camera } = mindarThree);
+          if (camera) {
+            camera.near = 0.05;
+            camera.updateProjectionMatrix();
+          }
+          if (renderer) {
+            renderer.setClearColor(0x000000, 0);
+          }
+          anchor = mindarThree.addAnchor(0); // target index 0 = garment artwork
+
+          buildSceneContent(anchor.group);
+
+          anchor.onTargetFound = () => {
+            performance.mark('first-marker-detected');
+            setLockState(true);
+          };
+          anchor.onTargetLost = () => setLockState(false);
+        } else {
+          mindarThree.shouldFaceUser = (facing === 'user');
+          ({ renderer, scene, camera } = mindarThree);
+          if (!anchor) {
+            anchor = mindarThree.addAnchor(0);
+          }
+          buildSceneContent(anchor.group);
         }
-        if (renderer) {
-          renderer.setClearColor(0x000000, 0);
-        }
-        anchor = mindarThree.addAnchor(0); // target index 0 = garment artwork
-
-        buildSceneContent(anchor.group);
-
-        anchor.onTargetFound = () => {
-          performance.mark('first-marker-detected');
-          setLockState(true);
-        };
-        anchor.onTargetLost = () => setLockState(false);
 
         // Start rendering preview IMMEDIATELY so 3D character is visible from frame 1
+        QualityPolicy.applyToRenderer(renderer, camera);
         renderer.setAnimationLoop(renderLoop);
 
         await mindarThree.start();
@@ -2445,7 +2790,7 @@
       lightContainer.add(pointLight);
 
       // 2. Particle field
-      const count = CONFIG.maxParticles;
+      const count = Math.round(CONFIG.maxParticles * (typeof QualityPolicy !== 'undefined' ? QualityPolicy.getPolicy().particleMultiplier : 1.0));
       const positions = new Float32Array(count * 3);
       particleVelocities = new Float32Array(count * 3);
       for (let i = 0; i < count; i++) {
@@ -3213,6 +3558,7 @@
     }
 
     function trigger3DExplosion() {
+      if (window.DISABLE_VFX || (typeof QualityPolicy !== 'undefined' && !QualityPolicy.getPolicy().enableVfxBursts)) return;
       initExplosionTexture();
       playExplosionSound();
 
@@ -3533,6 +3879,7 @@
     }
 
     function trigger3DStorm() {
+      if (window.DISABLE_VFX || (typeof QualityPolicy !== 'undefined' && !QualityPolicy.getPolicy().enableVfxBursts)) return;
       initStormTexture();
       playStormSound();
 
@@ -4421,94 +4768,8 @@
       }
     }
 
-    function updatePoseTracking(video) {
-      if (!isPageVisible || !isCameraRunning || !poseLandmarker || !video) return;
-      if (video.paused || video.ended || video.readyState < 2) return;
-      if (!video.videoWidth || !video.videoHeight) return;
-
-      const now = performance.now();
-      const safeTimestamp = Math.max(Math.round(now), Math.round(lastPoseInferenceTime) + 1);
-      if (safeTimestamp - lastPoseInferenceTime < POSE_INFERENCE_INTERVAL_MS) {
-        return;
-      }
-      lastPoseInferenceTime = safeTimestamp;
-
-      let results;
-      try {
-        results = poseLandmarker.detectForVideo(video, safeTimestamp);
-      } catch (e) {
-        console.warn('[PoseTracking] detectForVideo exception:', e);
-        return;
-      }
-
-      let isPoseSatisfied = false;
-
-      if (results && results.landmarks && results.landmarks.length > 0) {
-        if (!hasPoseDetected) {
-          hasPoseDetected = true;
-          console.log('[PoseTracking] Body pose detected');
-        }
-
-        const landmarks = results.landmarks[0];
-        if (areElbowsAndWristsAboveShoulders(landmarks)) {
-          isPoseSatisfied = true;
-        }
-
-        // 1. Right Arm Raise -> Triggers 3D Explosion!
-        const isRightUp = isRightArmRaisedCheck(landmarks);
-        if (isRightUp) {
-          rightArmUpDebounce++;
-          rightArmDownDebounce = 0;
-          if (rightArmUpDebounce >= GESTURE_TRIGGER_FRAMES) {
-            if (!isRightArmCurrentlyUp) {
-              triggerRightArmUp();
-            }
-          }
-        } else {
-          rightArmDownDebounce++;
-          rightArmUpDebounce = 0;
-          if (rightArmDownDebounce >= GESTURE_TRIGGER_FRAMES) {
-            if (isRightArmCurrentlyUp) {
-              triggerRightArmDown();
-            }
-          }
-        }
-
-        // 2. Left Arm Raise -> Triggers 3D Electric Storm!
-        const isLeftUp = isLeftArmRaisedCheck(landmarks);
-        if (isLeftUp) {
-          leftArmUpDebounce++;
-          leftArmDownDebounce = 0;
-          if (leftArmUpDebounce >= GESTURE_TRIGGER_FRAMES) {
-            if (!isLeftArmCurrentlyUp) {
-              triggerLeftArmUp();
-            }
-          }
-        } else {
-          leftArmDownDebounce++;
-          leftArmUpDebounce = 0;
-          if (leftArmDownDebounce >= GESTURE_TRIGGER_FRAMES) {
-            if (isLeftArmCurrentlyUp) {
-              triggerLeftArmDown();
-            }
-          }
-        }
-
-        // Raycast index finger (19=left_index, 20=right_index) against interactive planes when visible
-        const indexTip = landmarks[19] || landmarks[20] || landmarks[15] || landmarks[16];
-        if (indexTip && !arePlanesDisappeared && isPlaneInteractionActive && camera && interactivePlanes.length > 0) {
-          const { ndcX, ndcY } = handToNDC(indexTip, video, els.arContainer);
-          pointer.set(ndcX, ndcY);
-          if (planesModel) planesModel.updateMatrixWorld(true);
-          raycaster.setFromCamera(pointer, camera);
-          const hits = raycaster.intersectObjects(interactivePlanes, false);
-          if (hits.length > 0) {
-            setActivePlane(hits[0].object);
-          } else {
-            clearActivePlane();
-          }
-        }
-      } else {
+    function processPoseLandmarks(landmarks, video) {
+      if (!landmarks || landmarks.length === 0) {
         if (hasPoseDetected) {
           hasPoseDetected = false;
           console.log('[PoseTracking] Body pose lost');
@@ -4516,34 +4777,116 @@
           if (isLeftArmCurrentlyUp) triggerLeftArmDown(false);
           onHandLost();
         }
+        return;
+      }
+
+      if (!hasPoseDetected) {
+        hasPoseDetected = true;
+        console.log('[PoseTracking] Body pose detected');
+      }
+
+      const now = performance.now();
+      const isPoseSatisfied = areElbowsAndWristsAboveShoulders(landmarks);
+
+      // 1. Right Arm Raise -> Triggers 3D Explosion!
+      const isRightUp = isRightArmRaisedCheck(landmarks);
+      if (isRightUp) {
+        if (!rightArmUpStartTime) rightArmUpStartTime = now;
+        rightArmDownStartTime = 0;
+        if ((now - rightArmUpStartTime) >= GESTURE_DEBOUNCE_MS && !isRightArmCurrentlyUp) {
+          triggerRightArmUp();
+        }
+      } else {
+        if (!rightArmDownStartTime) rightArmDownStartTime = now;
+        rightArmUpStartTime = 0;
+        if ((now - rightArmDownStartTime) >= GESTURE_DEBOUNCE_MS && isRightArmCurrentlyUp) {
+          triggerRightArmDown();
+        }
+      }
+
+      // 2. Left Arm Raise -> Triggers 3D Electric Storm!
+      const isLeftUp = isLeftArmRaisedCheck(landmarks);
+      if (isLeftUp) {
+        if (!leftArmUpStartTime) leftArmUpStartTime = now;
+        leftArmDownStartTime = 0;
+        if ((now - leftArmUpStartTime) >= GESTURE_DEBOUNCE_MS && !isLeftArmCurrentlyUp) {
+          triggerLeftArmUp();
+        }
+      } else {
+        if (!leftArmDownStartTime) leftArmDownStartTime = now;
+        leftArmUpStartTime = 0;
+        if ((now - leftArmDownStartTime) >= GESTURE_DEBOUNCE_MS && isLeftArmCurrentlyUp) {
+          triggerLeftArmDown();
+        }
+      }
+
+      // Raycast index finger against interactive planes when visible
+      const indexTip = landmarks[19] || landmarks[20] || landmarks[15] || landmarks[16];
+      const activeCam = isSimulatorMode ? simCamera : camera;
+      if (indexTip && !arePlanesDisappeared && isPlaneInteractionActive && activeCam && interactivePlanes.length > 0) {
+        const { ndcX, ndcY } = handToNDC(indexTip, video, els.arContainer);
+        pointer.set(ndcX, ndcY);
+        if (planesModel) planesModel.updateMatrixWorld(true);
+        raycaster.setFromCamera(pointer, activeCam);
+        const hits = raycaster.intersectObjects(interactivePlanes, false);
+        if (hits.length > 0) {
+          setActivePlane(hits[0].object);
+        } else {
+          clearActivePlane();
+        }
       }
 
       // When arms are raised -> planes become INVISIBLE.
       // When arms are down -> planes become VISIBLE.
       if (isPoseSatisfied) {
-        handRaisedDebounceCount++;
-        handLoweredDebounceCount = 0;
-        if (handRaisedDebounceCount >= GESTURE_TRIGGER_FRAMES) {
-          if (!arePlanesDisappeared) {
-            arePlanesDisappeared = true;
-            targetPlaneOpacity = 0.0;
-            showToast('✋ Arms Raised — Planes Hidden');
-            console.log('[PoseTracking] Arms raised above shoulders -> hiding planes.glb');
-            updateGestureHUD(true);
-          }
+        if (!handRaisedStartTime) handRaisedStartTime = now;
+        handLoweredStartTime = 0;
+        if ((now - handRaisedStartTime) >= GESTURE_DEBOUNCE_MS && !arePlanesDisappeared) {
+          arePlanesDisappeared = true;
+          targetPlaneOpacity = 0.0;
+          showToast('✋ Arms Raised — Planes Hidden');
+          console.log('[PoseTracking] Arms raised above shoulders -> hiding planes');
+          updateGestureHUD(isRightUp ? 'right' : (isLeftUp ? 'left' : null), true);
         }
       } else {
-        handLoweredDebounceCount++;
-        handRaisedDebounceCount = 0;
-        if (handLoweredDebounceCount >= GESTURE_TRIGGER_FRAMES) {
-          if (arePlanesDisappeared) {
-            arePlanesDisappeared = false;
-            targetPlaneOpacity = 0.88;
-            showToast('👇 Arms Down — Planes Visible ✨');
-            console.log('[PoseTracking] Arms down -> showing planes.glb');
-            updateGestureHUD(false);
-          }
+        if (!handLoweredStartTime) handLoweredStartTime = now;
+        handRaisedStartTime = 0;
+        if ((now - handLoweredStartTime) >= GESTURE_DEBOUNCE_MS && arePlanesDisappeared) {
+          arePlanesDisappeared = false;
+          targetPlaneOpacity = 0.88;
+          showToast('👇 Arms Down — Planes Visible ✨');
+          console.log('[PoseTracking] Arms down -> showing planes');
+          updateGestureHUD(null, false);
         }
+      }
+    }
+
+    function updatePoseTracking(video) {
+      if (!isPageVisible || !isCameraRunning || !poseLandmarker || !video) return;
+      if (video.paused || video.ended || video.readyState < 2) return;
+      if (!video.videoWidth || !video.videoHeight) return;
+
+      const now = performance.now();
+      const safeTimestamp = Math.max(Math.round(now), Math.round(lastPoseInferenceTime) + 1);
+      lastPoseInferenceTime = safeTimestamp;
+
+      let results;
+      try {
+        const t0 = performance.now();
+        results = poseLandmarker.detectForVideo(video, safeTimestamp);
+        const dur = performance.now() - t0;
+        if (window.PerformanceDiagnostics) {
+          PerformanceDiagnostics.recordInference('pose', dur, 0);
+        }
+      } catch (e) {
+        console.warn('[PoseTracking] detectForVideo exception:', e);
+        return;
+      }
+
+      if (results && results.landmarks && results.landmarks.length > 0) {
+        processPoseLandmarks(results.landmarks[0], video);
+      } else {
+        processPoseLandmarks(null, video);
       }
     }
 
@@ -4826,54 +5169,28 @@
       { plateId: null, startTime: 0, triggered: false }
     ];
 
-    function updateHandTracking(video) {
-      if (!isPageVisible || !isCameraRunning || !handLandmarker || !video || video.paused || video.ended || video.readyState < 2) {
-        hideFingertipReticles();
-        return;
-      }
-      if (!video.videoWidth || !video.videoHeight) {
-        hideFingertipReticles();
-        return;
-      }
-
-      const now = performance.now();
-      const safeTimestamp = Math.max(Math.round(now), Math.round(lastHandInferenceTime) + 1);
-      if (safeTimestamp - lastHandInferenceTime < HAND_INFERENCE_INTERVAL_MS) {
-        return;
-      }
-      lastHandInferenceTime = safeTimestamp;
-
-      let results = null;
-      try {
-        results = handLandmarker.detectForVideo(video, safeTimestamp);
-      } catch (err) {
-        return;
-      }
-
+    function processHandLandmarks(landmarksList, handednesses, video) {
       const reticle0 = document.getElementById('fingertip-reticle-0');
       const reticle1 = document.getElementById('fingertip-reticle-1');
       const reticles = [reticle0, reticle1];
 
-      if (!results || !results.landmarks || results.landmarks.length === 0) {
+      if (!landmarksList || landmarksList.length === 0) {
         hideFingertipReticles();
-        // Reset any ongoing hold state
         handHoldStates.forEach(st => { st.plateId = null; st.startTime = 0; st.triggered = false; });
         return;
       }
 
       const activeCam = isSimulatorMode ? simCamera : camera;
+      const now = performance.now();
 
-      for (let h = 0; h < results.landmarks.length && h < 2; h++) {
-        const hand = results.landmarks[h];
+      for (let h = 0; h < landmarksList.length && h < 2; h++) {
+        const hand = landmarksList[h];
         const reticle = reticles[h];
         const hold = handHoldStates[h];
         if (!hand || !reticle) continue;
 
         const indexTip = hand[8]; // Landmark 8: Index Fingertip
-        const handedness = (results.handednesses && results.handednesses[h] && results.handednesses[h][0])
-          ? results.handednesses[h][0].categoryName : null;
 
-        // Track index finger location on screen
         const { ndcX, ndcY, screenX, screenY } = handToNDC(indexTip, video, els.arContainer);
         reticle.style.display = 'flex';
         reticle.style.left = screenX + 'px';
@@ -4882,7 +5199,6 @@
         const labelEl = reticle.querySelector('.reticle-label');
         const gaugeFill = reticle.querySelector('.reticle-gauge-fill');
 
-        // Raycast from index fingertip against 3D software plates
         let targetPlate = null;
         if (activeCam && interactivePlanes.length > 0) {
           pointer.set(ndcX, ndcY);
@@ -4892,7 +5208,6 @@
           if (hits.length > 0) {
             targetPlate = hits[0].object;
           } else if (planesModel) {
-            // High-precision proximity detection for index finger
             planesModel.updateMatrixWorld(true);
             for (const plane of interactivePlanes) {
               const worldPos = new THREE.Vector3();
@@ -4909,31 +5224,23 @@
 
         if (targetPlate) {
           const cfg = targetPlate.userData.config;
-
           if (hold.plateId === cfg.id) {
-            // Holding on this plate: calculate hold duration (2.0s = 2000ms)
             const elapsedMs = now - hold.startTime;
             const holdProgress = Math.min(1.0, elapsedMs / 2000);
             const remainingSec = Math.max(0, (2000 - elapsedMs) / 1000).toFixed(1);
 
-            // Update radial SVG gauge fill (circumference = 175.93)
             if (gaugeFill) {
               gaugeFill.style.strokeDashoffset = (175.93 * (1 - holdProgress)) + 'px';
             }
-
-            // Tactile 3D plate depression deepens as hold charges
             if (targetPlate.userData.btnGroup) {
               targetPlate.userData.btnGroup.userData.pressOffset = 0.015 + holdProgress * 0.040;
             }
-
             reticle.classList.add('holding-plate');
 
             if (!hold.triggered) {
               if (labelEl) {
                 labelEl.textContent = `⏱️ HOLD: ${remainingSec}s // ${cfg.title}`;
               }
-
-              // Full 2 seconds hold complete -> OPEN WINDOW!
               if (elapsedMs >= 2000) {
                 hold.triggered = true;
                 reticle.classList.remove('holding-plate');
@@ -4948,7 +5255,6 @@
               }
             }
           } else {
-            // Index finger just entered a new plate: start 2-second hold timer
             hold.plateId = cfg.id;
             hold.startTime = now;
             hold.triggered = false;
@@ -4965,7 +5271,6 @@
             }
           }
         } else {
-          // Index finger is not on any 3D plate: reset hold progress immediately
           if (hold.plateId) {
             hold.plateId = null;
             hold.startTime = 0;
@@ -4976,17 +5281,170 @@
             gaugeFill.style.strokeDashoffset = '175.93px';
           }
           if (labelEl) {
-            labelEl.textContent = '👆 INDEX POINTER';
+            labelEl.textContent = 'INDEX FINGERTIP // AIM AT 3D PLATES';
           }
         }
       }
 
       // Hide unused reticle if only 1 hand is visible
-      if (results.landmarks.length < 2 && reticle1) {
+      if (landmarksList.length < 2 && reticle1) {
         reticle1.style.display = 'none';
         handHoldStates[1].plateId = null;
         handHoldStates[1].startTime = 0;
         handHoldStates[1].triggered = false;
+      }
+    }
+
+    function updateHandTracking(video) {
+      if (!isPageVisible || !isCameraRunning || !handLandmarker || !video || video.paused || video.ended || video.readyState < 2) {
+        hideFingertipReticles();
+        return;
+      }
+      if (!video.videoWidth || !video.videoHeight) {
+        hideFingertipReticles();
+        return;
+      }
+
+      const now = performance.now();
+      const safeTimestamp = Math.max(Math.round(now), Math.round(lastHandInferenceTime) + 1);
+      lastHandInferenceTime = safeTimestamp;
+
+      let results = null;
+      try {
+        const t0 = performance.now();
+        results = handLandmarker.detectForVideo(video, safeTimestamp);
+        const dur = performance.now() - t0;
+        if (window.PerformanceDiagnostics) {
+          PerformanceDiagnostics.recordInference('hand', dur, 0);
+        }
+      } catch (err) {
+        return;
+      }
+
+      if (results && results.landmarks && results.landmarks.length > 0) {
+        processHandLandmarks(results.landmarks, results.handednesses || [], video);
+      } else {
+        processHandLandmarks(null, null, video);
+      }
+    }
+
+    function initTrackingWorker() {
+      if (trackingWorker || !isWorkerSupported) return;
+      try {
+        trackingWorker = new Worker('tracking_worker.js', { type: 'module' });
+        trackingWorker.onmessage = handleWorkerMessage;
+        trackingWorker.onerror = (err) => {
+          console.warn('[Tracking] Web Worker error, switching to main-thread fallback:', err);
+          isWorkerSupported = false;
+          isWorkerTrackingReady = false;
+          trackingWorker = null;
+        };
+        trackingWorker.postMessage({ type: 'init' });
+      } catch (e) {
+        console.warn('[Tracking] Worker constructor failed, switching to 5Hz fallback:', e);
+        isWorkerSupported = false;
+        isWorkerTrackingReady = false;
+        trackingWorker = null;
+      }
+    }
+
+    function handleWorkerMessage(e) {
+      const data = e.data;
+      if (!data) return;
+      if (data.type === 'ready') {
+        isWorkerTrackingReady = true;
+        console.log('🤖 [Tracking] Web Worker MediaPipe vision ready off-thread');
+        if (els.gestureText) {
+          els.gestureText.textContent = '🦾 LOWER ARM TO TRIGGER: RIGHT (BLAST) / LEFT (STORM)';
+        }
+        performance.mark('tracking-worker-ready');
+        return;
+      }
+      if (data.type === 'result') {
+        isWorkerProcessing = false;
+        const now = performance.now();
+        const age = now - (data.timestamp || now);
+        if (window.PerformanceDiagnostics && data.duration) {
+          PerformanceDiagnostics.recordInference('pose', data.duration.pose || 0, age);
+          PerformanceDiagnostics.recordInference('hand', data.duration.hand || 0, age);
+        }
+        const activeVideo = els.arContainer ? els.arContainer.querySelector('video') : null;
+        if (data.pose && activeVideo) {
+          processPoseLandmarks(data.pose.landmarks[0], activeVideo);
+        } else if (hasPoseDetected && !data.pose) {
+          processPoseLandmarks(null, activeVideo);
+        }
+
+        if (data.hands && activeVideo) {
+          processHandLandmarks(data.hands.landmarks, data.hands.handednesses, activeVideo);
+        } else if (!data.hands) {
+          processHandLandmarks(null, null, activeVideo);
+        }
+      } else if (data.type === 'busy') {
+        isWorkerProcessing = false;
+      }
+    }
+
+    function dispatchTrackingFrame(video) {
+      if (!video || video.paused || video.ended || video.readyState < 2 || isDocumentHidden) {
+        return;
+      }
+      if (window.DISABLE_POSE && window.DISABLE_HANDS) {
+        return;
+      }
+
+      if (isWorkerSupported && trackingWorker && isWorkerTrackingReady) {
+        if (isWorkerProcessing) {
+          // 1-frame backpressure: drop frame while worker is busy
+          return;
+        }
+
+        const vw = video.videoWidth;
+        const vh = video.videoHeight;
+        if (!vw || !vh) return;
+
+        const maxEdge = QualityPolicy && QualityPolicy.profile === 'reduced' ? 480 : 640;
+        const scale = Math.min(1.0, maxEdge / Math.max(vw, vh));
+        const targetW = Math.round(vw * scale);
+        const targetH = Math.round(vh * scale);
+
+        if (!offscreenCanvas) {
+          offscreenCanvas = document.createElement('canvas');
+          offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: false });
+        }
+        if (offscreenCanvas.width !== targetW || offscreenCanvas.height !== targetH) {
+          offscreenCanvas.width = targetW;
+          offscreenCanvas.height = targetH;
+        }
+
+        offscreenCtx.drawImage(video, 0, 0, targetW, targetH);
+        isWorkerProcessing = true;
+        const sendTimestamp = performance.now();
+
+        createImageBitmap(offscreenCanvas).then(bitmap => {
+          trackingWorker.postMessage({
+            type: 'detect',
+            bitmap,
+            timestamp: sendTimestamp,
+            disablePose: window.DISABLE_POSE,
+            disableHands: window.DISABLE_HANDS
+          }, [bitmap]);
+        }).catch(err => {
+          isWorkerProcessing = false;
+        });
+        return;
+      }
+
+      // Resilient Fallback: 5 Hz throttled main-thread inference if worker is not active
+      const now = performance.now();
+      if (now - lastMainThreadInferenceTime >= MAIN_THREAD_FALLBACK_INTERVAL) {
+        lastMainThreadInferenceTime = now;
+        if (!window.DISABLE_POSE && typeof updatePoseTracking === 'function') {
+          updatePoseTracking(video);
+        }
+        if (!window.DISABLE_HANDS && typeof updateHandTracking === 'function') {
+          updateHandTracking(video);
+        }
       }
     }
 
@@ -5035,6 +5493,7 @@
     }
 
     function renderLoop() {
+      if (isDocumentHidden || !isCameraRunning || isSimulatorMode) return;
       const delta = clock ? clock.getDelta() : 0.016;
       const t = performance.now() * 0.001;
 
@@ -5064,9 +5523,6 @@
 
       // Always face and align with the camera so that it remains fully visible
       if (isTargetLocked && monsterModel && camera && anchor && anchor.group && anchor.group.visible) {
-        if (!isFirstCharacterVisible) {
-          onFirstCharacterVisible('ar');
-        }
         const camWorldQuat = new THREE.Quaternion();
         camera.getWorldQuaternion(camWorldQuat);
         const targetWorldQuat = camWorldQuat.clone();
@@ -5107,11 +5563,10 @@
         pos.needsUpdate = true;
       }
 
-      // Update MediaPipe Pose Tracking (Elbows & Wrists above Shoulders) & Hand Tracking
+      // Update MediaPipe Pose & Hand Tracking (Off-Thread Worker / 5Hz Fallback)
       const video = els.arContainer ? els.arContainer.querySelector('video') : null;
       if (video) {
-        updatePoseTracking(video);
-        updateHandTracking(video);
+        dispatchTrackingFrame(video);
       }
 
       // 3D Floating Buttons: Micro-float animation & Gesture Opacity Fade
@@ -5154,6 +5609,12 @@
 
       if (renderer && scene && camera) {
         renderer.render(scene, camera);
+        if (window.PerformanceDiagnostics) {
+          window.PerformanceDiagnostics.recordFrame(renderer);
+        }
+        if (!isFirstCharacterVisible && isTargetLocked && monsterModel && monsterModel.visible && !isWelcomeScreenActive) {
+          onFirstCharacterVisible('ar');
+        }
       }
     }
 
@@ -5191,6 +5652,8 @@
     function startSimulatorMode() {
       cleanARContainer();
       isSimulatorMode = true;
+      isWelcomeScreenActive = false;
+      modeEntryMark = performance.now();
       const welcomeEl = document.getElementById('screen-welcome');
       if (welcomeEl) welcomeEl.style.display = 'none';
       els.permission.classList.add('hidden');
@@ -5215,9 +5678,12 @@
       simCamera.position.set(0, 0.45, camDist);
       simCamera.lookAt(0, 0.45, 0);
 
-      simRenderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
-      simRenderer.setSize(window.innerWidth, window.innerHeight);
-      simRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      simRenderer = new THREE.WebGLRenderer({
+        antialias: !QualityPolicy.isMobile,
+        logarithmicDepthBuffer: !QualityPolicy.isMobile,
+        powerPreference: 'high-performance'
+      });
+      QualityPolicy.applyToRenderer(simRenderer, simCamera);
       els.arContainer.appendChild(simRenderer.domElement);
 
       const hemiLight = new THREE.HemisphereLight(0xffffff, 0x222233, 2.0);
@@ -5234,7 +5700,7 @@
       simScene.add(modelGroup);
 
       // Floating particles
-      const count = CONFIG.maxParticles;
+      const count = Math.round(CONFIG.maxParticles * (typeof QualityPolicy !== 'undefined' ? QualityPolicy.getPolicy().particleMultiplier : 1.0));
       const positions = new Float32Array(count * 3);
       const vels = new Float32Array(count * 3);
       for (let i = 0; i < count; i++) {
@@ -5350,14 +5816,14 @@
 
       // Pointer drag to orbit/rotate or tap to toggle 3D buttons
       let simStartX = 0, simStartY = 0;
-      const onPointerDown = (e) => {
+      const onSimPointerDown = (e) => {
         isDragging = true;
         prevMouseX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
         prevMouseY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
         simStartX = prevMouseX;
         simStartY = prevMouseY;
       };
-      const onPointerMove = (e) => {
+      const onSimPointerMove = (e) => {
         if (!isDragging) return;
         const clientX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
         const clientY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
@@ -5368,7 +5834,7 @@
         prevMouseX = clientX;
         prevMouseY = clientY;
       };
-      const onPointerUp = (e) => {
+      const onSimPointerUp = (e) => {
         if (isDragging) {
           isDragging = false;
           const clientX = (e && e.clientX !== undefined) ? e.clientX : ((e && e.changedTouches && e.changedTouches[0] && e.changedTouches[0].clientX) || prevMouseX);
@@ -5380,15 +5846,56 @@
         }
       };
 
-      window.addEventListener('mousedown', onPointerDown);
-      window.addEventListener('mousemove', onPointerMove);
-      window.addEventListener('mouseup', onPointerUp);
-      window.addEventListener('touchstart', onPointerDown, { passive: true });
-      window.addEventListener('touchmove', onPointerMove, { passive: true });
-      window.addEventListener('touchend', onPointerUp);
+      const onSimResize = () => {
+        if (!simCamera || !simRenderer) return;
+        QualityPolicy.applyToRenderer(simRenderer, simCamera);
+      };
+
+      window.addEventListener('mousedown', onSimPointerDown);
+      window.addEventListener('mousemove', onSimPointerMove);
+      window.addEventListener('mouseup', onSimPointerUp);
+      window.addEventListener('touchstart', onSimPointerDown, { passive: true });
+      window.addEventListener('touchmove', onSimPointerMove, { passive: true });
+      window.addEventListener('touchend', onSimPointerUp);
+      window.addEventListener('resize', onSimResize);
+
+      simCleanupFn = () => {
+        window.removeEventListener('mousedown', onSimPointerDown);
+        window.removeEventListener('mousemove', onSimPointerMove);
+        window.removeEventListener('mouseup', onSimPointerUp);
+        window.removeEventListener('touchstart', onSimPointerDown);
+        window.removeEventListener('touchmove', onSimPointerMove);
+        window.removeEventListener('touchend', onSimPointerUp);
+        window.removeEventListener('resize', onSimResize);
+
+        if (simAnimId) {
+          cancelAnimationFrame(simAnimId);
+          simAnimId = null;
+        }
+
+        if (pGeo) pGeo.dispose();
+        if (pMat) pMat.dispose();
+
+        if (simRenderer) {
+          if (simRenderer.domElement && simRenderer.domElement.parentNode) {
+            simRenderer.domElement.parentNode.removeChild(simRenderer.domElement);
+          }
+          simRenderer.dispose();
+          simRenderer = null;
+        }
+
+        simScene = null;
+        simCamera = null;
+        simMonster = null;
+        simLoopRef = null;
+      };
 
       const simClock = new THREE.Clock();
       const simLoop = () => {
+        if (isDocumentHidden || !isSimulatorMode) {
+          simAnimId = null;
+          return;
+        }
         simAnimId = requestAnimationFrame(simLoop);
         const delta = simClock.getDelta();
 
@@ -5415,9 +5922,6 @@
 
         // Always face and align with the camera
         if (simMonster && simCamera) {
-          if (!isFirstCharacterVisible) {
-            onFirstCharacterVisible('simulator');
-          }
           const targetWorldQuat = simCamera.quaternion.clone();
           if (simMonster.parent) {
             const invParentQuat = new THREE.Quaternion();
@@ -5431,8 +5935,6 @@
         if (!isDragging) {
           modelGroup.rotation.y += 0.004;
         }
-
-
 
         const pos = pGeo.attributes.position;
         for (let i = 0; i < pos.count; i++) {
@@ -5479,21 +5981,19 @@
 
         const simVideo = els.arContainer ? els.arContainer.querySelector('video') : null;
         if (simVideo) {
-          updateHandTracking(simVideo);
+          dispatchTrackingFrame(simVideo);
         }
 
         simRenderer.render(simScene, simCamera);
+        if (window.PerformanceDiagnostics) {
+          window.PerformanceDiagnostics.recordFrame(simRenderer);
+        }
+        if (!isFirstCharacterVisible && simMonster && simMonster.visible && !isWelcomeScreenActive) {
+          onFirstCharacterVisible('simulator');
+        }
       };
+      simLoopRef = simLoop;
       simLoop();
-
-      window.addEventListener('resize', () => {
-        if (!simCamera || !simRenderer) return;
-        const asp = window.innerWidth / window.innerHeight;
-        simCamera.aspect = asp;
-        simCamera.position.z = 4.4 / Math.min(1.0, asp);
-        simCamera.updateProjectionMatrix();
-        simRenderer.setSize(window.innerWidth, window.innerHeight);
-      });
     }
 
     // ---------------------------------------------------------------
