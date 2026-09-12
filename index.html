@@ -1015,7 +1015,7 @@
         <div class="flex items-center justify-center pointer-events-auto mt-0.5">
           <div
             class="ui-glass-pill h-[28px] sm:h-[30px] px-2.5 sm:px-3 flex items-center gap-1.5 text-dark-muted hover:text-white transition-colors cursor-pointer max-w-[85vw] truncate"
-            id="gesture-chip" title="Raise arm then lower to trigger explosion!">
+            id="gesture-chip" title="Use arm gestures to interact with the character">
             <span class="material-symbols-outlined text-[13px] sm:text-[14px] text-brand flex-shrink-0">pan_tool_alt</span>
             <span class="text-[9px] sm:text-[10px] font-medium tracking-wider uppercase truncate" id="gesture-text">TOUCH TO INTERACT</span>
           </div>
@@ -1036,7 +1036,7 @@
         </div>
       </div>
 
-      <!-- BOTTOM CONTROLS DOCK (Speaker, Panic, Orange Shutter, Explosion, Storm, Simulator + MVirgil Studio Footer) -->
+      <!-- BOTTOM CONTROLS DOCK (Speaker, Panic, Shutter, Simulator + MVirgil Studio Footer) -->
       <div
         class="ar-hud absolute bottom-0 inset-x-0 pb-safe z-30 flex flex-col items-center px-2 sm:px-6 pt-2 pb-2 bg-gradient-to-t from-dark-base via-dark-base/90 to-transparent pointer-events-none max-w-screen-md mx-auto">
         <!-- Controls Action Row -->
@@ -7646,26 +7646,6 @@
             return;
           }
           triggerPanicMode();
-        });
-      }
-
-      // Wire Signature Orange Button in bottom card -> Trigger 3D Explosion on Monster's Left Side
-      const btnCardAction = document.getElementById('btn-card-action');
-      if (btnCardAction) {
-        btnCardAction.addEventListener('click', (e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          trigger3DExplosion();
-        });
-      }
-
-      // Wire Signature Cyan Button in bottom card -> Trigger 3D Storm on Monster's Right Side
-      const btnStormAction = document.getElementById('btn-storm-action');
-      if (btnStormAction) {
-        btnStormAction.addEventListener('click', (e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          trigger3DStorm();
         });
       }
 
