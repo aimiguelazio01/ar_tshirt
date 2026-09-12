@@ -1,0 +1,13 @@
+{
+  "version": "1.0.0",
+  "timestamp": "2026-09-12T01:26:13.279Z",
+  "assets": {
+    "monsterModel": "assets/versioned/monster_anime_bs_v02.b016e6cc.opt.glb",
+    "monsterModelAlias": "assets/versioned/monster_anime_bs_v02.opt.glb",
+    "targetMarker": "assets/monster_tshirt.mind",
+    "explosionTexture": "assets/textures/explosion_01.png",
+    "stormTexture": "assets/textures/storm_01.png",
+    "poseModel": "assets/models/pose_landmarker_lite.task",
+    "handModel": "assets/models/hand_landmarker.task"
+  }
+}

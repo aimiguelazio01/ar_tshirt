@@ -1,0 +1,27 @@
+{
+  "name": "monster_ar_tshirt",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "devDependencies": {
+    "@gltf-transform/core": "^4.1.0",
+    "@gltf-transform/extensions": "^4.1.0",
+    "meshoptimizer": "^0.21.0"
+  },
+  "scripts": {
+    "compress:monster": "node scripts/compress_monster.mjs",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aimiguelazio01/ar_tshirt.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/aimiguelazio01/ar_tshirt/issues"
+  },
+  "homepage": "https://github.com/aimiguelazio01/ar_tshirt#readme"
+}

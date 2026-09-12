@@ -1277,29 +1277,38 @@
   }
 }
 </script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.min.js"></script>
   <script type="module">
+    import * as THREE from 'three';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
-    import { FilesetResolver, PoseLandmarker, HandLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
+    import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+
+    window.THREE = THREE;
     window.GLTFLoader = GLTFLoader;
     window.SkeletonUtils = SkeletonUtils;
-    window.FilesetResolver = FilesetResolver;
-    window.PoseLandmarker = PoseLandmarker;
-    window.HandLandmarker = HandLandmarker;
+    window.MeshoptDecoder = MeshoptDecoder;
+    performance.mark('core-libraries-ready');
   </script>
   <script type="module" src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js"></script>
   <script type="module" src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"></script>
 
-  <script>
+  <script type="module">
     /* =====================================================================
        TAPWEAR WebAR — Camera & Tracking Engine
-       Includes desktop webcam polyfill, device enumeration,
-       container cleanup, and standalone 3D simulator mode.
+       Optimized Startup Pipeline:
+       - Lossless Meshopt Character Streaming
+       - Shared Asset Caching & Scene Generation Counter
+       - Deferred Background Optional Features (MediaPipe & VFX)
+       - Performance Marks & Diagnostic Controls
        ===================================================================== */
 
-    // Remote diagnostic logger
+    // Performance diagnostics & conditional remote logger
+    const isDebugPerformance = new URLSearchParams(window.location.search).get('debugPerformance') === '1';
+    window.DEBUG_PERFORMANCE = isDebugPerformance;
+
+    // Remote diagnostic logger — strictly gated behind ?debugPerformance=1 to eliminate startup network drag
     (function () {
+      if (!isDebugPerformance) return;
       function sendLog(type, str) {
         try {
           const img = new Image();
@@ -1325,6 +1334,75 @@
         sendLog('error', args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
       };
     })();
+
+    function logPerformanceSummary() {
+      try {
+        const marks = performance.getEntriesByType('mark');
+        const measures = performance.getEntriesByType('measure');
+        console.group('⏱️ WebAR Performance Marks');
+        console.table(marks.map(m => ({ Mark: m.name, 'Time (ms)': m.startTime.toFixed(1) })));
+        if (measures.length > 0) {
+          console.table(measures.map(m => ({ Measure: m.name, 'Duration (ms)': m.duration.toFixed(1) })));
+        }
+        console.groupEnd();
+      } catch (e) {}
+    }
+
+    // Dynamic memoized MediaPipe tasks-vision loader (deferred until character visible)
+    let visionModulePromise = null;
+    function loadVisionModule() {
+      return visionModulePromise ??= import(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs'
+      ).then(mod => {
+        window.FilesetResolver = mod.FilesetResolver;
+        window.PoseLandmarker = mod.PoseLandmarker;
+        window.HandLandmarker = mod.HandLandmarker;
+        return mod;
+      }).catch(error => {
+        visionModulePromise = null;
+        throw error;
+      });
+    }
+
+    let sharedVisionPromise = null;
+    function getSharedVisionFileset() {
+      if (sharedVisionPromise) return sharedVisionPromise;
+      sharedVisionPromise = (async () => {
+        const mod = await loadVisionModule();
+        const vision = await mod.FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+        );
+        return vision;
+      })().catch(err => {
+        sharedVisionPromise = null;
+        throw err;
+      });
+      return sharedVisionPromise;
+    }
+
+    // Awaited MindAR readiness promise (replaces polling loops)
+    let mindarReadyPromise = null;
+    function ensureMindARReady(timeoutMs = 15000) {
+      if (window.MINDAR && window.MINDAR.IMAGE && window.MINDAR.IMAGE.MindARThree) {
+        return Promise.resolve(window.MINDAR);
+      }
+      if (!mindarReadyPromise) {
+        mindarReadyPromise = new Promise((resolve, reject) => {
+          const startTime = Date.now();
+          const interval = setInterval(() => {
+            if (window.MINDAR && window.MINDAR.IMAGE && window.MINDAR.IMAGE.MindARThree) {
+              clearInterval(interval);
+              resolve(window.MINDAR);
+            } else if (Date.now() - startTime > timeoutMs) {
+              clearInterval(interval);
+              mindarReadyPromise = null;
+              reject(new Error('MindAR library failed to load within timeout'));
+            }
+          }, 30);
+        });
+      }
+      return mindarReadyPromise;
+    }
 
     // ---------------------------------------------------------------
     // Camera Polyfill / Resilient Shimming
@@ -1391,10 +1469,11 @@
 
     const CONFIG = {
       // Target AR Marker compiled file (generated from assets/monster_tshirt.jpg)
-      targetUrl: "assets/monster_tshirt.mind",
+      targetUrl: "assets/versioned/monster_tshirt.mind",
 
-      // 3D Character model inside assets/3d/monster folder
-      modelUrl: "assets/3d/monster/monster_anime_bs_v02.glb",
+      // 3D Character model: Primary is lossless EXT_meshopt compressed (1.64 MB, 50% lighter), with fallback
+      modelUrl: "assets/versioned/monster_anime_bs_v02.opt.glb",
+      fallbackModelUrl: "assets/3d/monster/monster_anime_bs_v02.glb",
 
       // §5.5 — in production, fetch this from your CMS/asset server per campaign/garment ID
       // read from the NFC URL, e.g. tapwear.app/ar?drop=001
@@ -1406,51 +1485,72 @@
 
     const SHOW_HAND_DEBUG = true;
 
+    // ---------------------------------------------------------------
+    // Shared Marker Pipeline
+    // ---------------------------------------------------------------
     let compiledMindUrl = null;
+    let markerAssetPromise = null;
+
+    function loadMarkerAsset() {
+      if (!markerAssetPromise) {
+        markerAssetPromise = (async () => {
+          if (compiledMindUrl) return compiledMindUrl;
+          const url = CONFIG.targetUrl;
+          if (url.endsWith('.mind')) {
+            try {
+              const res = await fetch(url);
+              if (res.ok) {
+                const blob = await res.blob();
+                compiledMindUrl = URL.createObjectURL(blob);
+                console.log('[Marker] Target marker .mind cached as Blob URL successfully');
+                return compiledMindUrl;
+              }
+            } catch (err) {
+              console.warn('[Marker] Marker blob fetch failed, falling back to direct URL:', err);
+            }
+            return url;
+          }
+
+          // In-browser compiler fallback for image files
+          await ensureMindARReady();
+          if (els.progressText) {
+            els.progressText.textContent = 'COMPILING AR MARKER…';
+            els.progressFill.style.width = '40%';
+            els.progressPct.textContent = '40%';
+          }
+
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.src = url;
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = () => reject(new Error('Failed to load target image: ' + url));
+          });
+
+          const compiler = new window.MINDAR.IMAGE.Compiler();
+          await compiler.compileImageTargets([img], (progress) => {
+            const pct = Math.round(progress);
+            if (els.progressText) {
+              els.progressText.textContent = `COMPILING MARKER (${pct}%)`;
+              els.progressFill.style.width = `${pct}%`;
+              els.progressPct.textContent = `${pct}%`;
+            }
+          });
+
+          const exportedBuffer = await compiler.exportData();
+          const blob = new Blob([exportedBuffer], { type: 'application/octet-stream' });
+          compiledMindUrl = URL.createObjectURL(blob);
+          return compiledMindUrl;
+        })().catch(err => {
+          markerAssetPromise = null;
+          throw err;
+        });
+      }
+      return markerAssetPromise;
+    }
 
     async function getTargetSrc() {
-      if (compiledMindUrl) {
-        return compiledMindUrl;
-      }
-      const url = CONFIG.targetUrl;
-      if (url.endsWith('.mind')) {
-        return url;
-      }
-
-      // Wait for MindAR Compiler to load
-      while (!window.MINDAR || !window.MINDAR.IMAGE || !window.MINDAR.IMAGE.Compiler) {
-        await new Promise(r => setTimeout(r, 50));
-      }
-
-      // Compile image target (.jpg / .png) to MindAR format in-browser using WebAssembly/Worker
-      if (els.progressText) {
-        els.progressText.textContent = 'COMPILING AR MARKER…';
-        els.progressFill.style.width = '40%';
-        els.progressPct.textContent = '40%';
-      }
-
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.src = url;
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = () => reject(new Error('Failed to load target image: ' + url));
-      });
-
-      const compiler = new window.MINDAR.IMAGE.Compiler();
-      await compiler.compileImageTargets([img], (progress) => {
-        const pct = Math.round(progress);
-        if (els.progressText) {
-          els.progressText.textContent = `COMPILING MARKER (${pct}%)`;
-          els.progressFill.style.width = `${pct}%`;
-          els.progressPct.textContent = `${pct}%`;
-        }
-      });
-
-      const exportedBuffer = await compiler.exportData();
-      const blob = new Blob([exportedBuffer], { type: 'application/octet-stream' });
-      compiledMindUrl = URL.createObjectURL(blob);
-      return compiledMindUrl;
+      return await loadMarkerAsset();
     }
 
     const els = {
@@ -1515,6 +1615,228 @@
     let isCameraRunning = false;
     let isWelcomeScreenActive = true;
     let isAssetsLoaded = false;
+
+    // ---------------------------------------------------------------
+    // Shared Monster Asset Pipeline & Scene Generation Counter
+    // ---------------------------------------------------------------
+    let modelPromise = null;
+    let sharedGltf = null;
+    let sharedLoader = null;
+    let sceneGeneration = 0;
+    let isFirstCharacterVisible = false;
+    let optionalFeaturesStarted = false;
+
+    function getSharedGLTFLoader() {
+      if (!sharedLoader) {
+        sharedLoader = new (window.GLTFLoader || GLTFLoader)();
+        if (window.MeshoptDecoder) {
+          sharedLoader.setMeshoptDecoder(window.MeshoptDecoder);
+        }
+      }
+      return sharedLoader;
+    }
+
+    async function fetchAndParseMonster() {
+      if (sharedGltf) return sharedGltf;
+
+      performance.mark('model-download-start');
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort('Download timeout (30s)'), 30000);
+
+      try {
+        let url = CONFIG.modelUrl;
+        let res = await fetch(url, { signal: controller.signal });
+        if (!res.ok && CONFIG.fallbackModelUrl) {
+          console.warn(`[Model] Primary model ${url} returned HTTP ${res.status}. Falling back to ${CONFIG.fallbackModelUrl}...`);
+          url = CONFIG.fallbackModelUrl;
+          res = await fetch(url, { signal: controller.signal });
+        }
+        if (!res.ok) {
+          throw new Error(`Failed to fetch 3D model: HTTP ${res.status}`);
+        }
+
+        const contentLength = res.headers.get('content-length');
+        const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
+        let loadedBytes = 0;
+
+        const reader = res.body ? res.body.getReader() : null;
+        let arrayBuffer;
+
+        if (reader && totalBytes > 0) {
+          const chunks = [];
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            loadedBytes += value.length;
+            const pct = Math.min(88, Math.round((loadedBytes / totalBytes) * 88));
+            if (els.progressFill) els.progressFill.style.width = pct + '%';
+            if (els.progressPct) els.progressPct.textContent = pct + '%';
+            if (els.progressText) els.progressText.textContent = `DOWNLOADING 3D ASSETS (${pct}%)`;
+          }
+          clearTimeout(timeoutId);
+          const allChunks = new Uint8Array(loadedBytes);
+          let position = 0;
+          for (const chunk of chunks) {
+            allChunks.set(chunk, position);
+            position += chunk.length;
+          }
+          arrayBuffer = allChunks.buffer;
+        } else {
+          if (els.progressText) els.progressText.textContent = 'DOWNLOADING 3D ASSETS…';
+          arrayBuffer = await res.arrayBuffer();
+          clearTimeout(timeoutId);
+        }
+
+        performance.mark('model-download-end');
+        try {
+          performance.measure('model-download', 'model-download-start', 'model-download-end');
+        } catch (e) {}
+
+        performance.mark('model-parse-start');
+        if (els.progressText) els.progressText.textContent = 'PARSING 3D CHARACTER…';
+
+        const loader = getSharedGLTFLoader();
+        const gltf = await new Promise((resolve, reject) => {
+          loader.parse(
+            arrayBuffer,
+            '',
+            (parsed) => resolve(parsed),
+            (parseErr) => reject(parseErr)
+          );
+        });
+
+        performance.mark('model-parse-end');
+        try {
+          performance.measure('model-parse', 'model-parse-start', 'model-parse-end');
+        } catch (e) {}
+
+        sharedGltf = gltf;
+        preloadedGLTF = gltf;
+        console.log('[Model] Monster asset parsed and cached successfully. Total bytes:', loadedBytes || arrayBuffer.byteLength);
+        return gltf;
+      } catch (error) {
+        clearTimeout(timeoutId);
+        console.error('[Model] Error loading monster model:', error);
+        showModelRetryUI(error);
+        throw error;
+      }
+    }
+
+    function loadMonsterAsset() {
+      if (sharedGltf) return Promise.resolve(sharedGltf);
+      if (!modelPromise) {
+        modelPromise = fetchAndParseMonster().catch(err => {
+          modelPromise = null;
+          throw err;
+        });
+      }
+      return modelPromise;
+    }
+
+    function showModelRetryUI(err) {
+      if (els.progressText) {
+        els.progressText.textContent = 'FAILED TO LOAD 3D MODEL';
+      }
+      showToast('Model load error — Tap to retry', 8000, () => {
+        loadMonsterAsset().then(() => {
+          showToast('Model loaded successfully!');
+        });
+      });
+    }
+
+    // ---------------------------------------------------------------
+    // Deferred Background Queue for Optional Features
+    // ---------------------------------------------------------------
+    function scheduleIdleJob(callback, timeout = 1000) {
+      if (typeof window.requestIdleCallback === 'function') {
+        return window.requestIdleCallback(callback, { timeout });
+      }
+      return setTimeout(callback, 60);
+    }
+
+    function onFirstCharacterVisible(mode = 'ar') {
+      if (isFirstCharacterVisible) return;
+      isFirstCharacterVisible = true;
+      performance.mark('character-visible');
+      try {
+        performance.measure('time-to-first-character', 'navigationStart', 'character-visible');
+      } catch (e) {}
+
+      if (window.DEBUG_PERFORMANCE) {
+        logPerformanceSummary();
+      }
+
+      scheduleOptionalFeatures(mode);
+    }
+
+    function scheduleOptionalFeatures(mode = 'ar') {
+      if (optionalFeaturesStarted) return;
+      optionalFeaturesStarted = true;
+
+      if (mode === 'simulator') {
+        scheduleIdleJob(() => {
+          ensureExplosionTexture().then(() => {
+            scheduleIdleJob(() => {
+              ensureStormTexture();
+            }, 1000);
+          });
+        }, 500);
+        return;
+      }
+
+      if (els.gestureText) {
+        els.gestureText.textContent = '⏳ GESTURES LOADING…';
+      }
+
+      scheduleIdleJob(async () => {
+        try {
+          const vision = await getSharedVisionFileset();
+
+          scheduleIdleJob(async () => {
+            try {
+              await initPoseTracking(vision);
+              performance.mark('pose-tracker-ready');
+            } catch (err) {
+              console.warn('[Queue] Pose tracking init skipped/failed:', err);
+            }
+
+            scheduleIdleJob(async () => {
+              try {
+                await initHandTracking(vision);
+                performance.mark('hand-tracker-ready');
+              } catch (err) {
+                console.warn('[Queue] Hand tracking init skipped/failed:', err);
+              }
+
+              scheduleIdleJob(async () => {
+                try {
+                  await Promise.all([ensureExplosionTexture(), ensureStormTexture()]);
+                  performance.mark('effects-ready');
+                } catch (err) {
+                  console.warn('[Queue] Effects textures init skipped/failed:', err);
+                }
+              }, 1000);
+            }, 1000);
+          }, 1000);
+        } catch (e) {
+          console.warn('[Queue] Optional features error:', e);
+          if (els.gestureText) {
+            els.gestureText.textContent = '⚠️ GESTURES SKIPPED';
+          }
+        }
+      }, 600);
+    }
+
+    let isPageVisible = true;
+    document.addEventListener('visibilitychange', () => {
+      isPageVisible = !document.hidden;
+      if (!isPageVisible) {
+        console.log('[App] Tab hidden — pausing inference');
+      } else {
+        console.log('[App] Tab visible — resuming inference');
+      }
+    });
 
     // MediaPipe Pose Gesture State:
     // When arms are down: planes are visible (arePlanesDisappeared = false).
@@ -1590,6 +1912,7 @@
     // Container & Track Cleanup
     // ---------------------------------------------------------------
     function cleanARContainer() {
+      sceneGeneration++;
       isCameraRunning = false;
       if (mindarThree) {
         try { mindarThree.stop(); } catch (e) { }
@@ -1821,71 +2144,15 @@
         els.progressPct.textContent = '15%';
       }
 
-      // Wait for GLTFLoader and MINDAR to be ready
-      let waitCount = 0;
-      while (!window.GLTFLoader && waitCount < 100) {
-        await new Promise(r => setTimeout(r, 40));
-        waitCount++;
-      }
+      // Concurrently stream 3D character and target marker
+      const modelReady = loadMonsterAsset();
+      const markerReady = loadMarkerAsset();
 
-      // Preload 3D Monster Model (26MB)
-      if (window.GLTFLoader) {
-        if (els.progressText) els.progressText.textContent = 'DOWNLOADING 3D ASSETS…';
-        try {
-          const loader = new window.GLTFLoader();
-          await new Promise((resolve) => {
-            loader.load(
-              CONFIG.modelUrl,
-              (gltf) => {
-                preloadedGLTF = gltf;
-                console.log('[Preload] 3D Monster Model cached successfully from', CONFIG.modelUrl);
-                resolve();
-              },
-              (xhr) => {
-                if (xhr.lengthComputable && xhr.total > 0 && els.progressFill) {
-                  const pct = Math.min(85, Math.round((xhr.loaded / xhr.total) * 85));
-                  els.progressFill.style.width = pct + '%';
-                  els.progressPct.textContent = pct + '%';
-                  els.progressText.textContent = `DOWNLOADING 3D ASSETS (${pct}%)`;
-                }
-              },
-              (err) => {
-                console.warn('[Preload] GLB preload warning, will load on demand:', err);
-                resolve();
-              }
-            );
-          });
-        } catch (e) {
-          console.warn('[Preload] Error during GLB preload:', e);
-        }
-      }
-
-      if (els.progressText) {
-        els.progressText.textContent = 'INITIALIZING TRACKER…';
-        els.progressFill.style.width = '92%';
-        els.progressPct.textContent = '92%';
-      }
-
-      // Preload MindAR marker (.mind file) into an in-memory Blob URL for 0ms tracking setup latency
       try {
-        const mindRes = await fetch(CONFIG.targetUrl);
-        if (mindRes.ok) {
-          const mindBlob = await mindRes.blob();
-          compiledMindUrl = URL.createObjectURL(mindBlob);
-          console.log('[Preload] Target marker .mind cached as Blob URL successfully');
-        }
-      } catch (e) {
-        console.warn('[Preload] Target marker preload failed, will load direct:', e);
+        await Promise.all([modelReady, markerReady]);
+      } catch (err) {
+        console.warn('[Preload] Asset preload warning (will retry on demand):', err);
       }
-
-      // Pre-initialize MediaPipe Pose Landmarker
-      initPoseTracking();
-
-      // Preload 3D explosion & storm sprite sheets
-      initExplosionTexture();
-      initStormTexture();
-
-      await new Promise(r => setTimeout(r, 150));
 
       if (els.progressText) {
         els.progressText.textContent = 'READY';
@@ -1960,15 +2227,30 @@
     // ---------------------------------------------------------------
     // 3. MindAR + Three.js setup
     // ---------------------------------------------------------------
+    let arInitPromise = null;
+
     async function initAR() {
+      if (arInitPromise) {
+        console.log('[AR] initAR is already executing, joining in-flight promise...');
+        return arInitPromise;
+      }
+      arInitPromise = (async () => {
+        try {
+          await _executeInitAR();
+        } finally {
+          arInitPromise = null;
+        }
+      })();
+      return arInitPromise;
+    }
+
+    async function _executeInitAR() {
       cleanARContainer();
 
-      while (!window.MINDAR || !window.MINDAR.IMAGE || !window.MINDAR.IMAGE.MindARThree) {
-        await new Promise(r => setTimeout(r, 50));
-      }
+      performance.mark('camera-request-start');
+      await ensureMindARReady();
 
       const targetSrc = await getTargetSrc();
-      // Only use selectedDeviceId if user manually selected a specific device in the dropdown
       const selectedDeviceId = (els.cameraSelect && els.cameraSelect.value) ? els.cameraSelect.value : null;
 
       const tryStart = async (facing, deviceId) => {
@@ -1993,8 +2275,6 @@
         }
 
         mindarThree = new window.MINDAR.IMAGE.MindARThree(config);
-
-        // Explicitly configure shouldFaceUser: false for Main lens (rear), true for Front lens (selfie)
         mindarThree.shouldFaceUser = (facing === 'user');
 
         ({ renderer, scene, camera } = mindarThree);
@@ -2009,7 +2289,10 @@
 
         buildSceneContent(anchor.group);
 
-        anchor.onTargetFound = () => setLockState(true);
+        anchor.onTargetFound = () => {
+          performance.mark('first-marker-detected');
+          setLockState(true);
+        };
         anchor.onTargetLost = () => setLockState(false);
 
         // Start rendering preview IMMEDIATELY so 3D character is visible from frame 1
@@ -2019,10 +2302,6 @@
         if (camera) {
           camera.near = 0.05;
           camera.updateProjectionMatrix();
-        }
-
-        if (!isPoseTrackerReady) {
-          initPoseTracking();
         }
 
         currentFacing = mindarThree.shouldFaceUser ? 'user' : 'environment';
@@ -2044,6 +2323,12 @@
           video.setAttribute('playsinline', '');
           video.setAttribute('webkit-playsinline', '');
           video.muted = true;
+          video.onplaying = () => {
+            performance.mark('first-video-frame');
+            try {
+              performance.measure('camera-startup', 'camera-request-start', 'first-video-frame');
+            } catch (e) {}
+          };
           if (video.paused) {
             try { await video.play(); } catch (e) { console.warn("Video play error:", e); }
           }
@@ -2060,7 +2345,6 @@
         console.warn(`Initial camera start failed with ${currentFacing}:`, err);
         cleanARContainer();
 
-        // If explicit deviceId was passed, retry with pure facingMode
         if (selectedDeviceId) {
           try {
             console.log("Retrying camera start with pure facingMode...");
@@ -2071,7 +2355,6 @@
           }
         }
 
-        // Only if environment totally failed, try user lens fallback
         const fallbackFacing = currentFacing === 'environment' ? 'user' : 'environment';
         try {
           await tryStart(fallbackFacing, null);
@@ -2301,21 +2584,19 @@
         showToast('3D Monster Model Active ✨');
       };
 
-      if (preloadedGLTF) {
-        instantiateModel(preloadedGLTF);
-      } else if (window.GLTFLoader) {
-        showToast('Loading 3D Monster Model…');
-        const loader = new window.GLTFLoader();
-        loader.load(CONFIG.modelUrl, (gltf) => {
-          preloadedGLTF = gltf;
-          instantiateModel(gltf);
-        }, undefined, (err) => {
-          console.warn('GLB load error, using fallback geometry:', err);
+      const currentGen = sceneGeneration;
+      loadMonsterAsset().then((gltf) => {
+        if (currentGen !== sceneGeneration) {
+          console.log('[AR] Discarding model attachment: scene generation changed');
+          return;
+        }
+        instantiateModel(gltf);
+      }).catch((err) => {
+        console.warn('GLB load error, using fallback geometry:', err);
+        if (currentGen === sceneGeneration) {
           createPlaceholderMesh(group);
-        });
-      } else {
-        createPlaceholderMesh(group);
-      }
+        }
+      });
     }
 
     // ---------------------------------------------------------------
@@ -2843,22 +3124,39 @@
     // 3D Explosion FX using assets/textures/explosion_01.png (5x5 Sprite Sheet)
     // ---------------------------------------------------------------
     let explosionBaseTexture = null;
+    let explosionTexturePromise = null;
+
+    function ensureExplosionTexture() {
+      if (explosionBaseTexture) return Promise.resolve(explosionBaseTexture);
+      if (!explosionTexturePromise) {
+        explosionTexturePromise = new Promise((resolve, reject) => {
+          const loader = new (window.THREE ? window.THREE.TextureLoader : THREE.TextureLoader)();
+          loader.load('assets/versioned/explosion_01.png', (tex) => {
+            tex.generateMipmaps = false;
+            tex.minFilter = THREE.LinearFilter;
+            tex.magFilter = THREE.LinearFilter;
+            tex.wrapS = THREE.ClampToEdgeWrapping;
+            tex.wrapT = THREE.ClampToEdgeWrapping;
+            explosionBaseTexture = tex;
+            console.log('[VFX] explosion_01.png preloaded successfully (7x5 centered sprite sheet)');
+            resolve(tex);
+          }, undefined, (err) => {
+            console.warn('[VFX] Failed to load versioned explosion_01.png, trying fallback:', err);
+            loader.load('assets/textures/explosion_01.png', (fallbackTex) => {
+              explosionBaseTexture = fallbackTex;
+              resolve(fallbackTex);
+            }, undefined, (err2) => {
+              explosionTexturePromise = null;
+              reject(err2);
+            });
+          });
+        });
+      }
+      return explosionTexturePromise;
+    }
 
     function initExplosionTexture() {
-      if (explosionBaseTexture) return;
-      if (!window.THREE) return;
-      const loader = new THREE.TextureLoader();
-      loader.load('assets/textures/explosion_01.png?v=c3', (tex) => {
-        tex.generateMipmaps = false;
-        tex.minFilter = THREE.LinearFilter;
-        tex.magFilter = THREE.LinearFilter;
-        tex.wrapS = THREE.ClampToEdgeWrapping;
-        tex.wrapT = THREE.ClampToEdgeWrapping;
-        explosionBaseTexture = tex;
-        console.log('[VFX] explosion_01.png preloaded successfully (7x5 centered sprite sheet)');
-      }, undefined, (err) => {
-        console.warn('[VFX] Failed to preload explosion_01.png:', err);
-      });
+      return ensureExplosionTexture().catch(() => {});
     }
 
     function playExplosionSound() {
@@ -3131,25 +3429,40 @@
     }
 
     // ---------------------------------------------------------------
-    // 3D Electric Storm FX using assets/textures/storm_01.png (6x5 Sprite Sheet)
-    // ---------------------------------------------------------------
     let stormBaseTexture = null;
+    let stormTexturePromise = null;
+
+    function ensureStormTexture() {
+      if (stormBaseTexture) return Promise.resolve(stormBaseTexture);
+      if (!stormTexturePromise) {
+        stormTexturePromise = new Promise((resolve, reject) => {
+          const loader = new (window.THREE ? window.THREE.TextureLoader : THREE.TextureLoader)();
+          loader.load('assets/versioned/storm_01.png', (tex) => {
+            tex.generateMipmaps = false;
+            tex.minFilter = THREE.LinearFilter;
+            tex.magFilter = THREE.LinearFilter;
+            tex.wrapS = THREE.ClampToEdgeWrapping;
+            tex.wrapT = THREE.ClampToEdgeWrapping;
+            stormBaseTexture = tex;
+            console.log('[VFX] storm_01.png preloaded successfully (6x5 centered sprite sheet, 30 frames)');
+            resolve(tex);
+          }, undefined, (err) => {
+            console.warn('[VFX] Failed to load versioned storm_01.png, trying fallback:', err);
+            loader.load('assets/textures/storm_01.png', (fallbackTex) => {
+              stormBaseTexture = fallbackTex;
+              resolve(fallbackTex);
+            }, undefined, (err2) => {
+              stormTexturePromise = null;
+              reject(err2);
+            });
+          });
+        });
+      }
+      return stormTexturePromise;
+    }
 
     function initStormTexture() {
-      if (stormBaseTexture) return;
-      if (!window.THREE) return;
-      const loader = new THREE.TextureLoader();
-      loader.load('assets/textures/storm_01.png?v=s1', (tex) => {
-        tex.generateMipmaps = false;
-        tex.minFilter = THREE.LinearFilter;
-        tex.magFilter = THREE.LinearFilter;
-        tex.wrapS = THREE.ClampToEdgeWrapping;
-        tex.wrapT = THREE.ClampToEdgeWrapping;
-        stormBaseTexture = tex;
-        console.log('[VFX] storm_01.png preloaded successfully (6x5 centered sprite sheet, 30 frames)');
-      }, undefined, (err) => {
-        console.warn('[VFX] Failed to preload storm_01.png:', err);
-      });
+      return ensureStormTexture().catch(() => {});
     }
 
     function playStormSound() {
@@ -3851,79 +4164,78 @@
     let lastPoseInferenceTime = 0;
     const POSE_INFERENCE_INTERVAL_MS = 35; // Responsive pose inference (~28 fps)
 
-    async function initPoseTracking() {
-      if (poseLandmarker) return;
-      if (els.gestureText) {
-        els.gestureText.textContent = '⏳ POSE AI LOADING...';
-      }
+    let poseInitPromise = null;
 
-      let waitCount = 0;
-      while ((!window.FilesetResolver || !window.PoseLandmarker) && waitCount < 100) {
-        await new Promise(r => setTimeout(r, 50));
-        waitCount++;
-      }
-      if (!window.FilesetResolver || !window.PoseLandmarker) {
-        console.warn('[PoseTracking] MediaPipe tasks-vision libraries not ready');
-        if (els.gestureText) els.gestureText.textContent = '⚠️ POSE LOAD FAIL';
-        return;
-      }
+    async function initPoseTracking(sharedVision) {
+      if (isPoseTrackerReady && poseLandmarker) return poseLandmarker;
+      if (poseInitPromise) return poseInitPromise;
 
-      const modelCandidates = [
-        "assets/models/pose_landmarker_lite.task",
-        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
-      ];
-
-      let vision = null;
-      try {
-        vision = await window.FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
-        );
-      } catch (vErr) {
-        console.warn('[PoseTracking] FilesetResolver error:', vErr);
-      }
-
-      if (!vision) {
-        if (els.gestureText) els.gestureText.textContent = '⚠️ WASM ERROR';
-        return;
-      }
-
-      // Initialize MediaPipe HandLandmarker in parallel with shared vision tasks
-      if (typeof initHandTracking === 'function') {
-        initHandTracking(vision);
-      }
-
-      // Robust multi-tier fallback: GPU local -> CPU local -> GPU CDN -> CPU CDN
-      const attempts = [
-        { model: modelCandidates[0], delegate: "GPU" },
-        { model: modelCandidates[0], delegate: "CPU" },
-        { model: modelCandidates[1], delegate: "GPU" },
-        { model: modelCandidates[1], delegate: "CPU" },
-      ];
-
-      for (const config of attempts) {
-        try {
-          console.log(`[PoseTracking] Attempting ${config.delegate} with ${config.model}...`);
-          poseLandmarker = await window.PoseLandmarker.createFromOptions(vision, {
-            baseOptions: {
-              modelAssetPath: config.model,
-              delegate: config.delegate
-            },
-            runningMode: "VIDEO",
-            numPoses: 1
-          });
-          isPoseTrackerReady = true;
-          console.log(`[PoseTracking] Successfully initialized with ${config.delegate} (${config.model})`);
-          updateGestureHUD(!arePlanesDisappeared);
-          return;
-        } catch (err) {
-          console.warn(`[PoseTracking] ${config.delegate} failed for ${config.model}:`, err);
+      poseInitPromise = (async () => {
+        if (els.gestureText) {
+          els.gestureText.textContent = '⏳ POSE AI LOADING...';
         }
-      }
 
-      console.error('[PoseTracking] All PoseLandmarker initialization attempts failed');
-      if (els.gestureText) {
-        els.gestureText.textContent = '⚠️ POSE FAIL (TAP)';
-      }
+        let vision = sharedVision;
+        if (!vision) {
+          try {
+            vision = await getSharedVisionFileset();
+          } catch (vErr) {
+            console.warn('[PoseTracking] FilesetResolver error:', vErr);
+          }
+        }
+
+        if (!vision) {
+          if (els.gestureText) els.gestureText.textContent = '⚠️ WASM ERROR';
+          throw new Error('Vision fileset not available');
+        }
+
+        const mod = await loadVisionModule();
+        const PoseLandmarkerClass = mod.PoseLandmarker || window.PoseLandmarker;
+
+        const modelCandidates = [
+          "assets/models/pose_landmarker_lite.task",
+          "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
+        ];
+
+        // Robust multi-tier fallback: GPU local -> CPU local -> GPU CDN -> CPU CDN
+        const attempts = [
+          { model: modelCandidates[0], delegate: "GPU" },
+          { model: modelCandidates[0], delegate: "CPU" },
+          { model: modelCandidates[1], delegate: "GPU" },
+          { model: modelCandidates[1], delegate: "CPU" },
+        ];
+
+        for (const config of attempts) {
+          try {
+            console.log(`[PoseTracking] Attempting ${config.delegate} with ${config.model}...`);
+            poseLandmarker = await PoseLandmarkerClass.createFromOptions(vision, {
+              baseOptions: {
+                modelAssetPath: config.model,
+                delegate: config.delegate
+              },
+              runningMode: "VIDEO",
+              numPoses: 1
+            });
+            isPoseTrackerReady = true;
+            console.log(`[PoseTracking] Successfully initialized with ${config.delegate} (${config.model})`);
+            updateGestureHUD(!arePlanesDisappeared);
+            return poseLandmarker;
+          } catch (err) {
+            console.warn(`[PoseTracking] ${config.delegate} failed for ${config.model}:`, err);
+          }
+        }
+
+        console.error('[PoseTracking] All PoseLandmarker initialization attempts failed');
+        if (els.gestureText) {
+          els.gestureText.textContent = '⚠️ POSE FAIL (TAP)';
+        }
+        throw new Error('All PoseLandmarker initialization attempts failed');
+      })().catch(err => {
+        poseInitPromise = null;
+        throw err;
+      });
+
+      return poseInitPromise;
     }
 
     // Coordinate mapping function:
@@ -4110,7 +4422,7 @@
     }
 
     function updatePoseTracking(video) {
-      if (!poseLandmarker || !video) return;
+      if (!isPageVisible || !isCameraRunning || !poseLandmarker || !video) return;
       if (video.paused || video.ended || video.readyState < 2) return;
       if (!video.videoWidth || !video.videoHeight) return;
 
@@ -4348,60 +4660,65 @@
     const HAND_INFERENCE_INTERVAL_MS = 28; // ~35 fps responsive finger detection
     let touchCooldownUntil = 0;
 
+    let handInitPromise = null;
+
     async function initHandTracking(sharedVision) {
-      if (handLandmarker) return;
+      if (isHandTrackerReady && handLandmarker) return handLandmarker;
+      if (handInitPromise) return handInitPromise;
 
-      let vision = sharedVision;
-      if (!vision) {
-        let waitCount = 0;
-        while ((!window.FilesetResolver || !window.HandLandmarker) && waitCount < 100) {
-          await new Promise(r => setTimeout(r, 50));
-          waitCount++;
+      handInitPromise = (async () => {
+        let vision = sharedVision;
+        if (!vision) {
+          try {
+            vision = await getSharedVisionFileset();
+          } catch (e) {
+            console.warn('[HandTracking] FilesetResolver error:', e);
+          }
         }
-        if (!window.FilesetResolver || !window.HandLandmarker) {
-          console.warn('[HandTracking] MediaPipe tasks-vision libraries not ready');
-          return;
+        if (!vision) {
+          throw new Error('Vision fileset not available for HandLandmarker');
         }
-        try {
-          vision = await window.FilesetResolver.forVisionTasks(
-            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
-          );
-        } catch (e) {
-          console.warn('[HandTracking] FilesetResolver error:', e);
-          return;
-        }
-      }
 
-      const handModelCandidates = [
-        "assets/models/hand_landmarker.task",
-        "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
-      ];
+        const mod = await loadVisionModule();
+        const HandLandmarkerClass = mod.HandLandmarker || window.HandLandmarker;
 
-      const attempts = [
-        { model: handModelCandidates[0], delegate: "GPU" },
-        { model: handModelCandidates[0], delegate: "CPU" },
-        { model: handModelCandidates[1], delegate: "GPU" },
-        { model: handModelCandidates[1], delegate: "CPU" }
-      ];
+        const handModelCandidates = [
+          "assets/models/hand_landmarker.task",
+          "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+        ];
 
-      for (const config of attempts) {
-        try {
-          console.log(`[HandTracking] Attempting ${config.delegate} with ${config.model}...`);
-          handLandmarker = await window.HandLandmarker.createFromOptions(vision, {
-            baseOptions: {
-              modelAssetPath: config.model,
-              delegate: config.delegate
-            },
-            runningMode: "VIDEO",
-            numHands: 2
-          });
-          isHandTrackerReady = true;
-          console.log(`[HandTracking] HandLandmarker successfully initialized (${config.delegate}, 2 hands)`);
-          return;
-        } catch (err) {
-          console.warn(`[HandTracking] ${config.delegate} failed for ${config.model}:`, err);
+        const attempts = [
+          { model: handModelCandidates[0], delegate: "GPU" },
+          { model: handModelCandidates[0], delegate: "CPU" },
+          { model: handModelCandidates[1], delegate: "GPU" },
+          { model: handModelCandidates[1], delegate: "CPU" }
+        ];
+
+        for (const config of attempts) {
+          try {
+            console.log(`[HandTracking] Attempting ${config.delegate} with ${config.model}...`);
+            handLandmarker = await HandLandmarkerClass.createFromOptions(vision, {
+              baseOptions: {
+                modelAssetPath: config.model,
+                delegate: config.delegate
+              },
+              runningMode: "VIDEO",
+              numHands: 2
+            });
+            isHandTrackerReady = true;
+            console.log(`[HandTracking] HandLandmarker successfully initialized (${config.delegate}, 2 hands)`);
+            return handLandmarker;
+          } catch (err) {
+            console.warn(`[HandTracking] ${config.delegate} failed for ${config.model}:`, err);
+          }
         }
-      }
+        throw new Error('All HandLandmarker initialization attempts failed');
+      })().catch(err => {
+        handInitPromise = null;
+        throw err;
+      });
+
+      return handInitPromise;
     }
 
     // ---------------------------------------------------------------
@@ -4510,7 +4827,7 @@
     ];
 
     function updateHandTracking(video) {
-      if (!handLandmarker || !video || video.paused || video.ended || video.readyState < 2) {
+      if (!isPageVisible || !isCameraRunning || !handLandmarker || !video || video.paused || video.ended || video.readyState < 2) {
         hideFingertipReticles();
         return;
       }
@@ -4747,6 +5064,9 @@
 
       // Always face and align with the camera so that it remains fully visible
       if (isTargetLocked && monsterModel && camera && anchor && anchor.group && anchor.group.visible) {
+        if (!isFirstCharacterVisible) {
+          onFirstCharacterVisible('ar');
+        }
         const camWorldQuat = new THREE.Quaternion();
         camera.getWorldQuaternion(camWorldQuat);
         const targetWorldQuat = camWorldQuat.clone();
@@ -5017,20 +5337,16 @@
         showToast('3D Monster Active — Drag to rotate!');
       }
 
-      if (preloadedGLTF) {
-        setupSimModel(preloadedGLTF);
-      } else if (window.GLTFLoader) {
-        showToast('Loading 3D Monster Model…');
-        const loader = new window.GLTFLoader();
-        loader.load(CONFIG.modelUrl, (gltf) => {
-          preloadedGLTF = gltf;
-          setupSimModel(gltf);
-        }, undefined, () => {
+      const currentGen = sceneGeneration;
+      loadMonsterAsset().then((gltf) => {
+        if (currentGen !== sceneGeneration) return;
+        setupSimModel(gltf);
+      }).catch((err) => {
+        console.warn('Simulator model load error:', err);
+        if (currentGen === sceneGeneration) {
           createPlaceholderMesh(modelGroup);
-        });
-      } else {
-        createPlaceholderMesh(modelGroup);
-      }
+        }
+      });
 
       // Pointer drag to orbit/rotate or tap to toggle 3D buttons
       let simStartX = 0, simStartY = 0;
@@ -5099,6 +5415,9 @@
 
         // Always face and align with the camera
         if (simMonster && simCamera) {
+          if (!isFirstCharacterVisible) {
+            onFirstCharacterVisible('simulator');
+          }
           const targetWorldQuat = simCamera.quaternion.clone();
           if (simMonster.parent) {
             const invParentQuat = new THREE.Quaternion();
@@ -5767,6 +6086,15 @@
         }
       };
     })();
+
+    // Expose core WebAR engine methods on window
+    window.initAR = initAR;
+    window.startSimulatorMode = startSimulatorMode;
+    window.runPreload = runPreload;
+    window.loadMonsterAsset = loadMonsterAsset;
+    window.loadMarkerAsset = loadMarkerAsset;
+    window.trigger3DExplosion = trigger3DExplosion;
+    window.trigger3DStorm = trigger3DStorm;
   </script>
 </body>
 
