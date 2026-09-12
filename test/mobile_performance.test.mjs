@@ -49,6 +49,10 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
       fs.readFileSync('index.html', 'utf8').includes("new Audio('assets/monster_metal.mp3')"),
       'Panic mode must play the supplied music file'
     );
+    const html = fs.readFileSync('index.html', 'utf8');
+    assert.ok(!html.includes('playPanicAlarmSound'), 'Synthesized panic alarm must be removed');
+    assert.ok(!html.includes('id="btn-capture"'), 'Orange capture button must be removed');
+    assert.match(html, /grid grid-cols-3 items-center/, 'Control row must use a centered three-column layout');
   });
 
   // =========================================================================

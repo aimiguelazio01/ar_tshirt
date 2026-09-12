@@ -836,7 +836,7 @@
             class="group flex items-center justify-center transition-transform duration-200 hover:scale-[1.03] active:scale-95"
             title="Miguel Virgílio Studio — mvirgilstudio.com">
             <img src="assets/MVstudio_logo_text.png" alt="Miguel Virgílio Studio"
-              class="h-7 sm:h-8 w-auto max-w-[240px] object-contain opacity-90 group-hover:opacity-100 transition-opacity" />
+              class="h-8 sm:h-9 w-auto max-w-[260px] object-contain opacity-90 group-hover:opacity-100 transition-opacity" />
           </a>
 
           <!-- Social Media Icons Row (LinkedIn, Instagram, X, Facebook, YouTube, Vimeo) -->
@@ -1036,34 +1036,29 @@
         </div>
       </div>
 
-      <!-- BOTTOM CONTROLS DOCK (Speaker, Panic, Shutter, Simulator + MVirgil Studio Footer) -->
+      <!-- BOTTOM CONTROLS DOCK (Speaker, Panic, Simulator + MVirgil Studio Footer) -->
       <div
         class="ar-hud absolute bottom-0 inset-x-0 pb-safe z-30 flex flex-col items-center px-2 sm:px-6 pt-2 pb-2 bg-gradient-to-t from-dark-base via-dark-base/90 to-transparent pointer-events-none max-w-screen-md mx-auto">
         <!-- Controls Action Row -->
-        <div class="w-full max-w-sm sm:max-w-md md:max-w-lg flex items-center justify-between gap-1 sm:gap-2">
-          <!-- Left side: Speaker button & Panic button -->
-          <div class="flex items-center gap-1 sm:gap-2 pointer-events-auto flex-shrink-0">
+        <div class="w-full max-w-sm sm:max-w-md md:max-w-lg grid grid-cols-3 items-center gap-1 sm:gap-2">
+          <!-- Left side: Speaker button -->
+          <div class="flex items-center justify-self-start pointer-events-auto">
             <button class="ui-hud-orb flex-shrink-0" id="btn-audio" title="Toggle Audio">
               <span class="material-symbols-outlined text-[18px] sm:text-[20px]">volume_up</span>
             </button>
-            <button
-              class="px-2 sm:px-3.5 h-9 sm:h-10 md:h-11 rounded-full bg-red-600/95 hover:bg-red-500 active:scale-95 flex items-center justify-center gap-1 text-white font-bold text-[10px] sm:text-xs tracking-wider shadow-[0_0_20px_rgba(239,68,68,0.55)] border border-red-400/40 transition-all cursor-pointer btn-panic-pulse whitespace-nowrap flex-shrink-0"
-              id="btn-panic" title="DON'T TOUCH!">
-              <span class="material-symbols-outlined text-[15px] sm:text-[17px]">warning</span>
-              <span class="hidden sm:inline">DON'T TOUCH</span>
-              <span class="inline sm:hidden">PANIC</span>
-            </button>
           </div>
 
-          <!-- Center: Beast Shutter (Orange Button) -->
-          <div class="pointer-events-auto flex-shrink-0 mx-0.5 sm:mx-1">
-            <button class="beast-shutter" id="btn-capture" title="Capture Snapshot">
-              <div class="beast-shutter-inner"></div>
-            </button>
-          </div>
+          <!-- Center: Panic button -->
+          <button
+            class="justify-self-center px-2 sm:px-3.5 h-9 sm:h-10 md:h-11 rounded-full bg-red-600/95 hover:bg-red-500 active:scale-95 flex items-center justify-center gap-1 text-white font-bold text-[10px] sm:text-xs tracking-wider shadow-[0_0_20px_rgba(239,68,68,0.55)] border border-red-400/40 transition-all cursor-pointer btn-panic-pulse whitespace-nowrap"
+            id="btn-panic" title="DON'T TOUCH!">
+            <span class="material-symbols-outlined text-[15px] sm:text-[17px]">warning</span>
+            <span class="hidden sm:inline">DON'T TOUCH</span>
+            <span class="inline sm:hidden">PANIC</span>
+          </button>
 
           <!-- Right side: Simulator Mode Switch -->
-          <div class="flex items-center gap-1 sm:gap-2 pointer-events-auto flex-shrink-0">
+          <div class="flex items-center justify-self-end pointer-events-auto">
             <!-- Simulator Toggle Button -->
             <button class="ui-hud-orb flex-shrink-0" id="btn-toggle-sim" title="Switch to 3D Simulator Mode">
               <span class="material-symbols-outlined text-[18px] sm:text-[20px]">3d_rotation</span>
@@ -1078,7 +1073,7 @@
             class="group flex items-center justify-center transition-transform duration-200 hover:scale-[1.03] active:scale-95"
             title="Miguel Virgílio Studio — mvirgilstudio.com">
             <img src="assets/MVstudio_logo_text.png" alt="Miguel Virgílio Studio"
-              class="h-5 sm:h-5.5 w-auto max-w-[180px] object-contain opacity-85 group-hover:opacity-100 transition-opacity drop-shadow" />
+              class="h-6 sm:h-7 w-auto max-w-[210px] object-contain opacity-85 group-hover:opacity-100 transition-opacity drop-shadow" />
           </a>
 
           <!-- Social Media Icons Row (footer_ref.jpg: LinkedIn, Instagram, X, Facebook, YouTube, Vimeo) -->
@@ -1139,9 +1134,6 @@
           </div>
         </div>
       </div>
-
-      <!-- Flash on capture -->
-      <div class="capture-flash" id="capture-flash"></div>
 
       <!-- Toast message -->
       <div id="toast">
@@ -2056,9 +2048,7 @@
       lensToggle: document.getElementById('lens-toggle'),
       lensLabel: document.getElementById('lens-label'),
       btnClose: document.getElementById('btn-close'),
-      btnCapture: document.getElementById('btn-capture'),
       btnAudio: document.getElementById('btn-audio'),
-      captureFlash: document.getElementById('capture-flash'),
       toast: document.getElementById('toast'),
       arContainer: document.getElementById('ar-container'),
       btnSizeDown: document.getElementById('btn-size-down'),
@@ -4155,47 +4145,6 @@
 
     let isPanicActive = false;
 
-    function playPanicAlarmSound() {
-      if (!audioEnabled) return;
-      try {
-        audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === 'suspended') audioCtx.resume();
-        const now = audioCtx.currentTime;
-
-        // High-tech emergency alarm sound
-        const osc1 = audioCtx.createOscillator();
-        const osc2 = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-
-        osc1.type = 'sawtooth';
-        osc2.type = 'triangle';
-
-        osc1.frequency.setValueAtTime(880, now);
-        osc1.frequency.exponentialRampToValueAtTime(440, now + 0.2);
-        osc1.frequency.exponentialRampToValueAtTime(880, now + 0.4);
-        osc1.frequency.exponentialRampToValueAtTime(440, now + 0.6);
-
-        osc2.frequency.setValueAtTime(660, now);
-        osc2.frequency.exponentialRampToValueAtTime(330, now + 0.2);
-        osc2.frequency.exponentialRampToValueAtTime(660, now + 0.4);
-        osc2.frequency.exponentialRampToValueAtTime(330, now + 0.6);
-
-        gain.gain.setValueAtTime(0.25, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.75);
-
-        osc1.connect(gain);
-        osc2.connect(gain);
-        gain.connect(audioCtx.destination);
-
-        osc1.start(now);
-        osc2.start(now);
-        osc1.stop(now + 0.75);
-        osc2.stop(now + 0.75);
-      } catch (e) {
-        console.warn('Audio alarm error:', e);
-      }
-    }
-
     function playPanicMusic() {
       if (!audioEnabled) return;
       try {
@@ -5253,7 +5202,6 @@
         leftArmDownTimer = null;
       }
 
-      playPanicAlarmSound();
       playPanicMusic();
       showToast("⚠️ I SAID DON'T TOUCH! (Frames 25-72) 👹");
 
@@ -7287,33 +7235,7 @@
     });
 
     // ---------------------------------------------------------------
-    // 7. Screenshot capture + share (§6 feature list)
-    // ---------------------------------------------------------------
-    els.btnCapture.addEventListener('click', async () => {
-      els.captureFlash.classList.remove('fire'); void els.captureFlash.offsetWidth;
-      els.captureFlash.classList.add('fire');
-
-      try {
-        const canvas = els.arContainer.querySelector('canvas');
-        const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
-        const file = new File([blob], 'tapwear-drop-001.png', { type: 'image/png' });
-
-        if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-          await navigator.share({ files: [file], title: 'My TAPWEAR drop', text: 'Unlocked via NFC tap ✨' });
-        } else {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url; a.download = 'tapwear-drop-001.png'; a.click();
-          URL.revokeObjectURL(url);
-          showToast('Saved — share it from your gallery');
-        }
-      } catch (e) {
-        showToast('Could not capture — try again');
-      }
-    });
-
-    // ---------------------------------------------------------------
-    // 8. Exit
+    // 7. Exit
     // ---------------------------------------------------------------
     els.btnClose.addEventListener('click', () => {
       cleanARContainer();
@@ -7348,7 +7270,7 @@
     }
 
     // ---------------------------------------------------------------
-    // 9. 3D Scene Interaction & Tap Raycasting for 3D Buttons
+    // 8. 3D Scene Interaction & Tap Raycasting for 3D Buttons
     // ---------------------------------------------------------------
     function handleSceneTap(clientX, clientY) {
       const currentCam = isSimulatorMode ? simCamera : camera;
