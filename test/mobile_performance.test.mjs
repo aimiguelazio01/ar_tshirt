@@ -72,6 +72,12 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     }
   });
 
+  await t.test('0e. Product card uses the updated workflow label', () => {
+    const html = fs.readFileSync('index.html', 'utf8');
+    assert.ok(html.includes('>Vfx Workflow<'), 'Updated Vfx Workflow label must be present');
+    assert.ok(!html.toLowerCase().includes('monster graphic tee'), 'Old product label must be removed');
+  });
+
   // =========================================================================
   // 1. Elapsed-time playback equivalence at 60/30/15/10/5 FPS & suspension
   // =========================================================================
