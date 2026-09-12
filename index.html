@@ -1983,6 +1983,38 @@
     let modeEntryMark = null;
     let optionalFeaturesStarted = false;
 
+    let nextSessionId = 0;
+    let activeSession = null;
+    const activeEffectTimers = new Set();
+
+    function createSession(mode) {
+      if (activeSession && !activeSession.abort.signal.aborted) {
+        try { activeSession.abort.abort(); } catch (e) {}
+        activeSession.cleanups.forEach(fn => {
+          try { fn(); } catch (e) {}
+        });
+        activeSession.cleanups.clear();
+      }
+      const session = {
+        id: ++nextSessionId,
+        mode,
+        startedAt: performance.now(),
+        firstCharacterVisible: false,
+        optionalFeaturesStarted: false,
+        abort: new AbortController(),
+        cleanups: new Set()
+      };
+      activeSession = session;
+      sceneGeneration = session.id;
+      isFirstCharacterVisible = false;
+      optionalFeaturesStarted = false;
+      return session;
+    }
+
+    function isCurrent(session) {
+      return activeSession === session && session !== null && !session.abort.signal.aborted;
+    }
+
     function getSharedGLTFLoader() {
       if (!sharedLoader) {
         sharedLoader = new (window.GLTFLoader || GLTFLoader)();
@@ -2126,12 +2158,14 @@
     }
 
     function onFirstCharacterVisible(mode = 'ar') {
-      if (isFirstCharacterVisible) return;
+      const session = activeSession;
+      if (!isCurrent(session) || session.firstCharacterVisible) return;
+      session.firstCharacterVisible = true;
       isFirstCharacterVisible = true;
-      performance.mark('character-visible');
+      performance.mark(`character-visible-${session.id}`);
       try {
         const start = modeEntryMark !== null ? modeEntryMark : 0;
-        performance.measure('time-to-first-character', { start, end: 'character-visible' });
+        performance.measure(`time-to-first-character-${session.id}`, { start, end: `character-visible-${session.id}` });
       } catch (e) {
         try {
           performance.measure('time-to-first-character');
@@ -2142,18 +2176,22 @@
         logPerformanceSummary();
       }
 
-      scheduleOptionalFeatures(mode);
+      scheduleOptionalFeatures(mode, session);
     }
 
-    function scheduleOptionalFeatures(mode = 'ar') {
-      if (optionalFeaturesStarted) return;
+    function scheduleOptionalFeatures(mode = 'ar', session = activeSession) {
+      if (!isCurrent(session) || session.optionalFeaturesStarted) return;
+      session.optionalFeaturesStarted = true;
       optionalFeaturesStarted = true;
 
       if (mode === 'simulator') {
         if (!window.DISABLE_VFX) {
           scheduleIdleJob(() => {
+            if (!isCurrent(session)) return;
             ensureExplosionTexture().then(() => {
+              if (!isCurrent(session)) return;
               scheduleIdleJob(() => {
+                if (!isCurrent(session)) return;
                 ensureStormTexture();
               }, 1000);
             });
@@ -2168,6 +2206,7 @@
         }
         if (!window.DISABLE_VFX) {
           scheduleIdleJob(() => {
+            if (!isCurrent(session)) return;
             Promise.all([ensureExplosionTexture(), ensureStormTexture()]).catch(() => {});
           }, 500);
         }
@@ -2179,24 +2218,30 @@
       }
 
       scheduleIdleJob(async () => {
+        if (!isCurrent(session)) return;
         try {
           initTrackingWorker();
 
           // If worker is not supported or constructor fails immediately, initialize fallback vision
           if (!isWorkerSupported || !trackingWorker) {
             const vision = await getSharedVisionFileset();
+            if (!isCurrent(session)) return;
             if (!window.DISABLE_POSE) await initPoseTracking(vision).catch(() => {});
+            if (!isCurrent(session)) return;
             if (!window.DISABLE_HANDS) await initHandTracking(vision).catch(() => {});
           }
 
           if (!window.DISABLE_VFX) {
             scheduleIdleJob(() => {
+              if (!isCurrent(session)) return;
               Promise.all([ensureExplosionTexture(), ensureStormTexture()]).then(() => {
+                if (!isCurrent(session)) return;
                 performance.mark('effects-ready');
               }).catch(() => {});
             }, 1000);
           }
         } catch (e) {
+          if (!isCurrent(session)) return;
           console.warn('[Queue] Optional features error:', e);
           if (els.gestureText) {
             els.gestureText.textContent = '⚠️ GESTURES SKIPPED';
@@ -2376,6 +2421,40 @@
     function cleanARContainer() {
       sceneGeneration++;
       isCameraRunning = false;
+
+      if (activeSession) {
+        try { activeSession.abort.abort(); } catch (e) {}
+        activeSession.cleanups.forEach(fn => {
+          try { fn(); } catch (e) {}
+        });
+        activeSession.cleanups.clear();
+        activeSession = null;
+      }
+
+      // Cancel all gesture and interaction timers
+      if (typeof reactTimer !== 'undefined' && reactTimer) {
+        clearTimeout(reactTimer);
+        reactTimer = null;
+      }
+      if (typeof countdownTimer !== 'undefined' && countdownTimer) {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+      }
+      if (typeof rightArmDownTimer !== 'undefined' && rightArmDownTimer) {
+        clearTimeout(rightArmDownTimer);
+        rightArmDownTimer = null;
+      }
+      if (typeof leftArmDownTimer !== 'undefined' && leftArmDownTimer) {
+        clearTimeout(leftArmDownTimer);
+        leftArmDownTimer = null;
+      }
+      activeEffectTimers.forEach(t => {
+        try { clearInterval(t); } catch (e) {}
+      });
+      activeEffectTimers.clear();
+
+      if (typeof isRightArmCurrentlyUp !== 'undefined') isRightArmCurrentlyUp = false;
+      if (typeof isLeftArmCurrentlyUp !== 'undefined') isLeftArmCurrentlyUp = false;
 
       // 1. Stop simulator resources, RAF loop, and remove window listeners
       if (typeof simCleanupFn === 'function') {
@@ -2769,14 +2848,18 @@
 
     async function _executeInitAR() {
       cleanARContainer();
+      const session = createSession('ar');
 
       performance.mark('camera-request-start');
       await ensureMindARReady();
+      if (!isCurrent(session)) return;
 
       const targetSrc = await getTargetSrc();
+      if (!isCurrent(session)) return;
       const selectedDeviceId = (els.cameraSelect && els.cameraSelect.value) ? els.cameraSelect.value : null;
 
       const tryStart = async (facing, deviceId) => {
+        if (!isCurrent(session)) return;
         const config = {
           container: els.arContainer,
           imageTargetSrc: targetSrc,
@@ -2821,10 +2904,14 @@
         }
 
         anchor.onTargetFound = () => {
+          if (!isCurrent(session)) return;
           performance.mark('first-marker-detected');
           setLockState(true);
         };
-        anchor.onTargetLost = () => setLockState(false);
+        anchor.onTargetLost = () => {
+          if (!isCurrent(session)) return;
+          setLockState(false);
+        };
 
         // Start rendering preview IMMEDIATELY so 3D character is visible from frame 1
         QualityPolicy.applyToRenderer(renderer, camera);
@@ -2832,6 +2919,7 @@
         PerformanceDiagnostics.registerLoop('ar_renderLoop');
 
         await mindarThree.start();
+        if (!isCurrent(session)) return;
         isCameraRunning = true;
         if (camera) {
           camera.near = 0.05;
@@ -3138,16 +3226,16 @@
         showToast('3D Monster Model Active ✨');
       };
 
-      const currentGen = sceneGeneration;
+      const session = activeSession;
       loadMonsterAsset().then((gltf) => {
-        if (currentGen !== sceneGeneration) {
-          console.log('[AR] Discarding model attachment: scene generation changed');
+        if (!isCurrent(session)) {
+          console.log('[AR] Discarding model attachment: session changed or aborted');
           return;
         }
         instantiateModel(gltf);
       }).catch((err) => {
         console.warn('GLB load error, using fallback geometry:', err);
-        if (currentGen === sceneGeneration) {
+        if (isCurrent(session)) {
           createPlaceholderMesh(group);
         }
       });
@@ -3918,12 +4006,12 @@
       const animTimer = setInterval(() => {
         currentFrame++;
         if (currentFrame >= totalFrames) {
+          activeEffectTimers.delete(animTimer);
           clearInterval(animTimer);
-          // Clean up Three.js resources
+          // Clean up scene-owned Three.js resources (preserve shared spriteTex)
           parentGroup.remove(explosionGroup);
           spriteMat.dispose();
           coreMat.dispose();
-          spriteTex.dispose();
           sparkMat.dispose();
           sparkGeo.dispose();
           flashLight.dispose();
@@ -3978,6 +4066,7 @@
           recoilX *= 0.65;
         }
       }, frameIntervalMs);
+      activeEffectTimers.add(animTimer);
 
       showToast('💥 3D Explosion Detonated on Top Left!');
       console.log('[VFX] 3D Explosion triggered at top-left', spawnPos);
@@ -4230,12 +4319,12 @@
       const animTimer = setInterval(() => {
         currentFrame++;
         if (currentFrame >= totalFrames) {
+          activeEffectTimers.delete(animTimer);
           clearInterval(animTimer);
-          // Clean up Three.js resources
+          // Clean up scene-owned Three.js resources (preserve shared spriteTex)
           parentGroup.remove(stormGroup);
           spriteMat.dispose();
           coreMat.dispose();
-          spriteTex.dispose();
           sparkMat.dispose();
           sparkGeo.dispose();
           stormLight.dispose();
@@ -4295,6 +4384,7 @@
           recoilX *= 0.65;
         }
       }, frameIntervalMs);
+      activeEffectTimers.add(animTimer);
 
       showToast('⚡ 3D Electric Storm Summoned on Top Right!');
       console.log('[VFX] 3D Storm triggered at top-right', spawnPos);
@@ -5910,6 +6000,7 @@
     // ---------------------------------------------------------------
     function startSimulatorMode() {
       cleanARContainer();
+      const session = createSession('simulator');
       isSimulatorMode = true;
       isWelcomeScreenActive = false;
       modeEntryMark = performance.now();
@@ -6068,13 +6159,13 @@
         showToast('3D Monster Active — Drag to rotate!');
       }
 
-      const currentGen = sceneGeneration;
+      const session = activeSession;
       loadMonsterAsset().then((gltf) => {
-        if (currentGen !== sceneGeneration) return;
+        if (!isCurrent(session)) return;
         setupSimModel(gltf);
       }).catch((err) => {
         console.warn('Simulator model load error:', err);
-        if (currentGen === sceneGeneration) {
+        if (isCurrent(session)) {
           createPlaceholderMesh(modelGroup);
         }
       });
