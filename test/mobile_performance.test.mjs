@@ -101,6 +101,14 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     assert.match(html, /targetPlaneOpacity = areSoftwarePlatesVisible\(\) \? 0\.88 : 0;/, 'Manual toggle must animate plate visibility');
   });
 
+  await t.test('0i. Each visible software plate opens its matching window when tapped', () => {
+    const html = fs.readFileSync('index.html', 'utf8');
+    assert.match(html, /side: THREE\.DoubleSide/, 'Plate faces must accept taps from either side while floating');
+    assert.match(html, /function findNearestInteractivePlane\(ndcX, ndcY, activeCamera\)/, 'Tap handling must include a nearby-plate fallback');
+    assert.match(html, /const targetPlane = hits\[0\]\?\.object \|\| findNearestInteractivePlane\(ndcX, ndcY, currentCam\);/, 'Tap handling must use the closest visible plate when the ray misses');
+    assert.match(html, /openSoftwareModal\(cfg\.id\);/, 'A pressed plate must open the modal for its own software id');
+  });
+
   // =========================================================================
   // 1. Elapsed-time playback equivalence at 60/30/15/10/5 FPS & suspension
   // =========================================================================

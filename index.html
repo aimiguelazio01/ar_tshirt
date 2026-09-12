@@ -4110,7 +4110,9 @@
           metalness: 0,
           transparent: true,
           opacity: currentPlaneOpacity,
-          depthWrite: false
+          depthWrite: false,
+          // Keep the visible face tappable even while its floating rotation turns it from the camera.
+          side: THREE.DoubleSide
         });
         const bodyMesh = new THREE.Mesh(bevelGeo, bodyMat);
         bodyMesh.castShadow = false;
@@ -5261,18 +5263,18 @@
     }
 
     function toggleButtonState(targetMesh) {
-      if (!targetMesh) return;
+      if (!targetMesh) return false;
       const btnGroup = targetMesh.userData ? (targetMesh.userData.btnGroup || targetMesh.parent) : targetMesh.parent;
-      if (!btnGroup || !btnGroup.userData || !btnGroup.userData.config) return;
+      if (!btnGroup || !btnGroup.userData || !btnGroup.userData.config) return false;
 
       const uData = btnGroup.userData;
       const cfg = uData.config;
 
       if (cfg.id === 'panic') {
-        if (isSequenceRunning) return;
+        if (isSequenceRunning) return false;
         triggerPanicMode();
         uData.pressOffset = 0.035;
-        return;
+        return true;
       }
       if (cfg.id === 'houdini') {
         trigger3DStorm();
@@ -5298,6 +5300,7 @@
       if (typeof openSoftwareModal === 'function') {
         openSoftwareModal(cfg.id);
       }
+      return true;
     }
 
     function attachPlanesModel(group) {
@@ -7324,6 +7327,26 @@
     // ---------------------------------------------------------------
     // 8. 3D Scene Interaction & Tap Raycasting for 3D Buttons
     // ---------------------------------------------------------------
+    function findNearestInteractivePlane(ndcX, ndcY, activeCamera) {
+      if (!activeCamera || !planesModel || interactivePlanes.length === 0) return null;
+
+      planesModel.updateMatrixWorld(true);
+      let nearestPlane = null;
+      let nearestDistance = 0.18;
+
+      for (const plane of interactivePlanes) {
+        plane.getWorldPosition(_scratchV1);
+        _scratchV1.project(activeCamera);
+        const distance = Math.hypot(ndcX - _scratchV1.x, ndcY - _scratchV1.y);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestPlane = plane;
+        }
+      }
+
+      return nearestPlane;
+    }
+
     function handleSceneTap(clientX, clientY) {
       const currentCam = isSimulatorMode ? simCamera : camera;
       if (!currentCam) return false;
@@ -7341,8 +7364,9 @@
       // 1. Check 3D interactive button planes
       if (interactivePlanes.length > 0) {
         const hits = raycaster.intersectObjects(interactivePlanes, false);
-        if (hits.length > 0) {
-          toggleButtonState(hits[0].object);
+        const targetPlane = hits[0]?.object || findNearestInteractivePlane(ndcX, ndcY, currentCam);
+        if (targetPlane) {
+          toggleButtonState(targetPlane);
           return true;
         }
       }
