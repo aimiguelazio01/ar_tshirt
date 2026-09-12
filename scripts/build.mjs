@@ -29,44 +29,42 @@ async function build() {
   console.log('🚀 Starting deterministic static build...');
   const startTime = Date.now();
 
-  // 1. Determine Git Commit SHA
-  let gitCommit = '3700930';
-  try {
-    gitCommit = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
-  } catch (e) {
-    if (process.env.VERCEL_GIT_COMMIT_SHA) {
-      gitCommit = process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 7);
+  // 1. Determine Git / Vercel Commit SHA
+  let gitCommit = null;
+  if (process.env.VERCEL_GIT_COMMIT_SHA) {
+    gitCommit = process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 7);
+  } else {
+    try {
+      gitCommit = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
+    } catch (e) {
+      gitCommit = 'unknown-local';
     }
   }
   console.log(`📌 Build Commit SHA: ${gitCommit}`);
 
-  // 2. Prepare Directories
-  const distDir = path.resolve('dist');
-  const versionedDir = path.join(distDir, 'assets', 'versioned');
-  const localVersionedDir = path.resolve('assets', 'versioned');
+  // 2. Safely Resolve and Clean Output Directory (Strictly inside project root)
+  const repoRoot = path.resolve('.');
+  const distDir = path.resolve(repoRoot, 'dist');
+  if (!distDir.startsWith(repoRoot) || distDir === repoRoot) {
+    throw new Error(`Unsafe dist directory target: ${distDir}`);
+  }
 
   if (fs.existsSync(distDir)) {
     fs.rmSync(distDir, { recursive: true, force: true });
   }
+
+  const versionedDir = path.join(distDir, 'assets', 'versioned');
   fs.mkdirSync(versionedDir, { recursive: true });
-  if (!fs.existsSync(localVersionedDir)) {
-    fs.mkdirSync(localVersionedDir, { recursive: true });
-  }
 
-  // 3. Compile and Minify Tailwind CSS
+  // 3. Compile Tailwind CSS from tracked src/input.css into dist
   console.log('🎨 Compiling Tailwind CSS...');
-  if (!fs.existsSync('src')) fs.mkdirSync('src', { recursive: true });
-  const rawHtml = fs.readFileSync('index.html', 'utf8');
-  const styleMatch = rawHtml.match(/<style>([\s\S]*?)<\/style>/);
-  const customCss = styleMatch ? styleMatch[1].trim() : '';
-  const inputCss = `@tailwind base;\n@tailwind components;\n@tailwind utilities;\n\n${customCss}\n`;
-  fs.writeFileSync('src/input.css', inputCss);
+  const tempBuildDir = path.join(distDir, '.build_temp');
+  fs.mkdirSync(tempBuildDir, { recursive: true });
+  const tempCssPath = path.join(tempBuildDir, 'app.compiled.css');
 
-  const tempCssPath = path.join(distDir, 'temp_app.css');
   try {
     execSync(`npx tailwindcss -i src/input.css -o "${tempCssPath}" --minify`, { stdio: 'inherit' });
   } catch (err) {
-    // Fallback if npx needs cmd.exe wrapper on Windows
     execSync(`cmd.exe /c "npx tailwindcss -i src/input.css -o \\"${tempCssPath}\\" --minify"`, { stdio: 'inherit' });
   }
 
@@ -74,7 +72,6 @@ async function build() {
   const cssHash = computeHash(cssBuffer);
   const cssFileName = `app.${cssHash}.css`;
   fs.writeFileSync(path.join(versionedDir, cssFileName), cssBuffer);
-  fs.unlinkSync(tempCssPath);
   console.log(`✅ CSS compiled: assets/versioned/${cssFileName} (${(cssBuffer.length / 1024).toFixed(2)} KB)`);
 
   // 4. Compress & Hash 3D Character Model (Meshopt)
@@ -94,16 +91,14 @@ async function build() {
   const ext = doc.createExtension(EXTMeshoptCompression);
   ext.setRequired(true);
 
-  // Hash the EMITTED bytes per plan specification
+  // Hash the EMITTED bytes strictly per specification
   const emittedBytes = await io.writeBinary(doc);
   const glbHash = computeHash(emittedBytes);
   const glbFileName = `monster_anime_bs_v02.${glbHash}.opt.glb`;
   fs.writeFileSync(path.join(versionedDir, glbFileName), emittedBytes);
-  // Also preserve locally in assets/versioned for local development parity
-  fs.writeFileSync(path.join(localVersionedDir, glbFileName), emittedBytes);
   console.log(`✅ Model compressed: assets/versioned/${glbFileName} (${(emittedBytes.byteLength / 1024 / 1024).toFixed(2)} MB)`);
 
-  // 5. Content-hash Versioned Production Assets
+  // 5. Content-hash Versioned Production Assets into dist ONLY
   console.log('📦 Content-hashing binary and texture assets...');
 
   // Target Marker (.mind)
@@ -111,52 +106,60 @@ async function build() {
   const mindHash = computeHash(mindBuf);
   const mindFileName = `monster_tshirt.${mindHash}.mind`;
   fs.writeFileSync(path.join(versionedDir, mindFileName), mindBuf);
-  fs.writeFileSync(path.join(localVersionedDir, mindFileName), mindBuf);
 
   // Explosion Texture
   const expBuf = fs.readFileSync('assets/textures/explosion_01.png');
   const expHash = computeHash(expBuf);
   const expFileName = `explosion_01.${expHash}.png`;
   fs.writeFileSync(path.join(versionedDir, expFileName), expBuf);
-  fs.writeFileSync(path.join(localVersionedDir, expFileName), expBuf);
 
   // Storm Texture
   const stormBuf = fs.readFileSync('assets/textures/storm_01.png');
   const stormHash = computeHash(stormBuf);
   const stormFileName = `storm_01.${stormHash}.png`;
   fs.writeFileSync(path.join(versionedDir, stormFileName), stormBuf);
-  fs.writeFileSync(path.join(localVersionedDir, stormFileName), stormBuf);
 
   // Pose Landmarker Model
   const poseBuf = fs.readFileSync('assets/models/pose_landmarker_lite.task');
   const poseHash = computeHash(poseBuf);
   const poseFileName = `pose_landmarker_lite.${poseHash}.task`;
   fs.writeFileSync(path.join(versionedDir, poseFileName), poseBuf);
-  fs.writeFileSync(path.join(localVersionedDir, poseFileName), poseBuf);
 
   // Hand Landmarker Model
   const handBuf = fs.readFileSync('assets/models/hand_landmarker.task');
   const handHash = computeHash(handBuf);
   const handFileName = `hand_landmarker.${handHash}.task`;
   fs.writeFileSync(path.join(versionedDir, handFileName), handBuf);
-  fs.writeFileSync(path.join(localVersionedDir, handFileName), handBuf);
 
-  // 6. Copy Root & Static Assets to dist
-  console.log('📂 Copying static assets & worker...');
+  // 6. Copy Root & Static Runtime Assets into dist
+  console.log('📂 Copying static runtime assets, studio logos & compiler...');
   fs.copyFileSync('tracking_worker.js', path.join(distDir, 'tracking_worker.js'));
-  if (fs.existsSync('stitch')) copyDirRecursive('stitch', path.join(distDir, 'stitch'));
-
-  // Copy assets subdirectories to dist/assets
-  copyDirRecursive('assets/textures', path.join(distDir, 'assets', 'textures'));
-  copyDirRecursive('assets/models', path.join(distDir, 'assets', 'models'));
-  copyDirRecursive('assets/3d', path.join(distDir, 'assets', '3d'));
-  if (fs.existsSync('assets/social.png')) fs.copyFileSync('assets/social.png', path.join(distDir, 'assets', 'social.png'));
-  if (fs.existsSync('assets/monster_tshirt.mind')) fs.copyFileSync('assets/monster_tshirt.mind', path.join(distDir, 'assets', 'monster_tshirt.mind'));
-  if (fs.existsSync('assets/target_refrence.png')) fs.copyFileSync('assets/target_refrence.png', path.join(distDir, 'assets', 'target_refrence.png'));
+  if (fs.existsSync('compiler.html')) fs.copyFileSync('compiler.html', path.join(distDir, 'compiler.html'));
+  if (fs.existsSync('cam_test.html')) fs.copyFileSync('cam_test.html', path.join(distDir, 'cam_test.html'));
   if (fs.existsSync('favicon.ico')) fs.copyFileSync('favicon.ico', path.join(distDir, 'favicon.ico'));
 
-  // 7. Generate Production HTML
-  console.log('📄 Inlining configuration & generating dist/index.html...');
+  // Copy textures (software logos, centered VFX sprites)
+  copyDirRecursive('assets/textures', path.join(distDir, 'assets', 'textures'));
+  // Copy fallback models & 3D character assets
+  copyDirRecursive('assets/models', path.join(distDir, 'assets', 'models'));
+  copyDirRecursive('assets/3d', path.join(distDir, 'assets', '3d'));
+
+  // Copy root-referenced artwork & studio branding
+  if (fs.existsSync('assets/monster_tshirt.jpg')) fs.copyFileSync('assets/monster_tshirt.jpg', path.join(distDir, 'assets', 'monster_tshirt.jpg'));
+  if (fs.existsSync('assets/MVstudio_logo_text.png')) fs.copyFileSync('assets/MVstudio_logo_text.png', path.join(distDir, 'assets', 'MVstudio_logo_text.png'));
+  if (fs.existsSync('assets/monster_tshirt.mind')) fs.copyFileSync('assets/monster_tshirt.mind', path.join(distDir, 'assets', 'monster_tshirt.mind'));
+  if (fs.existsSync('assets/social.png')) fs.copyFileSync('assets/social.png', path.join(distDir, 'assets', 'social.png'));
+  if (fs.existsSync('assets/target_refrence.png')) fs.copyFileSync('assets/target_refrence.png', path.join(distDir, 'assets', 'target_refrence.png'));
+  if (fs.existsSync('stitch')) copyDirRecursive('stitch', path.join(distDir, 'stitch'));
+
+  // Copy runtime helper modules if existing
+  if (fs.existsSync('src/runtime')) {
+    copyDirRecursive('src/runtime', path.join(distDir, 'src', 'runtime'));
+  }
+
+  // 7. Generate Production HTML with preloads and inlined asset configuration
+  console.log('📄 Injecting high-priority preloads & generating dist/index.html...');
+  const rawHtml = fs.readFileSync('index.html', 'utf8');
   let builtHtml = rawHtml;
 
   // Replace build commit meta tag
@@ -175,8 +178,11 @@ async function build() {
   const inlineStyleRegex = /<style>[\s\S]*?<\/style>/i;
   builtHtml = builtHtml.replace(inlineStyleRegex, '');
 
-  // Inject Asset Configuration Script right before </head>
-  const assetConfigScript = `
+  // High-priority Preload tags for 3D model and marker before application module scripts
+  const highPriorityPreloads = `
+  <!-- High-Priority Preloads: Stream essential 3D character and target marker before module execution -->
+  <link rel="preload" as="fetch" crossorigin="anonymous" href="assets/versioned/${glbFileName}" fetchpriority="high">
+  <link rel="preload" as="fetch" crossorigin="anonymous" href="assets/versioned/${mindFileName}">
   <!-- Production Content-Hashed Asset Map (Zero Manifest Roundtrip) -->
   <script>
     window.__ASSET_CONFIG__ = {
@@ -191,7 +197,7 @@ async function build() {
     };
   </script>
 `;
-  builtHtml = builtHtml.replace('</head>', `${assetConfigScript}</head>`);
+  builtHtml = builtHtml.replace('</head>', `${highPriorityPreloads}</head>`);
 
   fs.writeFileSync(path.join(distDir, 'index.html'), builtHtml, 'utf8');
 
@@ -206,7 +212,10 @@ async function build() {
       explosionTexture: `assets/versioned/${expFileName}`,
       stormTexture: `assets/versioned/${stormFileName}`,
       poseModel: `assets/versioned/${poseFileName}`,
-      handModel: `assets/versioned/${handFileName}`
+      handModel: `assets/versioned/${handFileName}`,
+      studioLogo: 'assets/MVstudio_logo_text.png',
+      targetArtwork: 'assets/monster_tshirt.jpg',
+      compiler: 'compiler.html'
     },
     inventory: [
       { name: 'CSS Bundle', path: `assets/versioned/${cssFileName}`, size: cssBuffer.length, hash: cssHash },
@@ -222,9 +231,11 @@ async function build() {
   const manifestJson = JSON.stringify(manifest, null, 2);
   fs.writeFileSync(path.join(distDir, 'manifest.json'), manifestJson);
   fs.writeFileSync(path.join(versionedDir, 'manifest.json'), manifestJson);
-  fs.writeFileSync(path.join(localVersionedDir, 'manifest.json'), manifestJson);
 
-  // Copy vercel.json into dist if needed
+  // Clean up temporary build directory
+  fs.rmSync(tempBuildDir, { recursive: true, force: true });
+
+  // Copy vercel.json into dist
   fs.copyFileSync('vercel.json', path.join(distDir, 'vercel.json'));
 
   const durationMs = Date.now() - startTime;
