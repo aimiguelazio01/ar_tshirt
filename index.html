@@ -1017,7 +1017,7 @@
             class="ui-glass-pill h-[28px] sm:h-[30px] px-2.5 sm:px-3 flex items-center gap-1.5 text-dark-muted hover:text-white transition-colors cursor-pointer max-w-[85vw] truncate"
             id="gesture-chip" title="Raise arm then lower to trigger explosion!">
             <span class="material-symbols-outlined text-[13px] sm:text-[14px] text-brand flex-shrink-0">pan_tool_alt</span>
-            <span class="text-[9px] sm:text-[10px] font-medium tracking-wider uppercase truncate" id="gesture-text">RAISE ARM TO CHARGE</span>
+            <span class="text-[9px] sm:text-[10px] font-medium tracking-wider uppercase truncate" id="gesture-text">TOUCH TO INTERACT</span>
           </div>
         </div>
       </div>
@@ -1394,9 +1394,10 @@
     const isDebugPerformance = urlParams.get('debugPerformance') === '1';
     window.DEBUG_PERFORMANCE = isDebugPerformance;
 
-    // Independent bottleneck isolation switches
-    window.DISABLE_POSE = urlParams.get('noPose') === '1';
-    window.DISABLE_HANDS = urlParams.get('noHands') === '1';
+    // Independent bottleneck isolation switches (MediaPipe disabled by default for maximum mobile speed)
+    window.DISABLE_MEDIAPIPE = urlParams.get('enableMediaPipe') === '1' ? false : true;
+    window.DISABLE_POSE = window.DISABLE_MEDIAPIPE || urlParams.get('noPose') === '1';
+    window.DISABLE_HANDS = window.DISABLE_MEDIAPIPE || urlParams.get('noHands') === '1';
     window.DISABLE_VFX = urlParams.get('noVfx') === '1';
 
     // Diagnostic-only controls: trackingDelegate=auto|cpu|gpu, cameraProfile=standard|economy, quality=auto|balanced|reduced
@@ -1419,6 +1420,7 @@
 
     if (isDebugPerformance) {
       console.log('🔧 [Diagnostics] Performance mode active. Controls:', {
+        DISABLE_MEDIAPIPE: window.DISABLE_MEDIAPIPE,
         DISABLE_POSE: window.DISABLE_POSE,
         DISABLE_HANDS: window.DISABLE_HANDS,
         DISABLE_VFX: window.DISABLE_VFX,
@@ -2310,7 +2312,7 @@
       if (!isCurrent(session)) return;
       if (enabledTasks.length === 0) {
         if (els.gestureText) {
-          els.gestureText.textContent = 'ℹ️ GESTURES DISABLED (ISOLATION)';
+          els.gestureText.textContent = '✨ TOUCH TO INTERACT';
         }
         return;
       }
