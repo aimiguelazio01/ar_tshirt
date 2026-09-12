@@ -1,194 +1,355 @@
 # Mobile performance implementation plan for Gemini 3.8 Flash
 
-## 1. Goal and confirmed findings
+## 1. Objective and inspection findings
 
-Improve **both loading time and animation smoothness on Android Chrome**, preserving the character, animations, two-hand interaction, and arm gestures. Reduce rendering resolution and decorative effects when necessary.
+Improve **startup time and AR smoothness on Android Chrome and iPhone Safari**. Preserve the character, animations, arm gestures, two-hand interaction, and touch controls. Allow adaptive rendering resolution and simpler decorative effects.
 
-The previous startup optimization is already implemented. Build on the current code rather than repeating it.
+**The first problem is deployment: the live website does not match the current repository.**
 
-Inspection of [index.html](E:/_desktop_2026/VibeCoding/monster_ar_tshirt/index.html) found:
+Inspection of [the live app](https://mvartshirt.vercel.app/) and the local checkout found:
 
-| Finding | Required response |
-|---|---|
-| Pose and hand detection run synchronously inside the rendering loop, with intervals of 35 ms and 28 ms | Move inference into a worker and process fewer, fresh camera frames |
-| AR inherits unrestricted device pixel density; preview allows pixel ratio 2 | Apply an explicit, adaptive rendering budget |
-| AR cleanup does not stop its rendering loop or dispose renderers | Fix lifecycle ownership before further optimization |
-| Preview adds window event listeners on every entry | Register removable listeners and clean them up |
-| First-character timing occurs before rendering and references an undefined performance mark | Correct measurements |
-| Optional-feature readiness uses global flags across modes | Separate asset readiness from active scene state |
-| The active GLB URL uses an unhashed alias despite immutable caching | Use content-hashed asset URLs consistently |
+| Area | Live website | Local repository |
+|---|---|---|
+| Character loading | Original GLB; separate loader paths | Shared loading; compressed GLB |
+| Character asset size locally | Original: 3.42 MB | Compressed: 1.72 MB |
+| Gesture inference | Main-thread `detectForVideo()` | Worker exists, but needs corrections |
+| Optional loading | Tracking and effects initialized during startup | Deferred initialization exists |
+| Diagnostic traffic | Sends `/log?...` requests | Local diagnostics |
+| Optimized deployment files | Worker, manifest, compressed model return **404** | Files exist |
+| Asset caching | Checked assets revalidate | Immutable rule exists, but includes mutable filenames |
 
-Google confirms that MediaPipe detection calls block the calling thread and recommends workers. [MediaPipe documentation](https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker/web_js). MindAR 1.2.5 explicitly sets its renderer to `window.devicePixelRatio`. [Pinned MindAR source](https://raw.githubusercontent.com/hiukim/mind-ar-js/v1.2.5/src/image-target/three.js).
+Additional local findings:
 
-These are code findings; their relative performance impact still needs measurement on the affected phone.
+- Worker detection uses `IMAGE` mode for camera frames.
+- Worker-reported initialization errors are ignored; asynchronous failures do not initialize the fallback.
+- Worker results lack scene identifiers and freshness rejection.
+- First-character and optional-feature flags are never reset between modes.
+- Quality changes do not update existing particle counts; balanced mobile starts with 220 particles.
+- Reduced quality disables effects entirely.
+- Effects use independent timers that cleanup does not consistently cancel.
+- Tailwind compiles styles in the browser.
+- Existing verification scripts pass, but primarily check strings and file existence. Their `console.assert()` checks do not reliably fail the process.
 
-## 2. Ordered implementation steps
+These are source and HTTP findings. Physical-phone FPS, thermal behavior, and startup improvements remain unmeasured.
 
-### Step 1 — Establish trustworthy measurements
+## 2. Ordered implementation procedure
 
-Extend `?debugPerformance=1` with local diagnostics. Remove its per-console-message network requests because they distort results.
+### Step 1 — Establish deployment identity and trustworthy measurements
 
-Record:
+**Procedure**
 
-- Model download and parse duration.
-- Camera request to first video frame.
-- First marker detection and first rendered character, separately.
-- Frame interval median and 95th percentile.
-- Inference duration, result age, and effective pose/hand rates.
-- Drawing-buffer dimensions, draw calls, triangles, and renderer resource counts.
-- Active rendering loops, workers, and scene generation.
+1. Record the current production deployment and retain its rollback reference.
+2. In Vercel, inspect the project owning `mvartshirt.vercel.app`: connected GitHub repository, production branch, root directory, deployment commit, and domain assignment.
+3. Confirm the repository is `aimiguelazio01/ar_tshirt`. Use `main` as the production branch unless the existing project intentionally specifies another branch.
+4. Compare the deployed commit with the checkout. Local `main` currently points to `3700930` and is ahead of its locally recorded `origin/main` by one commit; fetch before concluding what GitHub currently contains.
+5. Create `codex/mobile-performance` from the inspected checkout. Preserve the three existing uncommitted character-texture changes; exclude them from this performance patch.
+6. Create a Vercel preview from the implementation branch. Do not promote the unfinished local optimizations directly to production.
 
-Measure the first character **after** a successful render with the model visible and the welcome overlay dismissed. Use navigation time zero for initial startup and separate start marks for subsequent mode entries.
+**Code changes**
 
-Capture five cold and five warm starts, plus 60-second sessions with gestures and effects. Add debug switches to disable pose, hands, and effects independently for bottleneck isolation.
+Add a build identifier to generated HTML and expose it in diagnostics:
 
-**Checkpoint:** Save an initial measurement report. Missing physical-phone measurements must remain explicitly pending.
+```html
+<meta name="app-build" content="GENERATED_COMMIT_SHA">
+```
 
-### Step 2 — Fix lifecycle leaks
+Extend `PerformanceDiagnostics` to record:
 
-Make `cleanARContainer()` responsible for every resource owned by the departing scene:
+- Model download and parse durations.
+- Camera request and first decoded video frame.
+- Mode entry, first marker detection, and first rendered character.
+- Median, p90, and p95 frame intervals.
+- Actual inference rates, inference duration, and result age.
+- Drawing-buffer dimensions, renderer resources, and registered active loops/workers.
 
-- Stop the AR loop with `setAnimationLoop(null)` before clearing references.
-- Cancel preview animation frames, scheduled scene callbacks, effect timers, and animation timers.
-- Remove preview pointer, touch, and resize listeners.
-- Stop camera tracks and dispose departing renderers and scene-owned resources.
-- Preserve cached GLTF geometry and textures; dispose only resources owned by the scene.
-- Extend the existing generation guard to camera startup, optional initialization, effects, and tracking results.
+Count actual loop registrations rather than inferring them from mode flags. Reset frame windows after mode changes and backgrounding. Keep sampling bounded; enable detailed diagnostics only with `?debugPerformance=1`.
 
-Use named handlers and a per-session cleanup registry. Retain one MindAR instance across AR restarts to avoid accumulating the library’s internally bound resize listeners; stop its camera and rendering while inactive.
+Mark the first character after rendering, with the welcome overlay fully dismissed. Use separate per-session marks. Report permission waiting and marker-aiming time separately from loading.
 
-Pause rendering and optional inference when hidden. Pause MindAR processing through its supported controller lifecycle, then resume once with fresh timing. Mode exit must stop the camera completely.
+**Checkpoint**
 
-Replace global “first character” and “optional features started” flags with per-session visibility state and independent shared feature promises. Entering preview first must not prevent gestures from initializing later in AR.
+Capture production and preview baselines separately: five cold starts, five warm starts, and a 60-second AR session per test phone. Preserve existing `noPose`, `noHands`, and `noVfx` isolation switches.
 
-**Checkpoint:** Ten AR/preview switches leave one active renderer loop, no obsolete callbacks, and no steadily increasing resource count after warm-up.
+### Step 2 — Make scene lifecycle and asynchronous work reliable
 
-### Step 3 — Apply adaptive mobile rendering
+Update `cleanARContainer()`, mode entry, camera switching, and optional initialization in [index.html](C:/Users/b550xe/Desktop/monster_ar_tshirt/index.html).
 
-Introduce one shared quality policy for AR and preview:
+**Code changes**
 
-| Setting | Balanced default | Reduced quality |
+Replace page-global visibility/initialization flags with session state:
+
+```js
+let nextSessionId = 0;
+let activeSession = null;
+
+function createSession(mode) {
+  return {
+    id: ++nextSessionId,
+    mode,
+    startedAt: performance.now(),
+    firstCharacterVisible: false,
+    abort: new AbortController(),
+    cleanups: new Set()
+  };
+}
+
+function isCurrent(session) {
+  return activeSession === session && !session.abort.signal.aborted;
+}
+```
+
+Every asynchronous callback captures its session. After each `await`, verify that session before attaching a model, starting a camera, updating UI, or triggering an effect.
+
+On departure:
+
+1. Invalidate the session and stop frame submission.
+2. Cancel render callbacks, video callbacks, idle jobs, animation timers, and effect timers.
+3. Stop MindAR processing before clearing the video stream.
+4. Stop camera tracks and clear gesture holds and reticles.
+5. Dispose scene-owned geometry, materials, canvas textures, mixers, and simulator renderer resources.
+6. Preserve cached character geometry/textures and shared effect textures.
+
+Retain one MindAR renderer/wrapper to avoid accumulating its internally registered resize listener. Manage its controller separately: before a restart replaces the controller, stop/dispose the outgoing controller and terminate its outgoing worker. Verify resource counts plateau across restarts.
+
+On backgrounding, stop both application rendering and MindAR video processing. Resume exactly once with fresh timing; restart the camera through the same guarded path if its tracks ended.
+
+Keep shared asset promises separate from per-session activation. Preview-first entry must not prevent AR gestures from initializing later.
+
+**Checkpoint**
+
+Ten preview/AR transitions and ten camera switches produce no stale attachments, accumulating workers, duplicate loops, or actions fired after leaving a scene.
+
+### Step 3 — Repair and optimize the tracking worker
+
+Modify [tracking_worker.js](C:/Users/b550xe/Desktop/monster_ar_tshirt/tracking_worker.js) and its main-thread scheduler.
+
+**Worker changes**
+
+Keep MediaPipe `0.10.14`. Initialize enabled tasks sequentially to reduce simultaneous initialization pressure. Try GPU, then CPU inside the worker, closing partially initialized resources on failure.
+
+Change both tasks to video mode:
+
+```js
+// Apply to both PoseLandmarker and HandLandmarker options:
+runningMode: 'VIDEO'
+
+// Each selected task processes the transferred camera frame:
+const result = landmarker.detectForVideo(bitmap, timestampMs);
+```
+
+Use strictly increasing timestamps generated on the main thread. Keep one pose and two hands.
+
+Video mode allows hand tracking to avoid repeating palm detection when tracking remains valid. Both detection APIs are synchronous, so inference should remain in the worker. [MediaPipe documentation](https://developers.google.com/edge/mediapipe/solutions/vision/hand_landmarker/web_js)
+
+**Internal message contract**
+
+```js
+// Main → worker
+{ type: 'init', workerId, assets, enabledTasks }
+{ type: 'frame', workerId, sessionId, frameId,
+  task, capturedAt, timestampMs, bitmap }
+{ type: 'dispose', workerId }
+
+// Worker → main
+{ type: 'ready', workerId }
+{ type: 'result', workerId, sessionId, frameId,
+  task, capturedAt, durationMs, landmarks, handednesses }
+{ type: 'error', workerId, stage, message }
+```
+
+Use `requestVideoFrameCallback()` to schedule fresh frames. Where unavailable, check `video.currentTime` from a separate scheduler. Remove tracking dispatch from `renderLoop()`.
+
+Maintain **one capture/inference operation in flight**, including asynchronous bitmap creation. Alternate eligible tasks; drop intermediate frames.
+
+Before accepting results:
+
+```js
+const matches =
+  data.workerId === currentWorkerId &&
+  data.sessionId === activeSession?.id &&
+  data.frameId === pendingFrame?.id;
+
+if (!matches) return;
+
+pendingFrame = null;
+
+if (document.hidden ||
+    activeSession.mode !== 'ar' ||
+    performance.now() - data.capturedAt > 350) {
+  clearPendingGestures();
+  return;
+}
+```
+
+Also clear gesture state when no fresh result arrives for 350 ms. A stale response must never clear a newer request’s busy state.
+
+Handle synchronous and asynchronous bitmap failures. Try video capture, then a resized canvas capture; if bitmap transfer is unavailable, activate the main-thread fallback. Close bitmaps on every abandoned or failed-transfer path.
+
+Route constructor errors, worker `error` messages, `onerror`, `onmessageerror`, a 30-second initialization timeout, and a 2-second inference timeout through one deduplicated fallback initializer. Terminate the failed worker first.
+
+Fallback: run at most one inference every 100 ms, alternating tasks, with a 5 Hz ceiling per task. Schedule outside rendering. If a task cannot initialize, retain touch interaction and show its unavailable state.
+
+Preserve coordinate mapping and mirroring. Require two fresh agreeing samples spanning at least 70 ms for arm transitions. Preserve the two-second hand hold and reset it on tracking loss.
+
+**Checkpoint**
+
+Normal operation has no main-thread MediaPipe inference, no queued frame backlog, and working gestures after every worker failure scenario.
+
+### Step 4 — Apply a complete rendering budget
+
+Keep the existing adaptive policy, but make every setting affect the active scene.
+
+| Setting | Balanced mobile | Reduced mobile |
 |---|---:|---:|
 | Maximum pixel ratio | 1.0 | 0.75 |
-| Maximum drawing-buffer pixels | 1,000,000 | 650,000 |
-| Decorative particles | 80 | 30 |
+| Maximum buffer pixels | 1,000,000 | 650,000 |
+| Ambient particles | 80 | 30 |
 | Sparks per effect | 12 | 6 |
-| Temporary effect lights | Enabled | Disabled |
-| Pose inference ceiling | 10 Hz | 6 Hz |
-| Hand inference ceiling | 15 Hz | 10 Hz |
-| Tracking input longest edge | 640 px | 480 px |
+| Temporary effect lights | On | Off |
+| Pose ceiling | 10 Hz | 6 Hz |
+| Hand ceiling | 15 Hz | 10 Hz |
+| Tracking-frame longest edge | 640 px | 480 px |
 
-Calculate the effective pixel ratio from both the ratio cap and pixel budget. Preserve MindAR’s canvas layout and camera projection; change rendering resolution only. Reapply after resizing, rotation, and camera changes.
+Use the AR container’s dimensions, not the window:
 
-Keep the character’s geometry, rig, morphs, animation clips, and materials. Disable preview antialiasing and logarithmic depth buffering on mobile; keep its existing near/far clipping range and verify overlapping surfaces.
+```js
+function applyBufferBudget(renderer, container, policy) {
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+  if (!width || !height) return;
 
-Evaluate frame intervals in two-second windows after initialization:
+  const ratio = Math.min(
+    window.devicePixelRatio || 1,
+    policy.maxPixelRatio,
+    Math.sqrt(policy.maxBufferPixels / (width * height))
+  );
 
-- Reduce quality after three consecutive windows with 90th-percentile frame intervals above 40 ms.
-- Restore balanced quality after five consecutive windows below 30 ms.
-- Ignore hidden periods and reset sampling after mode changes.
-- Never exceed balanced quality on mobile.
+  renderer.setPixelRatio(ratio);
+  renderer.setSize(width, height, false);
+}
+```
 
-Cache frequently used bones, video/DOM references, vectors, and quaternions. Move decorative animation and sprite effects onto the active render clock, replacing their independent intervals. Preserve animation speed with elapsed-time updates and reset the clock after suspension.
+Let MindAR calculate its AR camera projection and video crop. Apply the buffer budget after its resize operation without overriding that projection. Update preview-camera aspect separately. The pinned library owns these resize calculations. [MindAR 1.2.5 source](https://raw.githubusercontent.com/hiukim/mind-ar-js/v1.2.5/src/image-target/three.js)
 
-**Checkpoint:** Rotation preserves marker alignment and touch coordinates; reduced quality preserves all interaction capabilities.
+Additional changes:
 
-### Step 4 — Move gesture inference off the rendering thread
+- Allocate particle capacity once; change `geometry.setDrawRange()` and update only active particles.
+- Preserve a simplified explosion/storm response in reduced mode instead of returning without feedback.
+- Update lights when a scene is created and when its quality profile changes.
+- Replace effect intervals with `updateEffects(delta)` in the active rendering loop.
+- Use elapsed time for particle movement, rotation, fades, and press recovery.
+- Cache root bones and active video references outside frame loops.
+- In reduced mode, replace large live-camera backdrop blurs with opaque/translucent backgrounds.
+- Keep current animation playback timing; increasing `animationSpeed` is not an FPS optimization.
 
-Create one dedicated tracking worker. Keep Three.js, DOM updates, raycasting, and gesture actions on the main thread.
+Retain two-second quality windows: downgrade after three p90 windows above 40 ms; restore after five below 30 ms. Reset sampling on transitions and visibility changes.
 
-Split existing tracking functions into:
+**Checkpoint**
 
-1. Frame acquisition and inference scheduling.
-2. Pose-result handling.
-3. Hand-result handling.
+Rotation preserves marker alignment, hand targeting, and screenshots. Reduced quality preserves every interaction.
 
-Use this internal message contract:
+### Step 5 — Complete startup scheduling
 
-- Requests: `init`, `frame`, `dispose`.
-- Responses: `ready`, `result`, `error`.
-- Each frame/result carries session generation, frame ID, task kind, and capture timestamp.
+Build on the shared model and marker promises already present.
 
-Worker behavior:
+1. Move essential Three.js imports into the application module itself; remove dependence on another module populating globals first.
+2. Preserve Three.js `0.157.0` and the configured Meshopt decoder.
+3. Replace MindAR polling with one memoized import promise. Load compiler support only for the image-compilation path.
+4. Start model and marker loading concurrently; preview waits only for its required 3D dependencies.
+5. Start optional tracking after the first visible character render and a browser yield.
+6. Load effect textures sequentially after tracking initialization settles; preview loads effects without tracking.
+7. Make early effect requests await their shared texture promise and verify the session before execution.
+8. Make Retry resume the requested operation. The current `showToast()` does not implement the callback passed by `showModelRetryUI()`, so use an actual retry button handler.
+9. Remove all production `/log?...` traffic by deploying the corrected implementation.
 
-- Initialize the existing pinned MediaPipe version and models.
-- Try GPU initialization with worker-compatible canvas support; fall back to CPU within the worker.
-- Keep one pose and two-hand detection.
-- Process one task at a time.
+**Checkpoint**
 
-Main-thread scheduling:
+One successful GLB fetch and parse per page session. No tracking-model or effect downloads before first character visibility. Preview works when MindAR or MediaPipe is unavailable.
 
-- Use `requestVideoFrameCallback`; fall back to checking `video.currentTime`.
-- Resize frames while preserving aspect ratio, then transfer an `ImageBitmap`.
-- Permit only one capture/inference operation in flight. Drop intermediate frames instead of queueing them.
-- Alternate eligible tasks according to the quality profile.
-- Close transferred bitmaps after inference.
-- Run inference only in active, visible AR. Pause hands when interactive plates cannot be used; preserve pose tracking while needed to restore them.
-- Preserve existing mirroring, crop mapping, and normalized coordinates.
+### Step 6 — Compile CSS and make asset caching reproducible
 
-Discard obsolete-generation results and results older than 350 ms. Clear reticles and pending holds when results become stale.
+Replace the Tailwind Play CDN with build-time CSS using a locked Tailwind 3 release and the existing theme configuration. Scan HTML and application JavaScript; explicitly include dynamically assembled classes. Preserve current styling and CSS precedence.
 
-Replace two-frame gesture debounce counters with a **70 ms elapsed-time threshold**, requiring at least two fresh agreeing samples. Preserve the existing two-second hand hold. Tracking loss must reset pending actions without triggering an effect.
+Tailwind documents its browser CDN as a development tool. [Tailwind documentation](https://v3.tailwindcss.com/docs/installation/play-cdn)
 
-If worker initialization fails, use one deduplicated main-thread scheduler capped at **5 Hz per task**, alternating tasks outside the render callback. Expose degraded tracking status and retain touch controls.
+Add a deterministic static build that:
 
-**Checkpoint:** The normal Android path contains no main-thread `detectForVideo()` calls, no inference backlog, and no gesture timing dependence on frame rate.
+1. Compiles and minifies CSS.
+2. Generates content-hashed production assets.
+3. Injects asset URLs and the Git commit into the built HTML.
+4. Writes a `dist` directory containing the app, worker, required assets, and the existing compiler entry point and dependencies.
+5. Produces an asset inventory for automated validation.
 
-### Step 5 — Finish startup and caching corrections
+Fix asset hashing to use **emitted bytes**, including compressed GLB bytes:
 
-Preserve shared model loading and the compressed GLB.
+```js
+const emittedBytes = await io.writeBinary(doc);
+const hash = crypto.createHash('sha256')
+  .update(emittedBytes)
+  .digest('hex')
+  .slice(0, 16);
+```
 
-- Import essential Three.js dependencies directly into the application module.
-- Start model and marker downloads concurrently.
-- Replace MindAR readiness polling with a memoized import promise. Load compiler support only for image compilation.
-- Keep preview usable independently of AR dependency readiness.
-- Start optional initialization after the first visible render. Yield to the browser before dispatching worker initialization.
-- Maintain separate readiness for the character, marker, camera, and optional features.
-- Do not mark failed preload attempts as “READY.” Retry must resume the requested mode.
-- Route early effect requests through the existing texture promise and discard requests belonging to departed scenes.
+Fingerprint the GLB, marker, gesture models, effect textures, and compiled CSS. Generate their configuration into HTML so startup does not require an extra manifest fetch. Pass tracking-model URLs to the worker during initialization.
 
-Update asset generation to hash the **actual emitted bytes**. Use hashed URLs for the model, marker, tracking models, and effects. Generate a small asset configuration consumed by the page without adding a blocking manifest request.
+Keep manifests, HTML, and unversioned worker code revalidating. Place only genuinely content-hashed files under the directory receiving:
 
-Keep HTML and mutable manifests revalidating. Apply immutable caching only to hashed assets; remove the active dependency on unhashed aliases. Use the same URLs in all fallback and effect paths.
+```http
+Cache-Control: public, max-age=31536000, immutable
+```
 
-**Checkpoint:** One successful GLB fetch and parse per page session; optional work starts after visibility; changed assets receive new URLs.
+Remove mutable aliases from that immutable directory in the build output. Preserve MIME/CORS behavior and verify actual deployed headers. [Vercel caching documentation](https://vercel.com/docs/caching/cache-control-headers)
 
-## 3. Validation and acceptance
+Configure Vercel to run `npm run build` and publish `dist`. Add scripts for asset verification, behavioral tests, and the build.
 
-Use the affected Android phone as the primary device and record its model, browser version, connection, and build. Desktop emulation supplements physical testing.
+**Checkpoint**
 
-Targets:
+A clean `npm ci` followed by tests and build succeeds. Changed asset bytes produce a different URL; warm visits reuse unchanged assets. Every generated URL returns HTTP 200.
 
-- At least **30 FPS median**, with 95th-percentile frame intervals at or below **50 ms**, during a 60-second AR session with tracking.
-- At least **25% lower median character startup time** against the current build under equivalent conditions, excluding permission-dialog and user aiming time.
-- Gesture response within **300 ms** in balanced mode, excluding intentional hold duration.
-- No sustained deterioration during a five-minute session.
-- No accumulating loops, listeners, or scene resources after ten mode switches.
+## 3. Tests and release procedure
 
-Required scenarios:
+Replace string-based success checks with `node:test` and `node:assert/strict`. Test extracted scheduler and lifecycle helpers using fake clocks, workers, and camera frames.
 
-- Cold/warm startup, immediate preview selection, and preview → AR.
-- Camera permission denial, model failure/retry, and unavailable optional assets.
-- Worker GPU failure, CPU fallback, and total worker failure.
-- Marker loss/recovery, both arm gestures, two-hand holds, touch actions, and both effects.
-- Background/resume, camera switching, portrait/landscape rotation.
-- Visual checks for skinning, facial morphs, clipping, animation timing, and plate alignment.
+Required automated scenarios:
 
-Add focused automated tests for scheduler backpressure, stale-result rejection, elapsed-time debounce, quality hysteresis, and cleanup. Replace the placeholder test command with these tests; existing asset checks alone do not validate performance.
+- Single shared model load, rejected load followed by retry.
+- Preview-first followed by AR optional initialization.
+- One in-flight bitmap/inference operation.
+- Duplicate video frames skipped.
+- Stale session, worker, frame, and aged results rejected.
+- Worker failure and timeout activate fallback once.
+- Bitmap resources closed after capture/transfer failures.
+- Gesture debounce and hold reset after tracking loss.
+- Quality hysteresis and buffer-pixel limits.
+- Cleanup prevents obsolete callbacks.
+- Generated asset URLs, hashes, and deployment inventory are valid.
 
-Deliver a comparison report and HTTPS preview. Targets are release gates, not claimed results. If any fail, report the measured bottleneck and retain the previous deployment for rollback.
+Use real Android Chrome and iPhone Safari for:
 
-## 4. Gemini Flash 3.8 execution contract
+- Cold/warm starts and permission granted/denied.
+- Marker loss/recovery, both arms, two-hand holds, touch actions, and effects.
+- Preview/AR transitions, camera switching, rotation, and background/resume.
+- A five-minute session to expose heat and resource accumulation.
+- Character appearance, skinning, morphs, animation timing, and alignment.
 
-Use `gemini-3.8-flash`. Recommended thinking level: **high** for lifecycle and worker integration; **medium** for diagnostics, quality settings, and asset wiring. These levels are supported by the model. [Google model documentation](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash).
+**Release gates**
 
-Give Gemini this plan and require it to:
+- At least 25% lower median controlled startup time than the current live build.
+- At least 30 FPS median and p95 frame interval no greater than 50 ms during a 60-second balanced AR session.
+- Normal worker-path gesture response within 300 ms, excluding intentional holds.
+- No accumulating loops, workers, or scene resources after repeated transitions.
+- No interaction or character-appearance regression.
 
-1. Implement the five steps in order, with a small reviewable patch per step.
-2. Read the relevant functions before editing; preserve unrelated UI and behavior.
-3. Run each checkpoint before advancing.
-4. Report changed behavior, validation performed, measured results, and remaining failures after each step.
-5. Never substitute successful syntax checks for mobile performance evidence.
-6. Avoid rewriting the entire application, upgrading tracking libraries, simplifying the character, or introducing a new framework.
+Treat these as measured targets, not guaranteed outcomes. Record device, browser, connection, build SHA, sample counts, and failures. Missing physical-device results remain pending.
 
-Defaults: Android Chrome, balanced visuals, existing library versions, current character assets, and existing camera permission flow. Gemini is the implementation assistant; no Gemini runtime API is added to the website.
+After preview validation, merge through GitHub and confirm that the production domain serves the approved commit, worker, and hashed assets. Repeat mobile smoke tests. Roll back to the retained deployment if release gates regress.
+
+## 4. Gemini execution instructions and defaults
+
+Use **`gemini-3.8-flash`**, with high thinking for worker/lifecycle changes and medium for build/asset wiring. Google documents these supported settings. [Gemini model documentation](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)
+
+Give Gemini this instruction:
+
+> Implement this plan against the inspected repository, one numbered step at a time. Read the relevant functions before editing. Preserve unrelated changes and existing character behavior. Make a small reviewable patch per step and run its checkpoint before continuing. Report changed behavior, commands run, results, and remaining failures. Do not treat string checks, faster animation playback, or desktop emulation as proof of mobile performance. Do not claim deployment success until the production domain serves the expected build and assets.
+
+Defaults: retain GitHub/Vercel hosting, current tracking-library versions, character assets, and camera permission flow. No framework migration, backend service, or Gemini API integration is required.
