@@ -1363,6 +1363,9 @@
     import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
     import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
     import { createAnimationTime, onActionFinished } from './src/runtime/animation-time.mjs';
+    import { createSessionManager } from './src/runtime/session-state.mjs';
+    import { createTrackingScheduler } from './src/runtime/tracking-scheduler.mjs';
+    import { createQualityPolicy } from './src/runtime/quality-policy.mjs';
 
     window.THREE = THREE;
     window.GLTFLoader = GLTFLoader;
@@ -1370,6 +1373,9 @@
     window.MeshoptDecoder = MeshoptDecoder;
     window.createAnimationTime = createAnimationTime;
     window.onActionFinished = onActionFinished;
+    window.createSessionManager = createSessionManager;
+    window.createTrackingScheduler = createTrackingScheduler;
+    window.createQualityPolicy = createQualityPolicy;
     performance.mark('core-libraries-ready');
 
     /* =====================================================================

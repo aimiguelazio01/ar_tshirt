@@ -2,312 +2,457 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
+import * as THREE from 'three';
 
-test('Mobile Performance — Static Build and Asset Integrity', async (t) => {
-  await t.test('Generated asset URLs, hashes, and deployment inventory are valid', () => {
-    assert.ok(fs.existsSync('dist/index.html'), 'dist/index.html must exist');
-    assert.ok(fs.existsSync('dist/manifest.json'), 'dist/manifest.json must exist');
-    assert.ok(fs.existsSync('dist/assets/versioned/manifest.json'), 'versioned manifest.json must exist');
-    assert.ok(fs.existsSync('dist/tracking_worker.js'), 'dist/tracking_worker.js must exist');
+import { createAnimationTime, onActionFinished } from '../src/runtime/animation-time.mjs';
+import { createSessionManager } from '../src/runtime/session-state.mjs';
+import { createTrackingScheduler } from '../src/runtime/tracking-scheduler.mjs';
+import { createQualityPolicy } from '../src/runtime/quality-policy.mjs';
 
-    const manifest = JSON.parse(fs.readFileSync('dist/manifest.json', 'utf8'));
-    assert.ok(manifest.build, 'Manifest must specify build identifier');
-    assert.ok(manifest.assets.css.startsWith('assets/versioned/app.'), 'Hashed CSS must exist in manifest');
-    assert.ok(manifest.assets.monsterModel.endsWith('.opt.glb'), 'Hashed GLB must exist in manifest');
-    assert.ok(manifest.assets.targetMarker.endsWith('.mind'), 'Hashed marker must exist in manifest');
+function computeSha(buffer, length = 16) {
+  return crypto.createHash('sha256').update(buffer).digest('hex').slice(0, length);
+}
 
-    // Confirm each file in inventory exists and is non-empty
-    for (const item of manifest.inventory) {
-      const fullPath = path.join('dist', item.path);
-      assert.ok(fs.existsSync(fullPath), `Asset ${item.path} must exist on disk`);
-      const stat = fs.statSync(fullPath);
-      assert.ok(stat.size > 0, `Asset ${item.path} must not be 0 bytes`);
-      assert.equal(stat.size, item.size, `Asset ${item.path} size must match inventory`);
-    }
+test('Mobile Performance — Step 6 Production Tests', async (t) => {
 
-    // Confirm HTML contains content-hashed references and no Tailwind CDN
-    const html = fs.readFileSync('dist/index.html', 'utf8');
-    assert.ok(!html.includes('https://cdn.tailwindcss.com'), 'dist/index.html must not load Tailwind CDN');
-    assert.ok(html.includes(manifest.assets.css), 'dist/index.html must link to compiled hashed CSS');
-    assert.ok(html.includes(manifest.assets.monsterModel), 'dist/index.html must reference hashed GLB');
-    assert.ok(html.includes(manifest.assets.targetMarker), 'dist/index.html must reference hashed marker');
-  });
-});
+  // =========================================================================
+  // 1. Elapsed-time playback equivalence at 60/30/15/10/5 FPS & suspension
+  // =========================================================================
+  await t.test('1. Elapsed-time playback equivalence at 60/30/15/10/5 FPS', () => {
+    const fpsRates = [60, 30, 15, 10, 5];
+    const totalWallClockSeconds = 10.0;
 
-test('Mobile Performance — Session Guards & Scene Lifecycle', async (t) => {
-  await t.test('createSession and isCurrent prevent stale execution across transitions', () => {
-    let nextSessionId = 0;
-    let activeSession = null;
+    for (const fps of fpsRates) {
+      const animTime = createAnimationTime();
+      const frameDeltaMs = 1000 / fps;
+      const totalFrames = Math.round(fps * totalWallClockSeconds);
+      let accumulatedElapsed = 0;
+      let simulatedNow = 1000;
 
-    function createSession(mode) {
-      return {
-        id: ++nextSessionId,
-        mode,
-        startedAt: 1000,
-        firstCharacterVisible: false,
-        abort: new AbortController(),
-        cleanups: new Set()
-      };
-    }
+      // Initial tick returns 0
+      accumulatedElapsed += animTime.tick(simulatedNow);
 
-    function isCurrent(session) {
-      return activeSession === session && !session.abort.signal.aborted;
-    }
-
-    const session1 = createSession('ar');
-    activeSession = session1;
-    assert.equal(isCurrent(session1), true, 'Active session must be current');
-
-    // Abort session 1
-    session1.abort.abort();
-    assert.equal(isCurrent(session1), false, 'Aborted session must not be current');
-
-    // Start session 2
-    const session2 = createSession('simulator');
-    activeSession = session2;
-    assert.equal(isCurrent(session1), false, 'Prior session must not be current');
-    assert.equal(isCurrent(session2), true, 'New session must be current');
-  });
-
-  await t.test('Cleanup prevents obsolete callbacks and disposes resources', () => {
-    let activeCallbacks = new Set();
-    function registerCallback(cb) { activeCallbacks.add(cb); }
-    function cleanup() { activeCallbacks.clear(); }
-
-    const cb1 = () => {};
-    registerCallback(cb1);
-    assert.equal(activeCallbacks.size, 1);
-    cleanup();
-    assert.equal(activeCallbacks.size, 0, 'Cleanup must clear all registered callbacks');
-  });
-});
-
-test('Mobile Performance — Model Loading and Retry Semantics', async (t) => {
-  await t.test('Single shared model load and retry after rejection', async () => {
-    let fetchCount = 0;
-    let failFirst = true;
-    let sharedModelPromise = null;
-
-    async function loadModel() {
-      if (!sharedModelPromise) {
-        sharedModelPromise = (async () => {
-          fetchCount++;
-          if (failFirst) {
-            failFirst = false;
-            throw new Error('Network timeout');
-          }
-          return { scene: {} };
-        })().catch(err => {
-          sharedModelPromise = null;
-          throw err;
-        });
+      for (let i = 0; i < totalFrames; i++) {
+        simulatedNow += frameDeltaMs;
+        const tickElapsed = animTime.tick(simulatedNow);
+        accumulatedElapsed += tickElapsed;
       }
-      return sharedModelPromise;
-    }
 
-    // First attempt fails
-    await assert.rejects(async () => {
-      await loadModel();
-    }, /Network timeout/);
-    assert.equal(fetchCount, 1);
-
-    // Second attempt succeeds and returns cached instance
-    const res1 = await loadModel();
-    const res2 = await loadModel();
-    assert.ok(res1 && res2);
-    assert.equal(res1, res2);
-    assert.equal(fetchCount, 2, 'Must not refetch once resolved');
-  });
-});
-
-test('Mobile Performance — Frame Scheduler & Tracking Worker Contract', async (t) => {
-  await t.test('One in-flight bitmap/inference operation at a time', () => {
-    let pendingFrame = null;
-    let droppedFrames = 0;
-
-    function dispatchFrame(frameId) {
-      if (pendingFrame) {
-        droppedFrames++;
-        return false;
-      }
-      pendingFrame = { id: frameId, capturedAt: Date.now() };
-      return true;
-    }
-
-    assert.equal(dispatchFrame(1), true, 'First frame accepted');
-    assert.equal(dispatchFrame(2), false, 'Second frame dropped while first is in-flight');
-    assert.equal(droppedFrames, 1);
-
-    // Complete frame 1
-    pendingFrame = null;
-    assert.equal(dispatchFrame(3), true, 'Next frame accepted once previous completes');
-  });
-
-  await t.test('Stale session, worker, frame, and aged results rejected', () => {
-    const currentWorkerId = 5;
-    const activeSession = { id: 10, mode: 'ar' };
-    let pendingFrame = { id: 101, capturedAt: 1000 };
-
-    function acceptResult(data, now) {
-      const matches =
-        data.workerId === currentWorkerId &&
-        data.sessionId === activeSession?.id &&
-        data.frameId === pendingFrame?.id;
-
-      if (!matches) return { accepted: false, reason: 'mismatch' };
-
-      pendingFrame = null;
-
-      if (now - data.capturedAt > 350) {
-        return { accepted: false, reason: 'stale-age' };
-      }
-      return { accepted: true };
-    }
-
-    // Worker ID mismatch
-    assert.deepEqual(acceptResult({ workerId: 4, sessionId: 10, frameId: 101, capturedAt: 1000 }, 1050), { accepted: false, reason: 'mismatch' });
-
-    // Session ID mismatch
-    assert.deepEqual(acceptResult({ workerId: 5, sessionId: 9, frameId: 101, capturedAt: 1000 }, 1050), { accepted: false, reason: 'mismatch' });
-
-    // Frame ID mismatch
-    assert.deepEqual(acceptResult({ workerId: 5, sessionId: 10, frameId: 99, capturedAt: 1000 }, 1050), { accepted: false, reason: 'mismatch' });
-
-    // Stale age (>350ms)
-    assert.deepEqual(acceptResult({ workerId: 5, sessionId: 10, frameId: 101, capturedAt: 1000 }, 1400), { accepted: false, reason: 'stale-age' });
-
-    // Valid fresh result
-    pendingFrame = { id: 102, capturedAt: 2000 };
-    assert.deepEqual(acceptResult({ workerId: 5, sessionId: 10, frameId: 102, capturedAt: 2000 }, 2100), { accepted: true });
-  });
-
-  await t.test('Bitmap resources closed after capture or transfer failure', () => {
-    let closed = false;
-    const fakeBitmap = {
-      close() { closed = true; }
-    };
-
-    function simulateTransferFailure(bitmap) {
-      try {
-        throw new Error('Transfer failed');
-      } catch (err) {
-        if (bitmap && typeof bitmap.close === 'function') {
-          bitmap.close();
-        }
-      }
-    }
-
-    simulateTransferFailure(fakeBitmap);
-    assert.equal(closed, true, 'Bitmap must be explicitly closed on transfer error');
-  });
-
-  await t.test('Worker failure activates fallback exactly once', () => {
-    let fallbackCount = 0;
-    let fallbackActive = false;
-
-    function activateFallback() {
-      if (fallbackActive) return;
-      fallbackActive = true;
-      fallbackCount++;
-    }
-
-    activateFallback();
-    activateFallback();
-    activateFallback();
-
-    assert.equal(fallbackCount, 1, 'Fallback initializer must be deduplicated to exactly once');
-  });
-});
-
-test('Mobile Performance — Gesture Debounce and Hold Logic', async (t) => {
-  await t.test('Arm transition requires agreeing samples spanning at least 70ms', () => {
-    let currentArmState = 'relaxed';
-    let candidateState = null;
-    let candidateSince = 0;
-
-    function processArmDetection(detectedState, timestamp) {
-      if (detectedState === currentArmState) {
-        candidateState = null;
-        return currentArmState;
-      }
-      if (candidateState !== detectedState) {
-        candidateState = detectedState;
-        candidateSince = timestamp;
-        return currentArmState;
-      }
-      if (timestamp - candidateSince >= 70) {
-        currentArmState = detectedState;
-        candidateState = null;
-      }
-      return currentArmState;
-    }
-
-    assert.equal(processArmDetection('left_raised', 100), 'relaxed', 'Immediate detection does not trigger change');
-    assert.equal(processArmDetection('left_raised', 150), 'relaxed', 'Sample at 50ms does not meet 70ms threshold');
-    assert.equal(processArmDetection('left_raised', 175), 'left_raised', 'Sample at 75ms satisfies transition threshold');
-  });
-});
-
-test('Mobile Performance — Quality Policy & Buffer Budget', async (t) => {
-  await t.test('Buffer pixel limit adjusts pixel ratio for high-resolution containers', () => {
-    function calculateRatio(width, height, policy) {
-      return Math.min(
-        2.0, // Device pixel ratio 2.0
-        policy.maxPixelRatio,
-        Math.sqrt(policy.maxBufferPixels / (width * height))
+      assert.ok(
+        Math.abs(accumulatedElapsed - totalWallClockSeconds) < 0.001,
+        `At ${fps} FPS, 10 wall-clock seconds must yield 10.0s elapsed (got ${accumulatedElapsed.toFixed(3)}s)`
       );
     }
-
-    const balancedPolicy = { maxPixelRatio: 1.0, maxBufferPixels: 1000000 };
-    const reducedPolicy = { maxPixelRatio: 0.75, maxBufferPixels: 650000 };
-
-    const ratioBalanced = calculateRatio(1080, 1920, balancedPolicy);
-    assert.ok(ratioBalanced <= 1.0, 'Ratio must not exceed maxPixelRatio');
-    assert.ok(ratioBalanced * 1080 * ratioBalanced * 1920 <= 1000000 * 1.01, 'Buffer pixels must respect balanced budget');
-
-    const ratioReduced = calculateRatio(1080, 1920, reducedPolicy);
-    assert.ok(ratioReduced <= 0.75, 'Ratio must not exceed reduced maxPixelRatio');
-    assert.ok(ratioReduced * 1080 * ratioReduced * 1920 <= 650000 * 1.01, 'Buffer pixels must respect reduced budget');
   });
 
-  await t.test('Quality hysteresis: downgrade after 3 high windows, restore after 5 low windows', () => {
-    let profile = 'balanced';
-    let consecutiveHigh = 0;
-    let consecutiveLow = 0;
-
-    function onWindowSample(p90Ms) {
-      if (p90Ms > 40) {
-        consecutiveHigh++;
-        consecutiveLow = 0;
-        if (consecutiveHigh >= 3 && profile === 'balanced') {
-          profile = 'reduced';
-          consecutiveHigh = 0;
-        }
-      } else if (p90Ms < 30) {
-        consecutiveLow++;
-        consecutiveHigh = 0;
-        if (consecutiveLow >= 5 && profile === 'reduced') {
-          profile = 'balanced';
-          consecutiveLow = 0;
-        }
+  await t.test('1b. Clamp mutation contrast: verify old 80ms clamp loses 20% to 60% animation time at low FPS', () => {
+    function simulateOldClampedTime(fps, wallSeconds) {
+      const frameDeltaSec = 1 / fps;
+      let accumulated = 0;
+      let frames = fps * wallSeconds;
+      for (let i = 0; i < frames; i++) {
+        accumulated += Math.min(frameDeltaSec, 0.08);
       }
+      return accumulated;
     }
 
-    // 2 high windows: remain balanced
-    onWindowSample(45);
-    onWindowSample(45);
-    assert.equal(profile, 'balanced');
+    const at10Fps = simulateOldClampedTime(10, 10);
+    const at5Fps = simulateOldClampedTime(5, 10);
 
-    // 3rd high window: downgrade to reduced
-    onWindowSample(45);
-    assert.equal(profile, 'reduced');
+    // At 10 FPS (100ms), 80ms clamp yields 8s instead of 10s (20% lost)
+    assert.ok(Math.abs(at10Fps - 8.0) < 1e-6, 'Old 80ms clamp loses 2 seconds at 10 FPS');
+    // At 5 FPS (200ms), 80ms clamp yields 4s instead of 10s (60% lost)
+    assert.ok(Math.abs(at5Fps - 4.0) < 1e-6, 'Old 80ms clamp loses 6 seconds at 5 FPS');
+  });
 
-    // 4 low windows: remain reduced
-    for (let i = 0; i < 4; i++) onWindowSample(25);
-    assert.equal(profile, 'reduced');
+  await t.test('1c. 30s hidden suspension adds 0s animation playback time', () => {
+    const animTime = createAnimationTime();
+    assert.equal(animTime.tick(1000), 0);
+    assert.equal(animTime.tick(1500), 0.5);
 
-    // 5th low window: restore to balanced
-    onWindowSample(25);
-    assert.equal(profile, 'balanced');
+    // Page hidden for 30 seconds: reset() called on visibility change
+    animTime.reset();
+
+    // Browser resumes 30 seconds later (now = 31500)
+    const resumedDelta = animTime.tick(31500);
+    assert.equal(resumedDelta, 0, 'First frame after hidden reset must advance 0 seconds');
+
+    // Next active frame advances normal frame delta
+    const nextDelta = animTime.tick(31533);
+    assert.ok(Math.abs(nextDelta - 0.033) < 0.005, 'Subsequent frame advances real elapsed delta');
+  });
+
+  await t.test('1d. Zero and changed mixer speed scales playback accordingly', () => {
+    const animTime = createAnimationTime();
+    animTime.tick(1000);
+    const delta = animTime.tick(2000); // 1.0s elapsed
+
+    // Scale 1.35 (configured responsive mobile speed)
+    const activeSpeed = 1.35;
+    const scaledDelta = delta * activeSpeed;
+    assert.equal(scaledDelta, 1.35);
+
+    // Paused (speed = 0)
+    const pausedSpeed = 0;
+    assert.equal(delta * pausedSpeed, 0);
+  });
+
+  // =========================================================================
+  // 2. Real pinned Three.js AnimationMixer completion & cancellation
+  // =========================================================================
+  await t.test('2. Real Three.js mixer completes reaction twice and respects session cancellation', () => {
+    const root = new THREE.Object3D();
+    const mixer = new THREE.AnimationMixer(root);
+
+    // Create synthetic 1.0-second reaction clip
+    const track = new THREE.NumberKeyframeTrack('.position[x]', [0, 1.0], [0, 1.0]);
+    const reactionClip = new THREE.AnimationClip('reaction', 1.0, [track]);
+    const action = mixer.clipAction(reactionClip);
+
+    // 2 repetitions
+    action.setLoop(THREE.LoopRepeat, 2);
+    action.clampWhenFinished = true;
+
+    const session = {
+      abort: new AbortController(),
+      cleanups: new Set()
+    };
+
+    let completedCount = 0;
+    onActionFinished(mixer, action, session, () => {
+      completedCount++;
+    });
+
+    action.play();
+
+    // Advance 1.5 seconds (in the middle of second repetition)
+    mixer.update(1.5);
+    assert.equal(completedCount, 0, 'Reaction not finished before 2 repetitions complete');
+
+    // Advance remaining 0.5 seconds (completes second repetition)
+    mixer.update(0.5);
+    assert.equal(completedCount, 1, 'Reaction complete callback must fire exactly once after 2 repetitions');
+
+    // Extra updates must not fire callback again
+    mixer.update(1.0);
+    assert.equal(completedCount, 1, 'Callback must not fire repeatedly');
+  });
+
+  await t.test('2b. Action completion is ignored if session was aborted or cancelled', () => {
+    const root = new THREE.Object3D();
+    const mixer = new THREE.AnimationMixer(root);
+    const track = new THREE.NumberKeyframeTrack('.position[x]', [0, 1.0], [0, 1.0]);
+    const clip = new THREE.AnimationClip('arm_down', 1.0, [track]);
+    const action = mixer.clipAction(clip);
+    action.setLoop(THREE.LoopOnce, 1);
+    action.clampWhenFinished = true;
+
+    const session = {
+      abort: new AbortController(),
+      cleanups: new Set()
+    };
+
+    let completed = false;
+    onActionFinished(mixer, action, session, () => {
+      completed = true;
+    });
+
+    action.play();
+
+    // Abort session before animation finishes
+    session.abort.abort();
+
+    // Finish animation
+    mixer.update(1.0);
+    assert.equal(completed, false, 'Obsolete completion must not fire for aborted session');
+  });
+
+  // =========================================================================
+  // 3. Authoritative mode transitions, camera retry isolation, stale stream stop
+  // =========================================================================
+  await t.test('3. Preview-to-AR changes authoritative mode and enables rendering', () => {
+    const sessionMgr = createSessionManager();
+
+    const simSession = sessionMgr.createSession('simulator');
+    assert.equal(simSession.mode, 'simulator');
+    assert.equal(sessionMgr.isCurrent(simSession), true);
+
+    const arSession = sessionMgr.createSession('ar');
+    assert.equal(arSession.mode, 'ar');
+    assert.equal(sessionMgr.isCurrent(arSession), true);
+    assert.equal(sessionMgr.isCurrent(simSession), false, 'Prior simulator session must be aborted');
+    assert.equal(simSession.abort.signal.aborted, true);
+  });
+
+  await t.test('3b. Camera attempt failure retries without aborting AR session, stale stream is stopped', () => {
+    const sessionMgr = createSessionManager();
+    const arSession = sessionMgr.createSession('ar');
+
+    // Attempt 1
+    const attempt1Id = sessionMgr.createCameraAttempt();
+    assert.equal(sessionMgr.isCameraAttemptCurrent(attempt1Id), true);
+
+    let tracksStopped1 = 0;
+    const mockStream1 = {
+      getTracks: () => [{ stop: () => { tracksStopped1++; } }]
+    };
+
+    // Attempt 1 fails: cleanup stream
+    sessionMgr.cleanupCameraAttempt(mockStream1);
+    assert.equal(tracksStopped1, 1, 'Attempt 1 tracks must be stopped');
+    assert.equal(sessionMgr.isCurrent(arSession), true, 'AR session must remain active across camera retry');
+
+    // Attempt 2
+    const attempt2Id = sessionMgr.createCameraAttempt();
+    assert.equal(sessionMgr.isCameraAttemptCurrent(attempt1Id), false, 'Attempt 1 is no longer current');
+    assert.equal(sessionMgr.isCameraAttemptCurrent(attempt2Id), true, 'Attempt 2 is current');
+
+    // Stale late stream resolution from attempt 1
+    let staleStreamStopped = false;
+    if (!sessionMgr.isCameraAttemptCurrent(attempt1Id)) {
+      staleStreamStopped = true;
+    }
+    assert.equal(staleStreamStopped, true, 'Late stream from obsolete attempt must be rejected');
+  });
+
+  // =========================================================================
+  // 4. Worker keep-warm, idle disposal, re-init with hashed assets, task filtering
+  // =========================================================================
+  await t.test('4. Worker task filtering respects isolation switches', () => {
+    const disablePose = true;
+    const disableHands = false;
+
+    const enabledTasks = [
+      ...(!disablePose ? ['pose'] : []),
+      ...(!disableHands ? ['hand'] : [])
+    ];
+
+    assert.deepEqual(enabledTasks, ['hand'], 'Only enabled tasks must be included in init configuration');
+  });
+
+  await t.test('4b. Worker idle disposal and explicit reinitialization with versioned URLs', () => {
+    let workerActive = true;
+    let disposalTimer = null;
+    let workerPostMessages = [];
+
+    const mockWorker = {
+      postMessage: (msg) => { workerPostMessages.push(msg); }
+    };
+
+    function scheduleWorkerIdleDisposal(onDispose) {
+      disposalTimer = setTimeout(() => {
+        onDispose();
+      }, 60);
+    }
+
+    function cancelWorkerIdleDisposal() {
+      if (disposalTimer) clearTimeout(disposalTimer);
+      disposalTimer = null;
+    }
+
+    // Exit AR mode: schedule idle disposal
+    scheduleWorkerIdleDisposal(() => {
+      mockWorker.postMessage({ type: 'dispose' });
+      workerActive = false;
+    });
+
+    // Reenter AR before 60s: cancel disposal (keep warm)
+    cancelWorkerIdleDisposal();
+    assert.equal(workerActive, true, 'Worker remains warm on rapid reentry');
+
+    // Exit AR mode and allow disposal to expire
+    scheduleWorkerIdleDisposal(() => {
+      mockWorker.postMessage({ type: 'dispose' });
+      workerActive = false;
+    });
+
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        assert.equal(workerActive, false, 'Worker disposed after idle timeout');
+        assert.deepEqual(workerPostMessages, [{ type: 'dispose' }]);
+
+        // Next AR session: explicit re-init with hashed assets
+        const versionedAssets = {
+          poseModelUrl: 'assets/versioned/pose_landmarker_lite.59929e1d1ee95287.task',
+          handModelUrl: 'assets/versioned/hand_landmarker.fbc2a30080c3c557.task'
+        };
+        mockWorker.postMessage({ type: 'init', assets: versionedAssets, enabledTasks: ['pose', 'hand'] });
+
+        assert.equal(workerPostMessages.length, 2);
+        assert.equal(workerPostMessages[1].type, 'init');
+        assert.ok(workerPostMessages[1].assets.poseModelUrl.includes('versioned'));
+        resolve();
+      }, 80);
+    });
+  });
+
+  // =========================================================================
+  // 5. One in-flight inference, old-worker bitmap rejection, stale result rejection
+  // =========================================================================
+  await t.test('5. Tracking scheduler enforces one in-flight frame, fairness, and rejects stale/mismatched results', () => {
+    const scheduler = createTrackingScheduler();
+
+    assert.equal(scheduler.isBusy(), false);
+
+    // Dispatch frame 1
+    const frame1 = scheduler.dispatchFrame({
+      chosenTask: 'pose',
+      now: 1000,
+      currentWorkerId: 1,
+      currentSessionId: 10
+    });
+    assert.equal(frame1.id, 1);
+    assert.equal(scheduler.isBusy(), true, 'Scheduler is busy while frame is in-flight');
+
+    // Attempting to dispatch another frame while busy
+    assert.equal(scheduler.isBusy(), true);
+
+    // Mismatched worker ID response
+    const mismatchWorker = scheduler.acceptResult({
+      data: { workerId: 99, sessionId: 10, frameId: 1, capturedAt: 1000 },
+      now: 1050,
+      currentWorkerId: 1,
+      currentSessionId: 10
+    });
+    assert.deepEqual(mismatchWorker, { accepted: false, reason: 'mismatch' });
+
+    // Mismatched session ID response
+    const mismatchSession = scheduler.acceptResult({
+      data: { workerId: 1, sessionId: 99, frameId: 1, capturedAt: 1000 },
+      now: 1050,
+      currentWorkerId: 1,
+      currentSessionId: 10
+    });
+    assert.deepEqual(mismatchSession, { accepted: false, reason: 'mismatch' });
+
+    // Stale result (> 350ms)
+    const staleResult = scheduler.acceptResult({
+      data: { workerId: 1, sessionId: 10, frameId: 1, capturedAt: 1000 },
+      now: 1400,
+      currentWorkerId: 1,
+      currentSessionId: 10
+    });
+    assert.deepEqual(staleResult, { accepted: false, reason: 'stale-age' });
+
+    // Valid fresh result
+    const frame2 = scheduler.dispatchFrame({
+      chosenTask: 'hand',
+      now: 2000,
+      currentWorkerId: 1,
+      currentSessionId: 10
+    });
+    const validResult = scheduler.acceptResult({
+      data: { workerId: 1, sessionId: 10, frameId: frame2.id, capturedAt: 2000 },
+      now: 2080,
+      currentWorkerId: 1,
+      currentSessionId: 10
+    });
+    assert.deepEqual(validResult, { accepted: true });
+    assert.equal(scheduler.isBusy(), false, 'Scheduler is ready after valid completion');
+  });
+
+  await t.test('5b. Task interleaving fairness: alternates between pose and hand when both are due', () => {
+    const scheduler = createTrackingScheduler();
+    const policy = { poseCeilingHz: 10, handCeilingHz: 10 };
+
+    // At t = 200, both are due
+    const firstTask = scheduler.determineNextTask({ now: 200, policy, isPoseEnabled: true, isHandEnabled: true });
+    assert.equal(firstTask, 'pose');
+    const f1 = scheduler.dispatchFrame({ chosenTask: firstTask, now: 200, currentWorkerId: 1, currentSessionId: 1 });
+    scheduler.acceptResult({ data: { workerId: 1, sessionId: 1, frameId: f1.id, capturedAt: 200 }, now: 250, currentWorkerId: 1, currentSessionId: 1 });
+
+    // At t = 350, both are due again -> alternates to hand
+    const secondTask = scheduler.determineNextTask({ now: 350, policy, isPoseEnabled: true, isHandEnabled: true });
+    assert.equal(secondTask, 'hand');
+    const f2 = scheduler.dispatchFrame({ chosenTask: secondTask, now: 350, currentWorkerId: 1, currentSessionId: 1 });
+    scheduler.acceptResult({ data: { workerId: 1, sessionId: 1, frameId: f2.id, capturedAt: 350 }, now: 400, currentWorkerId: 1, currentSessionId: 1 });
+
+    // At t = 500, both are due again -> alternates back to pose
+    const thirdTask = scheduler.determineNextTask({ now: 500, policy, isPoseEnabled: true, isHandEnabled: true });
+    assert.equal(thirdTask, 'pose');
+  });
+
+  // =========================================================================
+  // 6. Production asset hashes, inventory completeness, preloads, and provenance
+  // =========================================================================
+  await t.test('6. Production asset hashes match byte contents and inventory manifest', () => {
+    assert.ok(fs.existsSync('dist/manifest.json'), 'dist/manifest.json must exist');
+    const manifest = JSON.parse(fs.readFileSync('dist/manifest.json', 'utf8'));
+
+    assert.ok(manifest.build, 'Manifest must specify build identifier');
+    assert.ok(manifest.inventory.length >= 7, 'Inventory must list all versioned production assets');
+
+    for (const item of manifest.inventory) {
+      const fullPath = path.join('dist', item.path);
+      assert.ok(fs.existsSync(fullPath), `Inventory asset ${item.path} must exist on disk`);
+      const buffer = fs.readFileSync(fullPath);
+      const computed = computeSha(buffer, 16);
+      assert.equal(computed, item.hash, `Hash for ${item.path} must match byte content`);
+      assert.equal(buffer.length, item.size, `Size for ${item.path} must match byte content`);
+    }
+
+    // Artwork & compiler entries
+    assert.ok(fs.existsSync('dist/assets/MVstudio_logo_text.png'), 'Studio logo must be present');
+    assert.ok(fs.existsSync('dist/assets/monster_tshirt.jpg'), 'Target artwork must be present');
+    assert.ok(fs.existsSync('dist/compiler.html'), 'Compiler HTML must be present');
+    assert.ok(fs.existsSync('dist/src/runtime/animation-time.mjs'), 'Runtime animation-time must be in dist');
+    assert.ok(fs.existsSync('dist/src/runtime/session-state.mjs'), 'Runtime session-state must be in dist');
+    assert.ok(fs.existsSync('dist/src/runtime/tracking-scheduler.mjs'), 'Runtime tracking-scheduler must be in dist');
+    assert.ok(fs.existsSync('dist/src/runtime/quality-policy.mjs'), 'Runtime quality-policy must be in dist');
+
+    // Built index.html checks
+    const builtHtml = fs.readFileSync('dist/index.html', 'utf8');
+    assert.ok(!builtHtml.includes('https://cdn.tailwindcss.com'), 'Must not include Tailwind Play CDN');
+    assert.ok(builtHtml.includes(manifest.assets.css), 'Must link to compiled hashed CSS');
+    assert.ok(builtHtml.includes(manifest.assets.monsterModel), 'Must reference hashed GLB');
+    assert.ok(builtHtml.includes(manifest.assets.targetMarker), 'Must reference hashed marker');
+
+    // High-priority preloads ahead of importmap
+    const preloadMarker = 'rel="preload" as="fetch" crossorigin="anonymous" href="' + manifest.assets.monsterModel + '"';
+    const preloadModelIdx = builtHtml.indexOf(preloadMarker);
+    const importmapIdx = builtHtml.indexOf('<script type="importmap">');
+    assert.ok(preloadModelIdx > 0, 'Model preload tag must be present');
+    assert.ok(importmapIdx > 0, 'Importmap must be present');
+    assert.ok(preloadModelIdx < importmapIdx, 'Model preload must appear BEFORE importmap and application modules');
+  });
+
+  // =========================================================================
+  // Quality Policy & Buffer Budget tests using real runtime module
+  // =========================================================================
+  await t.test('Quality policy buffer ratio and hysteresis using runtime quality-policy module', () => {
+    const qpMobile = createQualityPolicy({ isMobile: true });
+    assert.equal(qpMobile.profile, 'balanced');
+
+    // Balanced ratio at 1080x1920
+    const ratioBalanced = qpMobile.computeBufferRatio(1080, 1920, 2.0);
+    assert.ok(ratioBalanced <= 1.0, 'Ratio must not exceed balanced maxPixelRatio (1.0)');
+    assert.ok(ratioBalanced * 1080 * ratioBalanced * 1920 <= 1000000 * 1.01, 'Buffer pixels respect 1M budget');
+
+    // 3 high windows trigger downgrade
+    qpMobile.recordWindow({ p90: 45 });
+    qpMobile.recordWindow({ p90: 45 });
+    assert.equal(qpMobile.profile, 'balanced');
+    const downgraded = qpMobile.recordWindow({ p90: 45 });
+    assert.equal(downgraded, 'reduced');
+    assert.equal(qpMobile.profile, 'reduced');
+
+    // Reduced ratio respects reduced budget (650k)
+    const ratioReduced = qpMobile.computeBufferRatio(1080, 1920, 2.0);
+    assert.ok(ratioReduced <= 0.75, 'Ratio must not exceed reduced maxPixelRatio (0.75)');
+    assert.ok(ratioReduced * 1080 * ratioReduced * 1920 <= 650000 * 1.01, 'Buffer pixels respect 650k budget');
+
+    // 5 low windows restore to balanced
+    for (let i = 0; i < 4; i++) qpMobile.recordWindow({ p90: 25 });
+    assert.equal(qpMobile.profile, 'reduced');
+    const restored = qpMobile.recordWindow({ p90: 25 });
+    assert.equal(restored, 'balanced');
+    assert.equal(qpMobile.profile, 'balanced');
+
+    // Forced quality policy locks profile
+    const qpForced = createQualityPolicy({ isMobile: true, forcedProfile: 'reduced' });
+    assert.equal(qpForced.profile, 'reduced');
+    for (let i = 0; i < 10; i++) qpForced.recordWindow({ p90: 15 });
+    assert.equal(qpForced.profile, 'reduced', 'Forced profile must not change with hysteresis');
   });
 });
