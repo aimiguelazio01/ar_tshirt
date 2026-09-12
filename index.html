@@ -160,13 +160,13 @@
       }
     }
 
-    /* Minimal clean camera shutter button */
+    /* Minimal clean camera shutter button - Fluid responsive sizing */
     .beast-shutter {
-      width: 68px;
-      height: 68px;
+      width: 56px;
+      height: 56px;
       border-radius: 50%;
-      border: 3.5px solid rgba(255, 255, 255, 0.88);
-      padding: 4px;
+      border: 3px solid rgba(255, 255, 255, 0.88);
+      padding: 3px;
       background: rgba(30, 32, 40, 0.65);
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
@@ -176,6 +176,23 @@
       cursor: pointer;
       transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+      flex-shrink: 0;
+    }
+
+    @media (min-width: 380px) {
+      .beast-shutter {
+        width: 62px;
+        height: 62px;
+        border-width: 3.5px;
+        padding: 4px;
+      }
+    }
+
+    @media (min-width: 640px) {
+      .beast-shutter {
+        width: 68px;
+        height: 68px;
+      }
     }
 
     .beast-shutter:hover {
@@ -229,18 +246,18 @@
       }
     }
 
-    /* Clean Toast notification */
+    /* Clean Toast notification with safe-area offset */
     #toast {
       position: absolute;
       left: 50%;
-      bottom: 130px;
+      bottom: calc(env(safe-area-inset-bottom, 0px) + 115px);
       transform: translateX(-50%) translateY(16px);
       background: rgba(30, 32, 40, 0.95);
       border: 1px solid rgba(255, 255, 255, 0.1);
       color: #FFFFFF;
-      padding: 10px 20px;
+      padding: 8px 16px;
       border-radius: 9999px;
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 500;
       letter-spacing: 0.02em;
       display: flex;
@@ -253,6 +270,15 @@
       white-space: nowrap;
       backdrop-filter: blur(20px);
       box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+      max-width: 90vw;
+    }
+
+    @media (min-width: 640px) {
+      #toast {
+        padding: 10px 20px;
+        font-size: 12px;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 125px);
+      }
     }
 
     #toast.show {
@@ -435,10 +461,10 @@
       background: rgba(37, 40, 51, 0.95);
     }
 
-    /* Floating HUD Action Orbs (Bottom Dock) */
+    /* Floating HUD Action Orbs (Bottom Dock) - Fluid responsive */
     .ui-hud-orb {
-      width: 48px;
-      height: 48px;
+      width: 38px;
+      height: 38px;
       border-radius: 50%;
       display: flex;
       align-items: center;
@@ -451,6 +477,21 @@
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
       cursor: pointer;
       transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      flex-shrink: 0;
+    }
+
+    @media (min-width: 380px) {
+      .ui-hud-orb {
+        width: 42px;
+        height: 42px;
+      }
+    }
+
+    @media (min-width: 640px) {
+      .ui-hud-orb {
+        width: 48px;
+        height: 48px;
+      }
     }
 
     .ui-hud-orb:hover {
@@ -462,6 +503,26 @@
 
     .ui-hud-orb:active {
       transform: scale(0.92);
+    }
+
+    /* Short viewports & landscape orientation optimization */
+    @media (max-height: 640px) {
+      #ar-studio-footer {
+        display: none !important;
+      }
+      .reticle-hint {
+        top: 36% !important;
+      }
+      #screen-welcome .product-preview-box {
+        max-height: 130px !important;
+      }
+      #screen-welcome {
+        padding-top: max(env(safe-area-inset-top, 0px), 8px) !important;
+        padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px) !important;
+      }
+      #toast {
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 72px) !important;
+      }
     }
 
     /* Modal Card */
@@ -674,84 +735,89 @@
 
     <!-- ===================== SCREEN 01: WELCOME & PRODUCT SHOWCASE (ss3 Inspired) ===================== -->
     <section id="screen-welcome" class="select-none">
-      <!-- Clean Minimalist Top Header -->
-      <header class="relative z-10 w-full flex items-center justify-between max-w-sm mx-auto pt-2 pb-1">
+      <!-- Clean Minimalist Top Header (Expands smoothly on md/lg) -->
+      <header class="relative z-10 w-full flex items-center justify-between max-w-sm md:max-w-3xl lg:max-w-4xl mx-auto pt-2 pb-1">
         <div class="flex items-center gap-2">
-          <span class="text-xs font-bold tracking-widest text-white uppercase">TAPWEAR</span>
-          <span class="text-[11px] text-dark-muted font-medium">×</span>
-          <span class="text-xs font-semibold tracking-wider text-dark-muted uppercase">MViRGIL</span>
+          <span class="text-xs sm:text-sm font-bold tracking-widest text-white uppercase">TAPWEAR</span>
+          <span class="text-[11px] sm:text-xs text-dark-muted font-medium">×</span>
+          <span class="text-xs sm:text-sm font-semibold tracking-wider text-dark-muted uppercase">MViRGIL</span>
         </div>
         <div
-          class="px-2.5 py-0.5 rounded-full bg-dark-card border border-white/[0.08] text-[10px] font-semibold text-brand tracking-wider uppercase">
+          class="px-2.5 py-0.5 rounded-full bg-dark-card border border-white/[0.08] text-[10px] sm:text-xs font-semibold text-brand tracking-wider uppercase">
           DROP 01
         </div>
       </header>
 
-      <!-- Center: Elevated Product Showcase Card (Direct replica of ss3 middle screen) -->
-      <div class="relative z-10 w-full max-w-sm mx-auto my-auto flex flex-col">
-        <div class="bg-dark-card border border-white/[0.08] rounded-[28px] p-5 shadow-card flex flex-col">
-          <!-- Card Header Info -->
-          <div class="flex flex-col">
-            <span class="text-[11px] font-semibold text-dark-muted uppercase tracking-widest">Augmented Apparel</span>
-            <h2 class="text-2xl font-bold text-white tracking-tight mt-0.5">Monster Graphic Tee</h2>
-            <span class="text-sm font-bold text-brand mt-0.5">Interactive 3D Experience</span>
-          </div>
-
-          <!-- Product Image Preview Frame (Clean rounded frame, no brackets, no scanline) -->
-          <div
-            class="relative w-full aspect-[4/4.2] max-h-[220px] rounded-2xl overflow-hidden bg-dark-base border border-white/[0.06] my-4 flex items-center justify-center p-3">
-            <img src="assets/monster_tshirt.jpg" alt="Monster T-Shirt Artwork"
-              class="w-full h-full object-contain rounded-xl" />
-          </div>
-
-          <!-- Carousel Indicator Dots (like ss3 o • •) -->
-          <div class="flex items-center justify-center gap-1.5 mb-4">
-            <span class="w-2 h-2 rounded-full bg-brand"></span>
-            <span class="w-1.5 h-1.5 rounded-full bg-white/25"></span>
-            <span class="w-1.5 h-1.5 rounded-full bg-white/25"></span>
-          </div>
-
-          <!-- Specification Grid (like ss3 Size / Rating / Material) -->
-          <div class="grid grid-cols-3 gap-2 pt-3 border-t border-white/[0.06] text-center">
-            <div>
-              <div class="text-[10px] font-medium text-dark-muted uppercase tracking-wider">Target</div>
-              <div class="text-xs font-semibold text-white mt-0.5">Chest Print</div>
+      <!-- Center: Elevated Product Showcase Card (Stacked on mobile, 2-Column on md+) -->
+      <div class="relative z-10 w-full max-w-sm md:max-w-3xl lg:max-w-4xl mx-auto my-auto py-2 sm:py-4 flex flex-col">
+        <div class="bg-dark-card border border-white/[0.08] rounded-[28px] p-5 sm:p-7 shadow-card flex flex-col md:grid md:grid-cols-2 md:gap-8 md:items-center">
+          <!-- Column 1 (Desktop Left / Mobile Top): Product Preview Image & Dots -->
+          <div class="flex flex-col items-center w-full">
+            <div
+              class="relative w-full aspect-[4/4.2] max-h-[190px] sm:max-h-[240px] md:max-h-[320px] rounded-2xl overflow-hidden bg-dark-base border border-white/[0.06] mb-3 md:mb-4 flex items-center justify-center p-3 product-preview-box">
+              <img src="assets/monster_tshirt.jpg" alt="Monster T-Shirt Artwork"
+                class="w-full h-full object-contain rounded-xl" />
             </div>
-            <div>
-              <div class="text-[10px] font-medium text-dark-muted uppercase tracking-wider">Engine</div>
-              <div class="text-xs font-semibold text-white mt-0.5">MindAR 60FPS</div>
+
+            <!-- Carousel Indicator Dots -->
+            <div class="flex items-center justify-center gap-1.5 mb-3 md:mb-0">
+              <span class="w-2 h-2 rounded-full bg-brand"></span>
+              <span class="w-1.5 h-1.5 rounded-full bg-white/25"></span>
+              <span class="w-1.5 h-1.5 rounded-full bg-white/25"></span>
             </div>
-            <div>
-              <div class="text-[10px] font-medium text-dark-muted uppercase tracking-wider">Visuals</div>
-              <div class="text-xs font-semibold text-white mt-0.5">3D Rigged</div>
+          </div>
+
+          <!-- Column 2 (Desktop Right / Mobile Bottom): Title, Specs & CTAs -->
+          <div class="flex flex-col w-full gap-3 sm:gap-4">
+            <!-- Card Header Info -->
+            <div class="flex flex-col">
+              <span class="text-[11px] sm:text-xs font-semibold text-dark-muted uppercase tracking-widest">Augmented Apparel</span>
+              <h2 class="text-2xl sm:text-3xl font-bold text-white tracking-tight mt-0.5">Monster Graphic Tee</h2>
+              <span class="text-sm sm:text-base font-bold text-brand mt-0.5">Interactive 3D Experience</span>
+            </div>
+
+            <!-- Specification Grid -->
+            <div class="grid grid-cols-3 gap-2 py-3 border-y border-white/[0.06] text-center">
+              <div>
+                <div class="text-[10px] font-medium text-dark-muted uppercase tracking-wider">Target</div>
+                <div class="text-xs sm:text-sm font-semibold text-white mt-0.5">Chest Print</div>
+              </div>
+              <div>
+                <div class="text-[10px] font-medium text-dark-muted uppercase tracking-wider">Engine</div>
+                <div class="text-xs sm:text-sm font-semibold text-white mt-0.5">MindAR 60FPS</div>
+              </div>
+              <div>
+                <div class="text-[10px] font-medium text-dark-muted uppercase tracking-wider">Visuals</div>
+                <div class="text-xs sm:text-sm font-semibold text-white mt-0.5">3D Rigged</div>
+              </div>
+            </div>
+
+            <!-- Action CTAs: Direct inside card for ergonomic accessibility on all devices -->
+            <div class="flex flex-col gap-2.5 pt-1">
+              <!-- Primary Action CTA -->
+              <button id="btn-enter-ar"
+                class="ui-btn-primary w-full py-3.5 sm:py-4 px-6 rounded-full flex items-center justify-center gap-2.5 cursor-pointer group"
+                disabled>
+                <span id="enter-ar-text" class="text-xs sm:text-sm font-bold tracking-wide uppercase">
+                  PREPARING AR...
+                </span>
+                <span id="enter-ar-arrow" class="text-base sm:text-lg font-bold transition-transform group-hover:translate-x-1">→</span>
+              </button>
+
+              <!-- Secondary 3D Preview Button -->
+              <button id="btn-welcome-sim"
+                class="ui-btn-secondary w-full py-2.5 sm:py-3 px-5 rounded-full flex items-center justify-center gap-2 text-xs font-semibold tracking-wide cursor-pointer">
+                <span class="material-symbols-outlined text-[17px] text-brand">view_in_ar</span>
+                <span>3D PREVIEW (NO CAMERA)</span>
+              </button>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Bottom Action Dock: Large Orange Pill Button & Secondary Preview -->
-      <footer class="relative z-10 w-full flex flex-col items-center gap-3.5 max-w-sm mx-auto pb-safe">
-        <div class="w-full flex flex-col gap-2.5">
-          <!-- Primary Action CTA (ss3 27 Sellers Found -> style) -->
-          <button id="btn-enter-ar"
-            class="ui-btn-primary w-full py-4 px-6 rounded-full flex items-center justify-center gap-2.5 cursor-pointer group"
-            disabled>
-            <span id="enter-ar-text" class="text-sm font-bold tracking-wide uppercase">
-              PREPARING AR...
-            </span>
-            <span id="enter-ar-arrow" class="text-lg font-bold transition-transform group-hover:translate-x-1">→</span>
-          </button>
-
-          <!-- Secondary 3D Preview Button -->
-          <button id="btn-welcome-sim"
-            class="ui-btn-secondary w-full py-3 px-5 rounded-full flex items-center justify-center gap-2 text-xs font-semibold tracking-wide cursor-pointer">
-            <span class="material-symbols-outlined text-[17px] text-brand">view_in_ar</span>
-            <span>3D PREVIEW (NO CAMERA)</span>
-          </button>
-        </div>
-
-        <!-- Creator Studio Footer (Based on footer_ref.jpg) -->
-        <div class="w-full flex flex-col items-center justify-center gap-3 pt-3.5 pb-2 border-t border-white/[0.08]">
+      <!-- Studio Footer: Clean centered branding & social links -->
+      <footer class="relative z-10 w-full flex flex-col items-center gap-3 max-w-sm md:max-w-3xl lg:max-w-4xl mx-auto pb-safe">
+        <div class="w-full flex flex-col items-center justify-center gap-2.5 pt-3 pb-2 border-t border-white/[0.08]">
           <!-- Studio Logo linked to mvirgilstudio.com -->
           <a href="https://mvirgilstudio.com" target="_blank" rel="noopener noreferrer"
             class="group flex items-center justify-center transition-transform duration-200 hover:scale-[1.03] active:scale-95"
@@ -760,7 +826,7 @@
               class="h-7 sm:h-8 w-auto max-w-[240px] object-contain opacity-90 group-hover:opacity-100 transition-opacity" />
           </a>
 
-          <!-- Social Media Icons Row (footer_ref.jpg: LinkedIn, Instagram, X, Facebook, YouTube, Vimeo) -->
+          <!-- Social Media Icons Row (LinkedIn, Instagram, X, Facebook, YouTube, Vimeo) -->
           <div class="flex items-center justify-center gap-4 sm:gap-5 text-[#9CA3AF]">
             <!-- LinkedIn -->
             <a href="https://www.linkedin.com/in/miguelvirgilio/" target="_blank" rel="noopener noreferrer"
@@ -823,18 +889,18 @@
 
     <!-- ===================== SCREEN 02: PERMISSION PRIMING (ss3 Inspired) ===================== -->
     <section id="screen-permission"
-      class="hidden absolute inset-0 flex flex-col justify-center items-center p-5 bg-dark-base z-20 overflow-y-auto">
+      class="hidden absolute inset-0 flex flex-col justify-center items-center p-4 sm:p-6 bg-dark-base z-20 overflow-y-auto">
       <div
-        class="w-full max-w-sm bg-dark-card border border-white/[0.08] rounded-[28px] p-6 shadow-card flex flex-col space-y-5 my-auto">
+        class="w-full max-w-sm sm:max-w-md bg-dark-card border border-white/[0.08] rounded-[28px] p-5 sm:p-6 shadow-card flex flex-col space-y-4 sm:space-y-5 my-auto max-h-[92vh] overflow-y-auto">
         <!-- Camera Icon Badge in Orange tint -->
         <div
-          class="w-14 h-14 rounded-2xl bg-brand/10 border border-brand/20 flex items-center justify-center mx-auto text-brand">
-          <span class="material-symbols-outlined text-[28px]">videocam</span>
+          class="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-brand/10 border border-brand/20 flex items-center justify-center mx-auto text-brand flex-shrink-0">
+          <span class="material-symbols-outlined text-[24px] sm:text-[28px]">videocam</span>
         </div>
 
         <!-- Header -->
-        <div class="text-center space-y-1.5">
-          <h2 class="text-xl font-bold text-white tracking-tight">Camera Permission</h2>
+        <div class="text-center space-y-1 sm:space-y-1.5">
+          <h2 class="text-lg sm:text-xl font-bold text-white tracking-tight">Camera Permission</h2>
           <p class="text-xs text-dark-muted leading-relaxed">
             Allow camera access to scan the monster graphic on your T-shirt and render the interactive 3D character onto
             your chest.
@@ -848,7 +914,7 @@
           </label>
           <div class="relative w-full">
             <select
-              class="w-full appearance-none bg-dark-elevated text-white text-xs px-4 py-3 pr-10 rounded-xl border border-white/[0.08] focus:outline-none focus:border-brand transition-colors"
+              class="w-full appearance-none bg-dark-elevated text-white text-xs px-4 py-2.5 sm:py-3 pr-10 rounded-xl border border-white/[0.08] focus:outline-none focus:border-brand transition-colors"
               id="camera-select">
               <option value="">Standard Rear Camera (Recommended)</option>
             </select>
@@ -860,7 +926,7 @@
 
         <!-- Diagnostic error box -->
         <div id="camera-error-box"
-          class="hidden bg-red-950/40 border border-red-500/40 p-3.5 rounded-2xl text-left space-y-1.5">
+          class="hidden bg-red-950/40 border border-red-500/40 p-3 sm:p-3.5 rounded-2xl text-left space-y-1.5">
           <div class="text-xs font-bold text-red-400" id="camera-error-title">Camera Issue Detected</div>
           <div class="text-[11px] text-slate-300 leading-relaxed" id="camera-error-desc">Camera initialization failed.
           </div>
@@ -872,8 +938,8 @@
         </div>
 
         <!-- Lighting Recommendation Card -->
-        <div class="flex items-start gap-3 bg-dark-elevated/60 border border-white/[0.04] p-3.5 rounded-2xl">
-          <span class="material-symbols-outlined text-brand text-[20px] flex-shrink-0 mt-0.5">light_mode</span>
+        <div class="flex items-start gap-2.5 sm:gap-3 bg-dark-elevated/60 border border-white/[0.04] p-3 sm:p-3.5 rounded-2xl">
+          <span class="material-symbols-outlined text-brand text-[18px] sm:text-[20px] flex-shrink-0 mt-0.5">light_mode</span>
           <div class="flex flex-col">
             <span class="text-xs font-semibold text-white">Optimal Lighting Tip</span>
             <span class="text-[11px] text-dark-muted leading-snug mt-0.5">
@@ -883,13 +949,13 @@
         </div>
 
         <!-- Action Button Stack -->
-        <div class="flex flex-col space-y-2.5 pt-1">
-          <button class="ui-btn-primary w-full py-3.5 px-6 rounded-full flex items-center justify-center gap-2 text-sm"
+        <div class="flex flex-col space-y-2 sm:space-y-2.5 pt-1">
+          <button class="ui-btn-primary w-full py-3 sm:py-3.5 px-5 sm:px-6 rounded-full flex items-center justify-center gap-2 text-xs sm:text-sm"
             id="btn-enable-camera" type="button">
             <span>ACTIVATE CAMERA</span>
             <span class="material-symbols-outlined text-[18px]">arrow_forward</span>
           </button>
-          <button class="ui-btn-secondary w-full py-3 px-5 rounded-full flex items-center justify-center gap-2 text-xs"
+          <button class="ui-btn-secondary w-full py-2.5 sm:py-3 px-5 rounded-full flex items-center justify-center gap-2 text-xs"
             id="btn-start-simulator" type="button">
             <span class="material-symbols-outlined text-brand text-[17px]">view_in_ar</span>
             <span>TEST 3D SIMULATOR (NO CAMERA)</span>
@@ -904,29 +970,29 @@
       <!-- Three.js + MindAR Camera Feed -->
       <div id="ar-container"></div>
 
-      <!-- TOP FLOATING HUD BAR (Back, Status, Tools) -->
-      <div class="ar-hud absolute top-3 inset-x-0 px-4 z-30 flex flex-col gap-2 pointer-events-none">
-        <div class="flex items-center justify-between gap-2">
+      <!-- TOP FLOATING HUD BAR (Back, Status, Tools - Fluid responsive width) -->
+      <div class="ar-hud absolute top-3 inset-x-0 px-3 sm:px-4 z-30 flex flex-col gap-2 pointer-events-none max-w-screen-md mx-auto">
+        <div class="flex items-center justify-between gap-1.5 sm:gap-2">
           <!-- Left: Clean Back Button (Circular Orb) -->
-          <button class="pointer-events-auto ui-hud-orb" id="btn-close" title="Exit AR">
-            <span class="material-symbols-outlined text-[20px]">arrow_back</span>
+          <button class="pointer-events-auto ui-hud-orb flex-shrink-0" id="btn-close" title="Exit AR">
+            <span class="material-symbols-outlined text-[18px] sm:text-[20px]">arrow_back</span>
           </button>
 
           <!-- Center: Status Pill (like ss3 "Scanning...") -->
-          <div class="pointer-events-auto ui-glass-pill px-3.5 flex items-center gap-2">
-            <span id="status-dot" class="status-dot searching"></span>
-            <span id="status-text" class="text-[11px] font-semibold tracking-wider text-white uppercase">
+          <div class="pointer-events-auto ui-glass-pill px-2.5 sm:px-3.5 flex items-center gap-1.5 sm:gap-2 max-w-[55vw] sm:max-w-none overflow-hidden">
+            <span id="status-dot" class="status-dot searching flex-shrink-0"></span>
+            <span id="status-text" class="text-[10px] sm:text-[11px] font-semibold tracking-wider text-white uppercase truncate">
               Scanning for artwork...
             </span>
           </div>
 
           <!-- Right Tool Orbs: Reference Artwork & Camera Flip -->
-          <div class="pointer-events-auto flex items-center gap-2">
+          <div class="pointer-events-auto flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
             <button class="ui-hud-orb" id="btn-show-marker" title="Artwork Reference">
-              <span class="material-symbols-outlined text-[19px] text-brand">image</span>
+              <span class="material-symbols-outlined text-[17px] sm:text-[19px] text-brand">image</span>
             </button>
             <button class="ui-hud-orb" id="lens-toggle" title="Flip Camera">
-              <span class="material-symbols-outlined text-[19px]">flip_camera_ios</span>
+              <span class="material-symbols-outlined text-[17px] sm:text-[19px]">flip_camera_ios</span>
               <span class="hidden" id="lens-label">MAIN</span>
             </button>
           </div>
@@ -935,10 +1001,10 @@
         <!-- Secondary Sub-Bar: Clean Gesture Indicator -->
         <div class="flex items-center justify-center pointer-events-auto mt-0.5">
           <div
-            class="ui-glass-pill h-[30px] px-3 flex items-center gap-1.5 text-dark-muted hover:text-white transition-colors cursor-pointer"
+            class="ui-glass-pill h-[28px] sm:h-[30px] px-2.5 sm:px-3 flex items-center gap-1.5 text-dark-muted hover:text-white transition-colors cursor-pointer max-w-[85vw] truncate"
             id="gesture-chip" title="Raise arm then lower to trigger explosion!">
-            <span class="material-symbols-outlined text-[14px] text-brand">pan_tool_alt</span>
-            <span class="text-[10px] font-medium tracking-wider uppercase" id="gesture-text">RAISE ARM TO CHARGE</span>
+            <span class="material-symbols-outlined text-[13px] sm:text-[14px] text-brand flex-shrink-0">pan_tool_alt</span>
+            <span class="text-[9px] sm:text-[10px] font-medium tracking-wider uppercase truncate" id="gesture-text">RAISE ARM TO CHARGE</span>
           </div>
         </div>
       </div>
@@ -947,11 +1013,11 @@
       <div class="ar-hud absolute inset-0 pointer-events-none z-20 flex items-center justify-center">
         <div id="reticle-hint" class="reticle-hint">
           <div
-            class="w-48 h-48 sm:w-56 sm:h-56 rounded-[32px] border-2 border-dashed border-white/30 flex items-center justify-center">
+            class="w-44 h-44 sm:w-56 sm:h-56 rounded-[28px] sm:rounded-[32px] border-2 border-dashed border-white/30 flex items-center justify-center">
             <div class="w-2 h-2 rounded-full bg-brand/80"></div>
           </div>
           <span
-            class="text-[11px] font-medium tracking-wider text-white/90 bg-dark-card/90 backdrop-blur-md px-3.5 py-1 rounded-full border border-white/10 uppercase">
+            class="text-[10px] sm:text-[11px] font-medium tracking-wider text-white/90 bg-dark-card/90 backdrop-blur-md px-3 sm:px-3.5 py-1 rounded-full border border-white/10 uppercase">
             Frame Chest Print
           </span>
         </div>
@@ -959,46 +1025,47 @@
 
       <!-- BOTTOM CONTROLS DOCK (Speaker, Panic, Orange Shutter, Explosion, Storm, Simulator + MVirgil Studio Footer) -->
       <div
-        class="ar-hud absolute bottom-0 inset-x-0 pb-safe z-30 flex flex-col items-center px-3 sm:px-6 pt-2 pb-2 bg-gradient-to-t from-dark-base via-dark-base/90 to-transparent pointer-events-none max-w-md mx-auto">
+        class="ar-hud absolute bottom-0 inset-x-0 pb-safe z-30 flex flex-col items-center px-2 sm:px-6 pt-2 pb-2 bg-gradient-to-t from-dark-base via-dark-base/90 to-transparent pointer-events-none max-w-screen-md mx-auto">
         <!-- Controls Action Row -->
-        <div class="w-full flex items-center justify-between">
+        <div class="w-full max-w-sm sm:max-w-md md:max-w-lg flex items-center justify-between gap-1 sm:gap-2">
           <!-- Left side: Speaker button & Panic button -->
-          <div class="flex items-center gap-1.5 sm:gap-2 pointer-events-auto">
+          <div class="flex items-center gap-1 sm:gap-2 pointer-events-auto flex-shrink-0">
             <button class="ui-hud-orb flex-shrink-0" id="btn-audio" title="Toggle Audio">
-              <span class="material-symbols-outlined text-[20px]">volume_up</span>
+              <span class="material-symbols-outlined text-[18px] sm:text-[20px]">volume_up</span>
             </button>
             <button
-              class="px-2.5 sm:px-3.5 h-11 rounded-full bg-red-600/95 hover:bg-red-500 active:scale-95 flex items-center justify-center gap-1 text-white font-bold text-xs tracking-wider shadow-[0_0_20px_rgba(239,68,68,0.55)] border border-red-400/40 transition-all cursor-pointer btn-panic-pulse whitespace-nowrap flex-shrink-0"
+              class="px-2 sm:px-3.5 h-9 sm:h-10 md:h-11 rounded-full bg-red-600/95 hover:bg-red-500 active:scale-95 flex items-center justify-center gap-1 text-white font-bold text-[10px] sm:text-xs tracking-wider shadow-[0_0_20px_rgba(239,68,68,0.55)] border border-red-400/40 transition-all cursor-pointer btn-panic-pulse whitespace-nowrap flex-shrink-0"
               id="btn-panic" title="DON'T TOUCH!">
-              <span class="material-symbols-outlined text-[17px]">warning</span>
-              <span>DON'T TOUCH</span>
+              <span class="material-symbols-outlined text-[15px] sm:text-[17px]">warning</span>
+              <span class="hidden sm:inline">DON'T TOUCH</span>
+              <span class="inline sm:hidden">PANIC</span>
             </button>
           </div>
 
           <!-- Center: Beast Shutter (Orange Button) -->
-          <div class="pointer-events-auto flex-shrink-0 mx-1 sm:mx-2">
+          <div class="pointer-events-auto flex-shrink-0 mx-0.5 sm:mx-1">
             <button class="beast-shutter" id="btn-capture" title="Capture Snapshot">
               <div class="beast-shutter-inner"></div>
             </button>
           </div>
 
           <!-- Right side: Explosion, Storm & Simulator Mode Switch -->
-          <div class="flex items-center gap-1.5 sm:gap-2 pointer-events-auto">
+          <div class="flex items-center gap-1 sm:gap-2 pointer-events-auto flex-shrink-0">
             <!-- 3D Explosion Action Button (Orange) -->
             <button
-              class="w-11 h-11 rounded-full bg-brand hover:bg-brand-hover active:scale-95 flex items-center justify-center text-white shadow-orange-glow transition-all cursor-pointer flex-shrink-0"
+              class="w-9 h-9 sm:w-10 sm:h-10 md:w-11 md:h-11 rounded-full bg-brand hover:bg-brand-hover active:scale-95 flex items-center justify-center text-white shadow-orange-glow transition-all cursor-pointer flex-shrink-0"
               id="btn-card-action" title="3D Explosion">
-              <span class="material-symbols-outlined text-[20px]">local_fire_department</span>
+              <span class="material-symbols-outlined text-[17px] sm:text-[20px]">local_fire_department</span>
             </button>
             <!-- 3D Electric Storm Action Button (Cyan) -->
             <button
-              class="w-11 h-11 rounded-full bg-cyan-500 hover:bg-cyan-400 active:scale-95 flex items-center justify-center text-white shadow-[0_0_20px_rgba(6,182,212,0.6)] border border-cyan-300/40 transition-all cursor-pointer flex-shrink-0"
+              class="w-9 h-9 sm:w-10 sm:h-10 md:w-11 md:h-11 rounded-full bg-cyan-500 hover:bg-cyan-400 active:scale-95 flex items-center justify-center text-white shadow-[0_0_20px_rgba(6,182,212,0.6)] border border-cyan-300/40 transition-all cursor-pointer flex-shrink-0"
               id="btn-storm-action" title="3D Electric Storm">
-              <span class="material-symbols-outlined text-[20px]">cyclone</span>
+              <span class="material-symbols-outlined text-[17px] sm:text-[20px]">cyclone</span>
             </button>
             <!-- Simulator Toggle Button -->
             <button class="ui-hud-orb flex-shrink-0" id="btn-toggle-sim" title="Switch to 3D Simulator Mode">
-              <span class="material-symbols-outlined text-[20px]">3d_rotation</span>
+              <span class="material-symbols-outlined text-[18px] sm:text-[20px]">3d_rotation</span>
             </button>
           </div>
         </div>
@@ -1111,29 +1178,29 @@
     <!-- ===================== SCREEN 04: ARTWORK REFERENCE MODAL (ss3 Inspired) ===================== -->
     <div id="modal-marker"
       class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl">
-      <div class="relative w-full max-w-sm ui-modal-card p-6 flex flex-col gap-4">
+      <div class="relative w-full max-w-sm ui-modal-card p-4 sm:p-6 flex flex-col gap-3 sm:gap-4 max-h-[88vh] overflow-y-auto">
         <!-- Modal Header -->
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <span class="material-symbols-outlined text-brand text-[22px]">image</span>
-            <span class="text-[17px] text-white font-bold tracking-tight">Artwork Reference</span>
+            <span class="material-symbols-outlined text-brand text-[20px] sm:text-[22px]">image</span>
+            <span class="text-base sm:text-[17px] text-white font-bold tracking-tight">Artwork Reference</span>
           </div>
           <button id="btn-close-marker"
-            class="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 border border-white/10 flex items-center justify-center text-slate-300 hover:text-white transition-all cursor-pointer">
-            <span class="material-symbols-outlined text-[18px]">close</span>
+            class="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/10 hover:bg-white/20 border border-white/10 flex items-center justify-center text-slate-300 hover:text-white transition-all cursor-pointer">
+            <span class="material-symbols-outlined text-[16px] sm:text-[18px]">close</span>
           </button>
         </div>
 
         <!-- Marker Graphic Frame (Clean rounded frame) -->
         <div
-          class="relative w-full aspect-square rounded-2xl overflow-hidden bg-dark-base flex items-center justify-center border border-white/[0.08] shadow-inner p-3">
+          class="relative w-full aspect-square max-h-[200px] sm:max-h-[260px] rounded-2xl overflow-hidden bg-dark-base flex items-center justify-center border border-white/[0.08] shadow-inner p-3">
           <img alt="Target Artwork" class="w-full h-full object-contain rounded-xl" src="assets/monster_tshirt.jpg" />
         </div>
 
         <!-- Spec Pill -->
-        <div class="ui-glass-pill h-[32px] px-3.5 flex items-center justify-center gap-1.5 self-center">
-          <span class="material-symbols-outlined text-[15px] text-brand">straighten</span>
-          <span class="text-[11px] text-slate-200 uppercase tracking-wider font-semibold">1:1 CHEST PRINT MARKER</span>
+        <div class="ui-glass-pill h-[30px] sm:h-[32px] px-3 sm:px-3.5 flex items-center justify-center gap-1.5 self-center">
+          <span class="material-symbols-outlined text-[14px] sm:text-[15px] text-brand">straighten</span>
+          <span class="text-[10px] sm:text-[11px] text-slate-200 uppercase tracking-wider font-semibold">1:1 CHEST PRINT MARKER</span>
         </div>
 
         <!-- Guidance Instruction -->
@@ -1144,9 +1211,9 @@
 
         <!-- Return Button -->
         <button
-          class="ui-btn-primary w-full py-3.5 px-6 rounded-full flex items-center justify-center gap-2 text-sm cursor-pointer"
+          class="ui-btn-primary w-full py-3 sm:py-3.5 px-5 sm:px-6 rounded-full flex items-center justify-center gap-2 text-xs sm:text-sm cursor-pointer"
           id="btn-return-ar">
-          <span class="material-symbols-outlined text-[19px]">videocam</span>
+          <span class="material-symbols-outlined text-[18px] sm:text-[19px]">videocam</span>
           <span>RETURN TO CAMERA</span>
         </button>
       </div>
@@ -1156,51 +1223,51 @@
     <div id="software-content-modal"
       class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-2xl">
       <div
-        class="relative w-full max-w-md ui-modal-card p-6 flex flex-col gap-5 border border-white/15 rounded-2xl shadow-2xl overflow-hidden max-h-[90vh]"
+        class="relative w-full max-w-md ui-modal-card p-4 sm:p-6 flex flex-col gap-3.5 sm:gap-5 border border-white/15 rounded-2xl shadow-2xl overflow-hidden max-h-[88vh]"
         id="software-modal-box">
         <!-- Modal Header -->
-        <div class="flex items-center justify-between pb-4 border-b border-white/[0.08]" id="software-modal-header">
-          <div class="flex items-center gap-3.5 min-w-0">
+        <div class="flex items-center justify-between pb-3 sm:pb-4 border-b border-white/[0.08]" id="software-modal-header">
+          <div class="flex items-center gap-3 sm:gap-3.5 min-w-0">
             <div
-              class="w-12 h-12 rounded-xl flex items-center justify-center bg-black/50 border border-white/10 p-2 shadow-md shrink-0 overflow-hidden"
+              class="w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center bg-black/50 border border-white/10 p-1.5 sm:p-2 shadow-md shrink-0 overflow-hidden"
               id="software-modal-logo-container">
               <img id="software-modal-logo" src="" alt="Software Logo" class="w-full h-full object-contain" />
             </div>
             <div class="flex flex-col min-w-0">
               <div class="flex items-center gap-2">
-                <span class="text-base sm:text-lg text-white font-bold tracking-tight truncate"
+                <span class="text-sm sm:text-base md:text-lg text-white font-bold tracking-tight truncate"
                   id="software-modal-title">SOFTWARE_TITLE</span>
                 <span class="w-2 h-2 rounded-full bg-emerald-400 shrink-0"
                   id="software-modal-signal-dot"></span>
               </div>
-              <span class="text-[11px] font-mono text-slate-400 truncate" id="software-modal-subtitle">//
+              <span class="text-[10px] sm:text-[11px] font-mono text-slate-400 truncate" id="software-modal-subtitle">//
                 PIPELINE_LAYER</span>
             </div>
           </div>
           <button id="btn-close-software-modal"
-            class="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 border border-white/10 flex items-center justify-center text-slate-300 hover:text-white transition-all cursor-pointer shrink-0"
+            class="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/10 hover:bg-white/20 border border-white/10 flex items-center justify-center text-slate-300 hover:text-white transition-all cursor-pointer shrink-0"
             title="Close">
-            <span class="material-symbols-outlined text-[18px]">close</span>
+            <span class="material-symbols-outlined text-[16px] sm:text-[18px]">close</span>
           </button>
         </div>
 
         <!-- Software Logo Banner & Description Body -->
-        <div id="software-modal-body" class="flex flex-col gap-3.5 overflow-y-auto pr-1">
+        <div id="software-modal-body" class="flex flex-col gap-3 sm:gap-3.5 overflow-y-auto pr-1">
           <!-- Featured Logo Spotlight Banner -->
-          <div class="relative w-full py-4 px-4 rounded-xl bg-white/[0.03] border border-white/[0.06] flex flex-col items-center justify-center gap-2" id="software-modal-spotlight">
-            <div class="w-16 h-16 sm:w-18 sm:h-18 rounded-2xl bg-black/60 border border-white/10 p-2.5 shadow-xl flex items-center justify-center backdrop-blur-sm">
+          <div class="relative w-full py-3 sm:py-4 px-3 sm:px-4 rounded-xl bg-white/[0.03] border border-white/[0.06] flex flex-col items-center justify-center gap-2" id="software-modal-spotlight">
+            <div class="w-14 h-14 sm:w-16 sm:h-16 md:w-18 md:h-18 rounded-2xl bg-black/60 border border-white/10 p-2 sm:p-2.5 shadow-xl flex items-center justify-center backdrop-blur-sm">
               <img id="software-modal-spotlight-logo" src="" alt="Software Logo" class="w-full h-full object-contain filter drop-shadow(0 4px 12px rgba(0,0,0,0.5))" />
             </div>
-            <span class="text-[11px] font-mono uppercase tracking-widest text-slate-400 text-center" id="software-modal-spotlight-tag">PIPELINE SOFTWARE</span>
+            <span class="text-[10px] sm:text-[11px] font-mono uppercase tracking-widest text-slate-400 text-center" id="software-modal-spotlight-tag">PIPELINE SOFTWARE</span>
           </div>
 
           <!-- Description Section -->
-          <div class="flex flex-col gap-2 p-4 rounded-xl bg-white/[0.02] border border-white/[0.05]">
+          <div class="flex flex-col gap-1.5 sm:gap-2 p-3 sm:p-4 rounded-xl bg-white/[0.02] border border-white/[0.05]">
             <span class="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
               <span class="material-symbols-outlined text-[14px]">info</span>
               SOFTWARE OVERVIEW
             </span>
-            <p id="software-modal-description" class="text-sm text-slate-300 leading-relaxed font-sans">
+            <p id="software-modal-description" class="text-xs sm:text-sm text-slate-300 leading-relaxed font-sans">
               <!-- Injected dynamically -->
             </p>
           </div>
@@ -1209,7 +1276,7 @@
         <!-- Modal Footer: Only Return/Close button -->
         <div class="flex items-center pt-2 border-t border-white/[0.08]">
           <button
-            class="w-full py-3 px-4 rounded-xl bg-brand hover:bg-brand/90 text-white font-mono text-xs uppercase tracking-wider font-bold shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer"
+            class="w-full py-2.5 sm:py-3 px-4 rounded-xl bg-brand hover:bg-brand/90 text-white font-mono text-xs uppercase tracking-wider font-bold shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer"
             id="btn-dismiss-software-modal">
             <span class="material-symbols-outlined text-[16px]">arrow_back</span>
             <span>RETURN TO 3D VIEW</span>
@@ -1221,10 +1288,10 @@
 
     <!-- ===================== SCREEN 05: HARDWARE FALLBACK ALERT (ss3 Inspired) ===================== -->
     <section id="screen-unsupported"
-      class="hidden absolute inset-0 flex flex-col items-center justify-center p-6 bg-dark-base z-50 overflow-y-auto">
-      <div class="relative w-full max-w-sm flex flex-col items-center my-auto">
+      class="hidden absolute inset-0 flex flex-col items-center justify-center p-4 sm:p-6 bg-dark-base z-50 overflow-y-auto">
+      <div class="relative w-full max-w-sm sm:max-w-md flex flex-col items-center my-auto">
         <div
-          class="w-full bg-dark-card border border-white/[0.08] rounded-[28px] p-6 shadow-card flex flex-col gap-4 text-center">
+          class="w-full bg-dark-card border border-white/[0.08] rounded-[28px] p-5 sm:p-6 shadow-card flex flex-col gap-4 text-center max-h-[92vh] overflow-y-auto">
           <div
             class="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto text-red-400">
             <span class="material-symbols-outlined text-[28px]">videocam_off</span>
