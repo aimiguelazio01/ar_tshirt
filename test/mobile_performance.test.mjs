@@ -100,6 +100,9 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     assert.match(html, /function setSoftwarePlatesEnabled\(enabled\)/, 'Manual plate visibility setter must be present');
     assert.match(html, /targetPlaneOpacity = areSoftwarePlatesVisible\(\) \? 0\.88 : 0;/, 'Manual toggle must animate plate visibility');
     assert.match(html, /id="btn-toggle-plates"[^>]*>[\s\S]*>workflow<\//, 'Plate toggle must display the workflow text label');
+    assert.match(html, /\.control-action-button\s*\{[\s\S]*?width: 96px;[\s\S]*?height: 46px;/, 'Panic and workflow controls must share the enlarged mobile size');
+    assert.match(html, /class="control-action-button[^\"]*"\s+id="btn-panic"/, 'Panic must use the shared control size');
+    assert.match(html, /class="control-action-button[^\"]*"\s+id="btn-toggle-plates"/, 'Workflow must use the shared control size');
     assert.ok(!html.includes('layers_clear'), 'Plate toggle must not use the old on/off icon');
   });
 

@@ -439,6 +439,31 @@
       animation: panicPulse 1.2s infinite ease-in-out;
     }
 
+    /* Enlarged, matching center controls for comfortable mobile tapping. */
+    .control-action-button {
+      width: 96px;
+      height: 46px;
+      padding: 0 8px;
+      border-radius: 9999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    @media (min-width: 640px) {
+      .control-action-button {
+        width: 156px;
+        height: 52px;
+      }
+    }
+
+    @media (min-width: 768px) {
+      .control-action-button {
+        width: 176px;
+        height: 56px;
+      }
+    }
+
     #btn-panic:disabled,
     #btn-panic.btn-inactive {
       opacity: 0.45 !important;
@@ -1057,14 +1082,14 @@
           <!-- Center: Panic and software plate controls -->
           <div class="justify-self-center flex items-center gap-1.5 sm:gap-2 pointer-events-auto">
             <button
-              class="px-2 sm:px-3.5 h-9 sm:h-10 md:h-11 rounded-full bg-red-600/95 hover:bg-red-500 active:scale-95 flex items-center justify-center gap-1 text-white font-bold text-[10px] sm:text-xs tracking-wider shadow-[0_0_20px_rgba(239,68,68,0.55)] border border-red-400/40 transition-all cursor-pointer btn-panic-pulse whitespace-nowrap"
+              class="control-action-button bg-red-600/95 hover:bg-red-500 active:scale-95 gap-1 text-white font-bold text-[10px] sm:text-xs tracking-wider shadow-[0_0_20px_rgba(239,68,68,0.55)] border border-red-400/40 transition-all cursor-pointer btn-panic-pulse whitespace-nowrap"
               id="btn-panic" title="DON'T TOUCH!">
               <span class="material-symbols-outlined text-[15px] sm:text-[17px]">warning</span>
               <span class="hidden sm:inline">DON'T TOUCH</span>
               <span class="inline sm:hidden">PANIC</span>
             </button>
-            <button class="ui-hud-orb flex-shrink-0" id="btn-toggle-plates" title="Hide Software Plates" aria-label="Hide Software Plates" aria-pressed="true">
-              <span class="text-[8px] sm:text-[9px] font-mono font-bold tracking-wide">workflow</span>
+            <button class="control-action-button flex-shrink-0 bg-dark-card/95 hover:bg-dark-elevated active:scale-95 text-white text-[10px] sm:text-xs font-mono font-bold tracking-wide border border-white/15 transition-all cursor-pointer" id="btn-toggle-plates" title="Hide Software Plates" aria-label="Hide Software Plates" aria-pressed="true">
+              <span>workflow</span>
             </button>
           </div>
 
