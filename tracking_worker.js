@@ -75,9 +75,17 @@ async function initVision(workerId, assets = {}, enabledTasks = ['pose', 'hand']
     // Sequential initialization to reduce peak memory usage
     if (enabledTasks.includes('pose') && !poseLandmarker) {
       poseLandmarker = await initTask('pose', vision, localPoseUrl, remotePoseUrl);
+      if (!isInitializing || currentWorkerId !== workerId) {
+        disposeLandmarkers();
+        return;
+      }
     }
     if (enabledTasks.includes('hand') && !handLandmarker) {
       handLandmarker = await initTask('hand', vision, localHandUrl, remoteHandUrl);
+      if (!isInitializing || currentWorkerId !== workerId) {
+        disposeLandmarkers();
+        return;
+      }
     }
 
     isReady = true;
@@ -97,6 +105,8 @@ async function initVision(workerId, assets = {}, enabledTasks = ['pose', 'hand']
 }
 
 function disposeLandmarkers() {
+  isInitializing = false;
+  isReady = false;
   if (poseLandmarker) {
     try { poseLandmarker.close(); } catch (e) {}
     poseLandmarker = null;
@@ -105,8 +115,6 @@ function disposeLandmarkers() {
     try { handLandmarker.close(); } catch (e) {}
     handLandmarker = null;
   }
-  isReady = false;
-  isInitializing = false;
 }
 
 self.onmessage = async (e) => {
@@ -122,13 +130,14 @@ self.onmessage = async (e) => {
 
   if (type === 'dispose') {
     disposeLandmarkers();
+    self.postMessage({ type: 'disposed', workerId });
     return;
   }
 
   // Handle both standard 'frame' and legacy 'detect' messages
   if (type === 'frame' || type === 'detect') {
     if (!isReady) {
-      if (!isInitializing) initVision(workerId || 'default');
+      // Early frames return busy; do not auto-initialize with unversioned defaults
       if (bitmap && typeof bitmap.close === 'function') bitmap.close();
       self.postMessage({
         type: 'busy',

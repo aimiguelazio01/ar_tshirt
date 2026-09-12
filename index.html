@@ -2085,6 +2085,9 @@
       };
       activeSession = session;
       isSimulatorMode = (mode === 'simulator');
+      if (mode === 'ar') {
+        cancelWorkerIdleDisposal();
+      }
       modeEntryMark = session.startedAt;
       sceneGeneration = session.id;
       isFirstCharacterVisible = false;
@@ -2435,6 +2438,94 @@
     let arResizeHandler = null;
     let offscreenCanvas = null;
     let offscreenCtx = null;
+    let currentCameraAttemptId = 0;
+    let currentTrackingSchedulerCleanup = null;
+    let workerIdleDisposalTimer = null;
+    let workerReadyPromise = null;
+
+    function cleanupCameraAttempt() {
+      if (currentTrackingSchedulerCleanup) {
+        currentTrackingSchedulerCleanup();
+        currentTrackingSchedulerCleanup = null;
+      }
+      if (mindarThree) {
+        try { mindarThree.stop(); } catch (e) {}
+      }
+      isCameraRunning = false;
+      if (els.arContainer) {
+        const videos = els.arContainer.querySelectorAll('video');
+        videos.forEach(v => {
+          if (v.srcObject && typeof v.srcObject.getTracks === 'function') {
+            v.srcObject.getTracks().forEach(track => {
+              try { track.stop(); } catch (e) {}
+            });
+          }
+          v.srcObject = null;
+          try { v.pause(); } catch (e) {}
+          try { v.remove(); } catch (e) {}
+        });
+      }
+      if (activeMediaStream) {
+        try {
+          activeMediaStream.getTracks().forEach(track => {
+            try { track.stop(); } catch (e) {}
+          });
+        } catch (e) {}
+        activeMediaStream = null;
+      }
+    }
+
+    function scheduleWorkerIdleDisposal() {
+      if (workerIdleDisposalTimer) clearTimeout(workerIdleDisposalTimer);
+      workerIdleDisposalTimer = setTimeout(() => {
+        workerIdleDisposalTimer = null;
+        disposeTrackingWorkerGracefully();
+      }, 60000);
+    }
+
+    function cancelWorkerIdleDisposal() {
+      if (workerIdleDisposalTimer) {
+        clearTimeout(workerIdleDisposalTimer);
+        workerIdleDisposalTimer = null;
+      }
+    }
+
+    function disposeTrackingWorkerGracefully() {
+      if (!trackingWorker) return;
+      const workerToDispose = trackingWorker;
+      const workerId = currentWorkerId;
+      trackingWorker = null;
+      isWorkerTrackingReady = false;
+      workerReadyPromise = null;
+      pendingFrame = null;
+      isCapturingFrame = false;
+
+      let terminated = false;
+      const doTerminate = () => {
+        if (terminated) return;
+        terminated = true;
+        try { workerToDispose.terminate(); } catch (e) {}
+        PerformanceDiagnostics.unregisterWorker(`worker_${workerId}`);
+      };
+
+      try {
+        workerToDispose.postMessage({ type: 'dispose', workerId });
+      } catch (e) {}
+
+      const graceTimer = setTimeout(doTerminate, 250);
+      const ackHandler = (e) => {
+        if (e.data && e.data.type === 'disposed' && e.data.workerId === workerId) {
+          clearTimeout(graceTimer);
+          doTerminate();
+          try { workerToDispose.removeEventListener('message', ackHandler); } catch (err) {}
+        }
+      };
+      try {
+        workerToDispose.addEventListener('message', ackHandler);
+      } catch (err) {
+        setTimeout(doTerminate, 250);
+      }
+    }
 
     function clearPendingGestures() {
       rightArmUpStartTime = 0;
@@ -2630,8 +2721,12 @@
       });
       activeEffectTimers.clear();
 
+      if (currentTrackingSchedulerCleanup) {
+        currentTrackingSchedulerCleanup();
+        currentTrackingSchedulerCleanup = null;
+      }
       if (trackingWorker) {
-        try { trackingWorker.postMessage({ type: 'dispose', workerId: currentWorkerId }); } catch (e) {}
+        scheduleWorkerIdleDisposal();
       }
       if (workerInferenceTimeout) {
         clearTimeout(workerInferenceTimeout);
@@ -3063,7 +3158,9 @@
       const selectedDeviceId = (els.cameraSelect && els.cameraSelect.value) ? els.cameraSelect.value : null;
 
       const tryStart = async (facing, deviceId) => {
+        const attemptId = ++currentCameraAttemptId;
         if (!isCurrent(session)) return;
+        cleanupCameraAttempt();
         const config = {
           container: els.arContainer,
           imageTargetSrc: targetSrc,
@@ -3123,7 +3220,10 @@
         PerformanceDiagnostics.registerLoop('ar_renderLoop');
 
         await mindarThree.start();
-        if (!isCurrent(session)) return;
+        if (!isCurrent(session) || attemptId !== currentCameraAttemptId) {
+          cleanupCameraAttempt();
+          return;
+        }
         isCameraRunning = true;
         if (camera) {
           camera.near = 0.05;
@@ -3183,7 +3283,7 @@
         await tryStart(currentFacing, selectedDeviceId);
       } catch (err) {
         console.warn(`Initial camera start failed with ${currentFacing}:`, err);
-        cleanARContainer();
+        cleanupCameraAttempt();
 
         if (selectedDeviceId) {
           try {
@@ -3192,14 +3292,18 @@
             return;
           } catch (err2) {
             console.warn("Retry without deviceId failed:", err2);
+            cleanupCameraAttempt();
           }
         }
 
         const fallbackFacing = currentFacing === 'environment' ? 'user' : 'environment';
         try {
           await tryStart(fallbackFacing, null);
+          return;
         } catch (err3) {
-          console.error("Camera fallback also failed:", err3);
+          console.error("All camera start attempts failed:", err3);
+          cleanARContainer();
+          els.cameraError.classList.remove('hidden');
           throw err || err3;
         }
       }
@@ -5896,6 +6000,7 @@
 
     function activateMainThreadFallback(reason) {
       console.warn('[Tracking] Worker fallback activated:', reason);
+      cancelWorkerIdleDisposal();
       if (workerInitTimeout) {
         clearTimeout(workerInitTimeout);
         workerInitTimeout = null;
@@ -5912,7 +6017,9 @@
         PerformanceDiagnostics.unregisterWorker(`worker_${currentWorkerId}`);
         trackingWorker = null;
       }
+      currentWorkerId++;
       isWorkerTrackingReady = false;
+      workerReadyPromise = null;
       pendingFrame = null;
       isCapturingFrame = false;
 
@@ -5938,6 +6045,39 @@
           els.gestureText.textContent = '⚠️ GESTURES UNAVAILABLE (TOUCH ACTIVE)';
         }
       }
+    }
+
+    function ensureWorkerTrackingReady() {
+      if (isWorkerTrackingReady && trackingWorker) {
+        return Promise.resolve();
+      }
+      if (!isWorkerSupported) {
+        return Promise.reject(new Error('Worker unsupported'));
+      }
+      if (!workerReadyPromise) {
+        workerReadyPromise = new Promise((resolve, reject) => {
+          initTrackingWorker();
+          const checkInterval = setInterval(() => {
+            if (isWorkerTrackingReady && trackingWorker) {
+              clearInterval(checkInterval);
+              resolve();
+            } else if (!trackingWorker || fallbackInitialized) {
+              clearInterval(checkInterval);
+              reject(new Error('Worker initialization failed'));
+            }
+          }, 50);
+          setTimeout(() => {
+            if (!isWorkerTrackingReady) {
+              clearInterval(checkInterval);
+              reject(new Error('Worker readiness timeout'));
+            }
+          }, 30000);
+        }).catch(err => {
+          workerReadyPromise = null;
+          throw err;
+        });
+      }
+      return workerReadyPromise;
     }
 
     function initTrackingWorker() {
@@ -6065,7 +6205,11 @@
     }
 
     function startVideoTrackingScheduler(video, session) {
-      if (!video) return;
+      if (!video) return () => {};
+      if (currentTrackingSchedulerCleanup) {
+        currentTrackingSchedulerCleanup();
+        currentTrackingSchedulerCleanup = null;
+      }
 
       let rVFCId = null;
       let timerId = null;
@@ -6096,7 +6240,7 @@
 
       scheduleNext();
 
-      session.cleanups.add(() => {
+      const cleanup = () => {
         if (rVFCId !== null && 'cancelVideoFrameCallback' in video) {
           try { video.cancelVideoFrameCallback(rVFCId); } catch (e) {}
           rVFCId = null;
@@ -6105,7 +6249,12 @@
           clearTimeout(timerId);
           timerId = null;
         }
-      });
+      };
+      currentTrackingSchedulerCleanup = cleanup;
+      if (session && session.cleanups) {
+        session.cleanups.add(cleanup);
+      }
+      return cleanup;
     }
 
     function captureViaOffscreenCanvas(video, targetW, targetH, callback) {
@@ -6208,9 +6357,22 @@
         if (chosenTask === 'pose') lastWorkerPoseTime = now;
         if (chosenTask === 'hand') lastWorkerHandTime = now;
 
+        const capturedWorker = trackingWorker;
+        const capturedWorkerId = currentWorkerId;
+        const capturedSessionId = currentSession.id;
+        const capturedCameraAttemptId = currentCameraAttemptId;
+
         const finalizeDispatch = (bitmap) => {
           isCapturingFrame = false;
-          if (!isCurrent(currentSession) || !trackingWorker || !isWorkerTrackingReady) {
+          const isStillValid =
+            isCurrent(currentSession) &&
+            currentSession.id === capturedSessionId &&
+            currentCameraAttemptId === capturedCameraAttemptId &&
+            trackingWorker === capturedWorker &&
+            currentWorkerId === capturedWorkerId &&
+            isWorkerTrackingReady;
+
+          if (!isStillValid) {
             if (bitmap && typeof bitmap.close === 'function') {
               try { bitmap.close(); } catch (e) {}
             }
@@ -6904,17 +7066,50 @@
       els.statusDot.className = 'status-dot searching';
 
       try {
-        if (mindarThree) {
-          mindarThree.shouldFaceUser = !mindarThree.shouldFaceUser;
-          mindarThree.stop();
-          await mindarThree.start();
+        const session = activeSession;
+        if (!session || !isCurrent(session)) {
+          await initAR();
+          return;
+        }
 
-          currentFacing = mindarThree.shouldFaceUser ? 'user' : 'environment';
+        // Cancel previous frame scheduler & invalidate old camera results
+        if (currentTrackingSchedulerCleanup) {
+          currentTrackingSchedulerCleanup();
+          currentTrackingSchedulerCleanup = null;
+        }
+        pendingFrame = null;
+        isCapturingFrame = false;
+        clearPendingGestures();
+        onHandLost();
+
+        const targetFacing = currentFacing === 'environment' ? 'user' : 'environment';
+        currentFacing = targetFacing;
+
+        const attemptId = ++currentCameraAttemptId;
+        cleanupCameraAttempt();
+
+        if (mindarThree) {
+          mindarThree.shouldFaceUser = (targetFacing === 'user');
+          await mindarThree.start();
+          if (!isCurrent(session) || attemptId !== currentCameraAttemptId) {
+            cleanupCameraAttempt();
+            return;
+          }
+
+          isCameraRunning = true;
+          if (camera) {
+            camera.near = 0.05;
+            camera.updateProjectionMatrix();
+          }
+
+          // Refresh crop/projection through MindAR & reapply buffer budget
+          QualityPolicy.applyToRenderer(renderer, camera);
+
           els.lensLabel.textContent = currentFacing === 'environment' ? 'MAIN LENS' : 'FRONT LENS';
           els.statusText.textContent = currentFacing === 'environment' ? 'MAIN LENS ACTIVE' : 'FRONT LENS ACTIVE';
           showToast(currentFacing === 'environment' ? 'Switched to MAIN LENS' : 'Switched to FRONT LENS');
 
-          // Ensure new video stream element is styled and playing
+          // Ensure new video stream element is styled and playing, and bind new video to scheduler
           const video = els.arContainer.querySelector('video');
           if (video) {
             video.style.zIndex = '1';
@@ -6926,11 +7121,9 @@
             if (video.paused) {
               try { await video.play(); } catch (e) { }
             }
+            startVideoTrackingScheduler(video, session);
           }
         } else {
-          currentFacing = currentFacing === 'environment' ? 'user' : 'environment';
-          els.lensLabel.textContent = currentFacing === 'environment' ? 'MAIN LENS' : 'FRONT LENS';
-          cleanARContainer();
           await initAR();
         }
       } catch (e) {
