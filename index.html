@@ -1368,11 +1368,7 @@
     window.SkeletonUtils = SkeletonUtils;
     window.MeshoptDecoder = MeshoptDecoder;
     performance.mark('core-libraries-ready');
-  </script>
-  <script type="module" src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js"></script>
-  <script type="module" src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"></script>
 
-  <script type="module">
     /* =====================================================================
        TAPWEAR WebAR — Camera & Tracking Engine
        Optimized Startup Pipeline:
@@ -1779,26 +1775,26 @@
       return sharedVisionPromise;
     }
 
-    // Awaited MindAR readiness promise (replaces polling loops)
+    // Awaited MindAR readiness promise (memoized dynamic module import)
     let mindarReadyPromise = null;
-    function ensureMindARReady(timeoutMs = 15000) {
+    function ensureMindARReady() {
       if (window.MINDAR && window.MINDAR.IMAGE && window.MINDAR.IMAGE.MindARThree) {
         return Promise.resolve(window.MINDAR);
       }
       if (!mindarReadyPromise) {
-        mindarReadyPromise = new Promise((resolve, reject) => {
-          const startTime = Date.now();
-          const interval = setInterval(() => {
-            if (window.MINDAR && window.MINDAR.IMAGE && window.MINDAR.IMAGE.MindARThree) {
-              clearInterval(interval);
-              resolve(window.MINDAR);
-            } else if (Date.now() - startTime > timeoutMs) {
-              clearInterval(interval);
-              mindarReadyPromise = null;
-              reject(new Error('MindAR library failed to load within timeout'));
+        mindarReadyPromise = import('https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js')
+          .then((mod) => {
+            window.MINDAR = window.MINDAR || {};
+            window.MINDAR.IMAGE = window.MINDAR.IMAGE || {};
+            if (mod.MindARThree) {
+              window.MINDAR.IMAGE.MindARThree = mod.MindARThree;
             }
-          }, 30);
-        });
+            return window.MINDAR;
+          })
+          .catch((err) => {
+            mindarReadyPromise = null;
+            throw err;
+          });
       }
       return mindarReadyPromise;
     }
@@ -1931,6 +1927,14 @@
 
           // In-browser compiler fallback for image files
           await ensureMindARReady();
+          if (!window.MINDAR?.IMAGE?.Compiler) {
+            const compMod = await import('https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js');
+            window.MINDAR = window.MINDAR || {};
+            window.MINDAR.IMAGE = window.MINDAR.IMAGE || {};
+            if (compMod.Compiler) {
+              window.MINDAR.IMAGE.Compiler = compMod.Compiler;
+            }
+          }
           if (els.progressText) {
             els.progressText.textContent = 'COMPILING AR MARKER…';
             els.progressFill.style.width = '40%';
@@ -2185,27 +2189,35 @@
       return modelPromise;
     }
 
+    function retryModelLoad() {
+      if (els.progressText) els.progressText.textContent = 'RETRYING 3D MODEL…';
+      updateWelcomeBtn('PREPARING');
+      return loadMonsterAsset().then(() => {
+        isAssetsLoaded = true;
+        if (els.progressText) {
+          els.progressText.textContent = 'READY';
+          els.progressFill.style.width = '100%';
+          els.progressPct.textContent = '100%';
+        }
+        if (isCameraRunning) {
+          updateWelcomeBtn('READY');
+        } else {
+          updateWelcomeBtn('ENABLE_CAMERA');
+        }
+        showToast('Model loaded successfully!');
+      }).catch(e => {
+        showModelRetryUI(e);
+        throw e;
+      });
+    }
+
     function showModelRetryUI(err) {
       if (els.progressText) {
         els.progressText.textContent = 'FAILED TO LOAD 3D MODEL';
       }
-      updateWelcomeBtn('RETRY_CAMERA');
+      updateWelcomeBtn('RETRY');
       showToast('Model load error — Tap to retry', 8000, () => {
-        if (els.progressText) els.progressText.textContent = 'RETRYING 3D MODEL…';
-        loadMonsterAsset().then(() => {
-          isAssetsLoaded = true;
-          if (els.progressText) {
-            els.progressText.textContent = 'READY';
-            els.progressFill.style.width = '100%';
-            els.progressPct.textContent = '100%';
-          }
-          if (isCameraRunning) {
-            updateWelcomeBtn('READY');
-          }
-          showToast('Model loaded successfully!');
-        }).catch(e => {
-          showModelRetryUI(e);
-        });
+        retryModelLoad().catch(() => {});
       });
     }
 
@@ -2248,15 +2260,15 @@
 
       if (mode === 'simulator') {
         if (!window.DISABLE_VFX) {
-          scheduleIdleJob(() => {
+          scheduleIdleJob(async () => {
             if (!isCurrent(session)) return;
-            ensureExplosionTexture().then(() => {
+            try {
+              await ensureExplosionTexture();
               if (!isCurrent(session)) return;
-              scheduleIdleJob(() => {
-                if (!isCurrent(session)) return;
-                ensureStormTexture();
-              }, 1000);
-            });
+              await ensureStormTexture();
+              if (!isCurrent(session)) return;
+              performance.mark('effects-ready');
+            } catch (e) {}
           }, 500);
         }
         return;
@@ -2267,9 +2279,15 @@
           els.gestureText.textContent = 'ℹ️ GESTURES DISABLED (ISOLATION)';
         }
         if (!window.DISABLE_VFX) {
-          scheduleIdleJob(() => {
+          scheduleIdleJob(async () => {
             if (!isCurrent(session)) return;
-            Promise.all([ensureExplosionTexture(), ensureStormTexture()]).catch(() => {});
+            try {
+              await ensureExplosionTexture();
+              if (!isCurrent(session)) return;
+              await ensureStormTexture();
+              if (!isCurrent(session)) return;
+              performance.mark('effects-ready');
+            } catch (e) {}
           }, 500);
         }
         return;
@@ -2294,12 +2312,15 @@
           }
 
           if (!window.DISABLE_VFX) {
-            scheduleIdleJob(() => {
+            scheduleIdleJob(async () => {
               if (!isCurrent(session)) return;
-              Promise.all([ensureExplosionTexture(), ensureStormTexture()]).then(() => {
+              try {
+                await ensureExplosionTexture();
+                if (!isCurrent(session)) return;
+                await ensureStormTexture();
                 if (!isCurrent(session)) return;
                 performance.mark('effects-ready');
-              }).catch(() => {});
+              } catch (e) {}
             }, 1000);
           }
         } catch (e) {
@@ -2748,9 +2769,10 @@
           txt.textContent = 'LAUNCH AR CAMERA';
           if (arrow) arrow.style.display = 'inline';
           break;
+        case 'RETRY':
         case 'RETRY_CAMERA':
           btn.disabled = false;
-          txt.textContent = 'RETRY CAMERA';
+          txt.textContent = isAssetsLoaded ? 'RETRY CAMERA' : 'RETRY LOADING';
           if (arrow) arrow.style.display = 'inline';
           break;
         case 'UNSUPPORTED':
@@ -2805,6 +2827,14 @@
     }
 
     async function handleEnterArClick() {
+      if (!isAssetsLoaded) {
+        try {
+          await retryModelLoad();
+        } catch (err) {
+          return;
+        }
+      }
+
       if (!isCameraRunning) {
         updateWelcomeBtn('STARTING_CAMERA');
         try {
@@ -3988,9 +4018,18 @@
       }
     }
 
-    function trigger3DExplosion() {
+    async function trigger3DExplosion() {
+      const session = activeSession;
+      if (!isCurrent(session)) return;
       if (window.DISABLE_VFX || (typeof QualityPolicy !== 'undefined' && !QualityPolicy.getPolicy().enableVfxBursts)) return;
-      initExplosionTexture();
+
+      try {
+        await ensureExplosionTexture();
+      } catch (e) {
+        console.warn('[VFX] Failed to preload explosion texture:', e);
+      }
+      if (!isCurrent(session)) return;
+
       playExplosionSound();
 
       const isSim = isSimulatorMode;
@@ -4316,9 +4355,18 @@
       }
     }
 
-    function trigger3DStorm() {
+    async function trigger3DStorm() {
+      const session = activeSession;
+      if (!isCurrent(session)) return;
       if (window.DISABLE_VFX || (typeof QualityPolicy !== 'undefined' && !QualityPolicy.getPolicy().enableVfxBursts)) return;
-      initStormTexture();
+
+      try {
+        await ensureStormTexture();
+      } catch (e) {
+        console.warn('[VFX] Failed to preload storm texture:', e);
+      }
+      if (!isCurrent(session)) return;
+
       playStormSound();
 
       const isSim = isSimulatorMode;
@@ -6560,7 +6608,6 @@
         showToast('3D Monster Active — Drag to rotate!');
       }
 
-      const session = activeSession;
       loadMonsterAsset().then((gltf) => {
         if (!isCurrent(session)) return;
         setupSimModel(gltf);
@@ -6853,11 +6900,27 @@
     // Utility
     // ---------------------------------------------------------------
     let toastTimer;
-    function showToast(msg) {
+    function showToast(msg, duration = 2400, actionCallback = null) {
+      if (!els.toast) return;
       els.toast.textContent = msg;
       els.toast.classList.add('show');
+      if (typeof actionCallback === 'function') {
+        els.toast.style.cursor = 'pointer';
+        els.toast.onclick = (e) => {
+          e.stopPropagation();
+          els.toast.classList.remove('show');
+          els.toast.onclick = null;
+          actionCallback();
+        };
+      } else {
+        els.toast.style.cursor = 'default';
+        els.toast.onclick = null;
+      }
       clearTimeout(toastTimer);
-      toastTimer = setTimeout(() => els.toast.classList.remove('show'), 2400);
+      toastTimer = setTimeout(() => {
+        els.toast.classList.remove('show');
+        els.toast.onclick = null;
+      }, duration);
     }
 
     // ---------------------------------------------------------------
