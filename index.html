@@ -2296,18 +2296,46 @@
     const GESTURE_DEBOUNCE_MS = 70;
 
     // Web Worker gesture tracking state
+    let currentWorkerId = 0;
     let trackingWorker = null;
     let isWorkerSupported = typeof Worker !== 'undefined';
     let isWorkerTrackingReady = false;
-    let isWorkerProcessing = false;
+    let pendingFrame = null;
+    let isCapturingFrame = false;
+    let nextFrameId = 0;
+    let lastFreshResultTime = 0;
+    let lastMonotonicTimestamp = 0;
+    let workerInitTimeout = null;
+    let workerInferenceTimeout = null;
+    let fallbackInitialized = false;
     let lastWorkerPoseTime = 0;
     let lastWorkerHandTime = 0;
     let lastWorkerTaskDispatched = 'pose';
+    let lastFallbackInferenceTime = 0;
+    let lastFallbackPoseTime = 0;
+    let lastFallbackHandTime = 0;
+    let lastFallbackTaskDispatched = 'pose';
+    let lastMainThreadInferenceTime = 0;
+    const MAIN_THREAD_FALLBACK_INTERVAL = 200; // 5 Hz fallback
     let arResizeHandler = null;
     let offscreenCanvas = null;
     let offscreenCtx = null;
-    let lastMainThreadInferenceTime = 0;
-    const MAIN_THREAD_FALLBACK_INTERVAL = 200; // 5 Hz fallback
+
+    function clearPendingGestures() {
+      rightArmUpStartTime = 0;
+      rightArmDownStartTime = 0;
+      leftArmUpStartTime = 0;
+      leftArmDownStartTime = 0;
+      handRaisedStartTime = 0;
+      handLoweredStartTime = 0;
+      if (typeof hasPoseDetected !== 'undefined' && hasPoseDetected) {
+        hasPoseDetected = false;
+        if (typeof triggerRightArmDown === 'function' && isRightArmCurrentlyUp) triggerRightArmDown(false);
+        if (typeof triggerLeftArmDown === 'function' && isLeftArmCurrentlyUp) triggerLeftArmDown(false);
+      }
+      if (typeof onHandLost === 'function') onHandLost();
+      if (typeof hideFingertipReticles === 'function') hideFingertipReticles();
+    }
 
     // Pre-allocated scratch math objects to eliminate GC pauses in render loops
     const _scratchV1 = new THREE.Vector3();
@@ -2452,6 +2480,17 @@
         try { clearInterval(t); } catch (e) {}
       });
       activeEffectTimers.clear();
+
+      if (trackingWorker) {
+        try { trackingWorker.postMessage({ type: 'dispose', workerId: currentWorkerId }); } catch (e) {}
+      }
+      if (workerInferenceTimeout) {
+        clearTimeout(workerInferenceTimeout);
+        workerInferenceTimeout = null;
+      }
+      pendingFrame = null;
+      isCapturingFrame = false;
+      clearPendingGestures();
 
       if (typeof isRightArmCurrentlyUp !== 'undefined') isRightArmCurrentlyUp = false;
       if (typeof isLeftArmCurrentlyUp !== 'undefined') isLeftArmCurrentlyUp = false;
@@ -2967,6 +3006,7 @@
           if (video.paused) {
             try { await video.play(); } catch (e) { console.warn("Video play error:", e); }
           }
+          startVideoTrackingScheduler(video, session);
         }
         if (renderer && renderer.domElement) {
           renderer.domElement.style.zIndex = '2';
@@ -5629,84 +5669,283 @@
       }
     }
 
+    function activateMainThreadFallback(reason) {
+      console.warn('[Tracking] Worker fallback activated:', reason);
+      if (workerInitTimeout) {
+        clearTimeout(workerInitTimeout);
+        workerInitTimeout = null;
+      }
+      if (workerInferenceTimeout) {
+        clearTimeout(workerInferenceTimeout);
+        workerInferenceTimeout = null;
+      }
+      if (trackingWorker) {
+        try {
+          trackingWorker.postMessage({ type: 'dispose', workerId: currentWorkerId });
+          trackingWorker.terminate();
+        } catch (e) {}
+        PerformanceDiagnostics.unregisterWorker(`worker_${currentWorkerId}`);
+        trackingWorker = null;
+      }
+      isWorkerTrackingReady = false;
+      pendingFrame = null;
+      isCapturingFrame = false;
+
+      if (!fallbackInitialized) {
+        fallbackInitialized = true;
+        initMainThreadVisionFallback();
+      }
+    }
+
+    async function initMainThreadVisionFallback() {
+      try {
+        const vision = await getSharedVisionFileset();
+        if (!activeSession || activeSession.mode !== 'ar') return;
+        if (!window.DISABLE_POSE) await initPoseTracking(vision).catch(() => {});
+        if (!activeSession || activeSession.mode !== 'ar') return;
+        if (!window.DISABLE_HANDS) await initHandTracking(vision).catch(() => {});
+        if (els.gestureText) {
+          els.gestureText.textContent = '🦾 LOWER ARM TO TRIGGER: RIGHT (BLAST) / LEFT (STORM)';
+        }
+      } catch (err) {
+        console.warn('[Tracking] Main-thread fallback vision init failed:', err);
+        if (els.gestureText) {
+          els.gestureText.textContent = '⚠️ GESTURES UNAVAILABLE (TOUCH ACTIVE)';
+        }
+      }
+    }
+
     function initTrackingWorker() {
       if (trackingWorker || !isWorkerSupported) return;
+      currentWorkerId++;
+      const workerId = currentWorkerId;
       try {
         trackingWorker = new Worker('tracking_worker.js', { type: 'module' });
+        PerformanceDiagnostics.registerWorker(`worker_${workerId}`);
         trackingWorker.onmessage = handleWorkerMessage;
         trackingWorker.onerror = (err) => {
-          console.warn('[Tracking] Web Worker error, switching to main-thread fallback:', err);
-          isWorkerSupported = false;
-          isWorkerTrackingReady = false;
-          trackingWorker = null;
+          activateMainThreadFallback(err?.message || 'Worker onerror triggered');
         };
-        trackingWorker.postMessage({ type: 'init' });
+        trackingWorker.onmessageerror = () => {
+          activateMainThreadFallback('Worker onmessageerror triggered');
+        };
+
+        // 30-second initialization timeout
+        if (workerInitTimeout) clearTimeout(workerInitTimeout);
+        workerInitTimeout = setTimeout(() => {
+          if (!isWorkerTrackingReady && currentWorkerId === workerId) {
+            activateMainThreadFallback('Worker initialization timed out (30s)');
+          }
+        }, 30000);
+
+        trackingWorker.postMessage({
+          type: 'init',
+          workerId,
+          assets: {
+            wasmUrl: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm',
+            poseModelUrl: new URL('assets/models/pose_landmarker_lite.task', location.href).href,
+            handModelUrl: new URL('assets/models/hand_landmarker.task', location.href).href
+          },
+          enabledTasks: ['pose', 'hand']
+        });
       } catch (e) {
-        console.warn('[Tracking] Worker constructor failed, switching to 5Hz fallback:', e);
-        isWorkerSupported = false;
-        isWorkerTrackingReady = false;
-        trackingWorker = null;
+        activateMainThreadFallback('Worker constructor failed: ' + (e.message || String(e)));
       }
     }
 
     function handleWorkerMessage(e) {
       const data = e.data;
       if (!data) return;
+
       if (data.type === 'ready') {
-        isWorkerTrackingReady = true;
-        console.log('🤖 [Tracking] Web Worker MediaPipe vision ready off-thread');
-        if (els.gestureText) {
-          els.gestureText.textContent = '🦾 LOWER ARM TO TRIGGER: RIGHT (BLAST) / LEFT (STORM)';
+        if (data.workerId === currentWorkerId) {
+          if (workerInitTimeout) {
+            clearTimeout(workerInitTimeout);
+            workerInitTimeout = null;
+          }
+          isWorkerTrackingReady = true;
+          console.log(`🤖 [Tracking] Web Worker ${data.workerId} MediaPipe vision ready off-thread`);
+          if (els.gestureText) {
+            els.gestureText.textContent = '🦾 LOWER ARM TO TRIGGER: RIGHT (BLAST) / LEFT (STORM)';
+          }
+          performance.mark('tracking-worker-ready');
         }
-        performance.mark('tracking-worker-ready');
         return;
       }
-      if (data.type === 'result') {
-        isWorkerProcessing = false;
-        const now = performance.now();
-        const age = now - (data.timestamp || now);
-        if (window.PerformanceDiagnostics && data.duration) {
-          if (data.duration.pose) PerformanceDiagnostics.recordInference('pose', data.duration.pose, age);
-          if (data.duration.hand) PerformanceDiagnostics.recordInference('hand', data.duration.hand, age);
+
+      if (data.type === 'error') {
+        if (data.workerId === currentWorkerId) {
+          activateMainThreadFallback(`Worker reported error in ${data.stage || 'runtime'}: ${data.message}`);
         }
-        const activeVideo = els.arContainer ? els.arContainer.querySelector('video') : null;
-        if (data.pose && activeVideo) {
-          processPoseLandmarks(data.pose.landmarks[0], activeVideo);
-        } else if ((data.task === 'pose' || data.task === 'both') && hasPoseDetected && !data.pose) {
-          processPoseLandmarks(null, activeVideo);
+        return;
+      }
+
+      if (data.type === 'busy') {
+        if (data.workerId === currentWorkerId && data.frameId === pendingFrame?.id) {
+          if (workerInferenceTimeout) {
+            clearTimeout(workerInferenceTimeout);
+            workerInferenceTimeout = null;
+          }
+          pendingFrame = null;
+        }
+        return;
+      }
+
+      if (data.type === 'result') {
+        const matches =
+          data.workerId === currentWorkerId &&
+          data.sessionId === activeSession?.id &&
+          data.frameId === pendingFrame?.id;
+
+        if (!matches) return;
+
+        if (workerInferenceTimeout) {
+          clearTimeout(workerInferenceTimeout);
+          workerInferenceTimeout = null;
+        }
+        pendingFrame = null;
+
+        const now = performance.now();
+        const age = now - (data.capturedAt || now);
+
+        if (document.hidden ||
+            !activeSession ||
+            activeSession.mode !== 'ar' ||
+            age > 350) {
+          clearPendingGestures();
+          return;
         }
 
-        if (data.hands && activeVideo) {
-          processHandLandmarks(data.hands.landmarks, data.hands.handednesses, activeVideo);
-        } else if ((data.task === 'hand' || data.task === 'both') && !data.hands) {
-          processHandLandmarks(null, null, activeVideo);
+        lastFreshResultTime = now;
+
+        if (window.PerformanceDiagnostics && data.durationMs) {
+          PerformanceDiagnostics.recordInference(data.task, data.durationMs, age);
         }
-      } else if (data.type === 'busy') {
-        isWorkerProcessing = false;
+
+        const activeVideo = els.arContainer ? els.arContainer.querySelector('video') : null;
+        if (data.task === 'pose') {
+          if (data.landmarks && activeVideo) {
+            processPoseLandmarks(data.landmarks[0], activeVideo);
+          } else {
+            processPoseLandmarks(null, activeVideo);
+          }
+        } else if (data.task === 'hand') {
+          if (data.landmarks && activeVideo) {
+            processHandLandmarks(data.landmarks, data.handednesses || [], activeVideo);
+          } else {
+            processHandLandmarks(null, null, activeVideo);
+          }
+        }
       }
     }
 
-    function dispatchTrackingFrame(video) {
+    function startVideoTrackingScheduler(video, session) {
+      if (!video) return;
+
+      let rVFCId = null;
+      let timerId = null;
+      let lastVideoTime = -1;
+
+      const onFrame = () => {
+        if (!isCurrent(session) || session.mode !== 'ar') return;
+        dispatchTrackingFrame(video, session);
+        scheduleNext();
+      };
+
+      const scheduleNext = () => {
+        if (!isCurrent(session) || session.mode !== 'ar') return;
+        if ('requestVideoFrameCallback' in video) {
+          rVFCId = video.requestVideoFrameCallback(onFrame);
+        } else {
+          timerId = setTimeout(() => {
+            if (!isCurrent(session) || session.mode !== 'ar') return;
+            if (video.currentTime !== lastVideoTime) {
+              lastVideoTime = video.currentTime;
+              onFrame();
+            } else {
+              scheduleNext();
+            }
+          }, 33);
+        }
+      };
+
+      scheduleNext();
+
+      session.cleanups.add(() => {
+        if (rVFCId !== null && 'cancelVideoFrameCallback' in video) {
+          try { video.cancelVideoFrameCallback(rVFCId); } catch (e) {}
+          rVFCId = null;
+        }
+        if (timerId !== null) {
+          clearTimeout(timerId);
+          timerId = null;
+        }
+      });
+    }
+
+    function captureViaOffscreenCanvas(video, targetW, targetH, callback) {
+      try {
+        if (!offscreenCanvas) {
+          offscreenCanvas = document.createElement('canvas');
+          offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: false });
+        }
+        if (offscreenCanvas.width !== targetW || offscreenCanvas.height !== targetH) {
+          offscreenCanvas.width = targetW;
+          offscreenCanvas.height = targetH;
+        }
+        offscreenCtx.drawImage(video, 0, 0, targetW, targetH);
+        if ('createImageBitmap' in window) {
+          createImageBitmap(offscreenCanvas).then(callback).catch(() => {
+            isCapturingFrame = false;
+            activateMainThreadFallback('Canvas createImageBitmap failed');
+          });
+        } else {
+          isCapturingFrame = false;
+          activateMainThreadFallback('createImageBitmap unavailable');
+        }
+      } catch (err) {
+        isCapturingFrame = false;
+        activateMainThreadFallback('Offscreen canvas capture failed: ' + err.message);
+      }
+    }
+
+    function dispatchTrackingFrame(video, session) {
+      const currentSession = session || activeSession;
       if (!video || video.paused || video.ended || video.readyState < 2 || isDocumentHidden || isSimulatorMode) {
         return;
       }
       if (window.DISABLE_POSE && window.DISABLE_HANDS) {
         return;
       }
+      if (!isCurrent(currentSession) || currentSession.mode !== 'ar') {
+        return;
+      }
 
+      const now = performance.now();
+
+      // Clear gesture state when no fresh result arrives for 350 ms
+      if (lastFreshResultTime > 0 && (now - lastFreshResultTime > 350)) {
+        clearPendingGestures();
+      }
+
+      // Check worker path
       if (isWorkerSupported && trackingWorker && isWorkerTrackingReady) {
-        if (isWorkerProcessing) {
-          // 1-frame backpressure: drop frame while worker is busy
+        // 2-second inference timeout watchdog
+        if (pendingFrame && (now - pendingFrame.capturedAt > 2000)) {
+          activateMainThreadFallback('Worker inference timed out (> 2000ms)');
           return;
         }
 
-        const now = performance.now();
+        // Maintain one capture/inference operation in flight: drop intermediate frames
+        if (pendingFrame || isCapturingFrame) {
+          return;
+        }
+
         const isReduced = QualityPolicy && QualityPolicy.profile === 'reduced';
         const poseInterval = isReduced ? 166 : 100; // 6 Hz or 10 Hz
         const handInterval = isReduced ? 100 : 66;  // 10 Hz or 15 Hz
 
         const canRunPose = !window.DISABLE_POSE;
-        // Hand tracking is only needed when 3D floating buttons are active & visible
         const canRunHands = !window.DISABLE_HANDS && isTargetLocked && isPlaneInteractionActive && !arePlanesDisappeared;
 
         const isPoseDue = canRunPose && (now - lastWorkerPoseTime >= poseInterval);
@@ -5718,7 +5957,6 @@
 
         let chosenTask = 'pose';
         if (isPoseDue && isHandDue) {
-          // Alternate tasks to prevent simultaneous heavy inference spikes
           chosenTask = lastWorkerTaskDispatched === 'pose' ? 'hand' : 'pose';
         } else if (isHandDue) {
           chosenTask = 'hand';
@@ -5735,60 +5973,112 @@
         const targetW = Math.round(vw * scale);
         const targetH = Math.round(vh * scale);
 
-        isWorkerProcessing = true;
+        isCapturingFrame = true;
+        const frameId = ++nextFrameId;
+        const capturedAt = performance.now();
+        let targetTimestampMs = Math.max(capturedAt, lastMonotonicTimestamp + 1);
+        lastMonotonicTimestamp = targetTimestampMs;
+
         lastWorkerTaskDispatched = chosenTask;
         if (chosenTask === 'pose') lastWorkerPoseTime = now;
         if (chosenTask === 'hand') lastWorkerHandTime = now;
-        const sendTimestamp = performance.now();
 
-        // Hardware-accelerated direct bitmap capture from video (bypasses main-thread canvas stall)
-        let bitmapPromise = null;
+        const finalizeDispatch = (bitmap) => {
+          isCapturingFrame = false;
+          if (!isCurrent(currentSession) || !trackingWorker || !isWorkerTrackingReady) {
+            if (bitmap && typeof bitmap.close === 'function') {
+              try { bitmap.close(); } catch (e) {}
+            }
+            return;
+          }
+
+          pendingFrame = {
+            id: frameId,
+            capturedAt,
+            task: chosenTask,
+            workerId: currentWorkerId,
+            sessionId: currentSession.id
+          };
+
+          // 2-second inference watchdog timer
+          if (workerInferenceTimeout) clearTimeout(workerInferenceTimeout);
+          workerInferenceTimeout = setTimeout(() => {
+            if (pendingFrame && pendingFrame.id === frameId) {
+              activateMainThreadFallback('Worker inference watchdog timeout (2000ms)');
+            }
+          }, 2000);
+
+          try {
+            trackingWorker.postMessage({
+              type: 'frame',
+              workerId: currentWorkerId,
+              sessionId: currentSession.id,
+              frameId,
+              task: chosenTask,
+              capturedAt,
+              timestampMs: targetTimestampMs,
+              bitmap
+            }, [bitmap]);
+          } catch (postErr) {
+            console.warn('[Tracking] Worker postMessage failed, closing bitmap:', postErr);
+            if (bitmap && typeof bitmap.close === 'function') {
+              try { bitmap.close(); } catch (e) {}
+            }
+            pendingFrame = null;
+            activateMainThreadFallback('Worker frame transfer failed: ' + postErr.message);
+          }
+        };
+
+        // Capture bitmap
         if ('createImageBitmap' in window) {
           try {
-            bitmapPromise = createImageBitmap(video, { resizeWidth: targetW, resizeHeight: targetH, resizeQuality: 'low' });
+            createImageBitmap(video, { resizeWidth: targetW, resizeHeight: targetH, resizeQuality: 'low' })
+              .then(finalizeDispatch)
+              .catch(() => {
+                captureViaOffscreenCanvas(video, targetW, targetH, finalizeDispatch);
+              });
+            return;
           } catch (e) {
-            bitmapPromise = null;
+            captureViaOffscreenCanvas(video, targetW, targetH, finalizeDispatch);
+            return;
           }
+        } else {
+          captureViaOffscreenCanvas(video, targetW, targetH, finalizeDispatch);
+          return;
         }
+      }
 
-        if (!bitmapPromise) {
-          if (!offscreenCanvas) {
-            offscreenCanvas = document.createElement('canvas');
-            offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: false });
-          }
-          if (offscreenCanvas.width !== targetW || offscreenCanvas.height !== targetH) {
-            offscreenCanvas.width = targetW;
-            offscreenCanvas.height = targetH;
-          }
-          offscreenCtx.drawImage(video, 0, 0, targetW, targetH);
-          bitmapPromise = createImageBitmap(offscreenCanvas);
-        }
-
-        bitmapPromise.then(bitmap => {
-          trackingWorker.postMessage({
-            type: 'detect',
-            bitmap,
-            task: chosenTask,
-            timestamp: sendTimestamp,
-            disablePose: window.DISABLE_POSE,
-            disableHands: window.DISABLE_HANDS
-          }, [bitmap]);
-        }).catch(err => {
-          isWorkerProcessing = false;
-        });
+      // Resilient Fallback: Run at most one inference every 100 ms, alternating tasks with 5 Hz ceiling (200 ms) per task
+      if (now - lastFallbackInferenceTime < 100) {
         return;
       }
 
-      // Resilient Fallback: 5 Hz throttled main-thread inference if worker is not active
-      const now = performance.now();
-      if (now - lastMainThreadInferenceTime >= MAIN_THREAD_FALLBACK_INTERVAL) {
-        lastMainThreadInferenceTime = now;
-        if (!window.DISABLE_POSE && typeof updatePoseTracking === 'function') {
-          updatePoseTracking(video);
-        }
-        if (!window.DISABLE_HANDS && typeof updateHandTracking === 'function') {
-          updateHandTracking(video);
-        }
+      const canRunPose = !window.DISABLE_POSE && typeof updatePoseTracking === 'function' && poseLandmarker;
+      const canRunHands = !window.DISABLE_HANDS && typeof updateHandTracking === 'function' && handLandmarker && isTargetLocked && isPlaneInteractionActive && !arePlanesDisappeared;
+
+      const isPoseDue = canRunPose && (now - lastFallbackPoseTime >= MAIN_THREAD_FALLBACK_INTERVAL);
+      const isHandDue = canRunHands && (now - lastFallbackHandTime >= MAIN_THREAD_FALLBACK_INTERVAL);
+
+      if (!isPoseDue && !isHandDue) return;
+
+      let fallbackTask = 'pose';
+      if (isPoseDue && isHandDue) {
+        fallbackTask = lastFallbackTaskDispatched === 'pose' ? 'hand' : 'pose';
+      } else if (isHandDue) {
+        fallbackTask = 'hand';
+      } else {
+        fallbackTask = 'pose';
+      }
+
+      lastFallbackInferenceTime = now;
+      lastFallbackTaskDispatched = fallbackTask;
+
+      if (fallbackTask === 'pose') {
+        lastFallbackPoseTime = now;
+        updatePoseTracking(video);
+      } else {
+        lastFallbackHandTime = now;
+        updateHandTracking(video);
       }
     }
 
@@ -5903,12 +6193,6 @@
           arr[i * 3] += particleVelocities[i * 3];
         }
         pos.needsUpdate = true;
-      }
-
-      // Update MediaPipe Pose & Hand Tracking (Off-Thread Worker / 5Hz Fallback)
-      const video = els.arContainer ? els.arContainer.querySelector('video') : null;
-      if (video) {
-        dispatchTrackingFrame(video);
       }
 
       // 3D Floating Buttons: Micro-float animation & Gesture Opacity Fade
