@@ -2092,6 +2092,8 @@
       sceneGeneration = session.id;
       isFirstCharacterVisible = false;
       optionalFeaturesStarted = false;
+      pendingExplosionIntent = false;
+      pendingStormIntent = false;
       return session;
     }
 
@@ -2249,6 +2251,80 @@
       return setTimeout(callback, 60);
     }
 
+    async function ensureTrackingReady({ session, enabledTasks = ['pose', 'hand'] }) {
+      if (!isCurrent(session)) return;
+      if (enabledTasks.length === 0) {
+        if (els.gestureText) {
+          els.gestureText.textContent = 'ℹ️ GESTURES DISABLED (ISOLATION)';
+        }
+        return;
+      }
+
+      if (els.gestureText) {
+        els.gestureText.textContent = '⏳ GESTURES LOADING…';
+      }
+
+      let workerStarted = false;
+      try {
+        if (isWorkerSupported) {
+          initTrackingWorker();
+          if (trackingWorker) {
+            trackingWorker.postMessage({
+              type: 'init',
+              workerId: currentWorkerId,
+              assets: {
+                wasmUrl: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm',
+                poseModelUrl: new URL(CONFIG.poseModelUrl || 'assets/models/pose_landmarker_lite.task', location.href).href,
+                handModelUrl: new URL(CONFIG.handModelUrl || 'assets/models/hand_landmarker.task', location.href).href
+              },
+              enabledTasks
+            });
+            await ensureWorkerTrackingReady();
+            workerStarted = true;
+            if (els.gestureText) {
+              els.gestureText.textContent = '🦾 LOWER ARM TO TRIGGER: RIGHT (BLAST) / LEFT (STORM)';
+            }
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('[Tracking] Worker init failed, switching to main thread fallback:', err);
+      }
+
+      if (!isCurrent(session) || workerStarted) return;
+
+      // Main-thread fallback: initialize pose first, yield, then hands
+      try {
+        const vision = await getSharedVisionFileset();
+        if (!isCurrent(session)) return;
+
+        if (enabledTasks.includes('pose') && !window.DISABLE_POSE) {
+          await initPoseTracking(vision).catch(() => {});
+          if (els.gestureText) {
+            els.gestureText.textContent = enabledTasks.includes('hand') && !window.DISABLE_HANDS
+              ? '🦾 POSE READY, LOADING HANDS…'
+              : '🦾 LOWER ARM TO TRIGGER: RIGHT (BLAST) / LEFT (STORM)';
+          }
+        }
+
+        // Yield execution to browser presentation opportunity
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (!isCurrent(session)) return;
+
+        if (enabledTasks.includes('hand') && !window.DISABLE_HANDS) {
+          await initHandTracking(vision).catch(() => {});
+          if (els.gestureText) {
+            els.gestureText.textContent = '🦾 LOWER ARM TO TRIGGER: RIGHT (BLAST) / LEFT (STORM)';
+          }
+        }
+      } catch (err) {
+        console.warn('[Tracking] Main thread tracking init failed:', err);
+        if (els.gestureText) {
+          els.gestureText.textContent = '⚠️ GESTURES UNAVAILABLE (TOUCH ACTIVE)';
+        }
+      }
+    }
+
     function onFirstCharacterVisible(mode = 'ar') {
       const session = activeSession;
       if (!isCurrent(session) || session.firstCharacterVisible) return;
@@ -2268,6 +2344,15 @@
         logPerformanceSummary();
       }
 
+      if (typeof pendingExplosionIntent !== 'undefined' && pendingExplosionIntent) {
+        pendingExplosionIntent = false;
+        trigger3DExplosion();
+      }
+      if (typeof pendingStormIntent !== 'undefined' && pendingStormIntent) {
+        pendingStormIntent = false;
+        trigger3DStorm();
+      }
+
       scheduleOptionalFeatures(mode, session);
     }
 
@@ -2276,62 +2361,13 @@
       session.optionalFeaturesStarted = true;
       optionalFeaturesStarted = true;
 
-      if (mode === 'simulator') {
-        if (!window.DISABLE_VFX) {
-          scheduleIdleJob(async () => {
-            if (!isCurrent(session)) return;
-            try {
-              await ensureExplosionTexture();
-              if (!isCurrent(session)) return;
-              await ensureStormTexture();
-              if (!isCurrent(session)) return;
-              performance.mark('effects-ready');
-            } catch (e) {}
-          }, 500);
-        }
-        return;
-      }
+      // Wait for an actual browser presentation opportunity after first visible render
+      requestAnimationFrame(() => {
+        requestAnimationFrame(async () => {
+          if (!isCurrent(session)) return;
 
-      if (window.DISABLE_POSE && window.DISABLE_HANDS) {
-        if (els.gestureText) {
-          els.gestureText.textContent = 'ℹ️ GESTURES DISABLED (ISOLATION)';
-        }
-        if (!window.DISABLE_VFX) {
-          scheduleIdleJob(async () => {
-            if (!isCurrent(session)) return;
-            try {
-              await ensureExplosionTexture();
-              if (!isCurrent(session)) return;
-              await ensureStormTexture();
-              if (!isCurrent(session)) return;
-              performance.mark('effects-ready');
-            } catch (e) {}
-          }, 500);
-        }
-        return;
-      }
-
-      if (els.gestureText) {
-        els.gestureText.textContent = '⏳ GESTURES LOADING…';
-      }
-
-      scheduleIdleJob(async () => {
-        if (!isCurrent(session)) return;
-        try {
-          initTrackingWorker();
-
-          // If worker is not supported or constructor fails immediately, initialize fallback vision
-          if (!isWorkerSupported || !trackingWorker) {
-            const vision = await getSharedVisionFileset();
-            if (!isCurrent(session)) return;
-            if (!window.DISABLE_POSE) await initPoseTracking(vision).catch(() => {});
-            if (!isCurrent(session)) return;
-            if (!window.DISABLE_HANDS) await initHandTracking(vision).catch(() => {});
-          }
-
-          if (!window.DISABLE_VFX) {
-            scheduleIdleJob(async () => {
-              if (!isCurrent(session)) return;
+          if (mode === 'simulator') {
+            if (!window.DISABLE_VFX) {
               try {
                 await ensureExplosionTexture();
                 if (!isCurrent(session)) return;
@@ -2339,16 +2375,37 @@
                 if (!isCurrent(session)) return;
                 performance.mark('effects-ready');
               } catch (e) {}
-            }, 1000);
+            }
+            return;
           }
-        } catch (e) {
+
+          const enabledTasks = [
+            ...(!window.DISABLE_POSE ? ['pose'] : []),
+            ...(!window.DISABLE_HANDS ? ['hand'] : [])
+          ];
+
+          try {
+            await ensureTrackingReady({ session, enabledTasks });
+          } catch (e) {
+            console.warn('[Queue] Tracking ready error:', e);
+          }
+
           if (!isCurrent(session)) return;
-          console.warn('[Queue] Optional features error:', e);
-          if (els.gestureText) {
-            els.gestureText.textContent = '⚠️ GESTURES SKIPPED';
+
+          // Start effect texture loading sequentially after tracking settles
+          if (!window.DISABLE_VFX) {
+            try {
+              await ensureExplosionTexture();
+              if (!isCurrent(session)) return;
+              await ensureStormTexture();
+              if (!isCurrent(session)) return;
+              performance.mark('effects-ready');
+            } catch (e) {
+              console.warn('[Queue] Effect texture loading error:', e);
+            }
           }
-        }
-      }, 600);
+        });
+      });
     }
 
     let isPageVisible = true;
@@ -3000,6 +3057,7 @@
     function executeEnterTransition() {
       if (!isWelcomeScreenActive) return;
       isWelcomeScreenActive = false;
+      performance.mark('overlay-dismissed');
 
       const welcomeEl = document.getElementById('screen-welcome');
       if (welcomeEl) {
@@ -3040,9 +3098,12 @@
         els.progressPct.textContent = '15%';
       }
 
-      // Concurrently stream 3D character and target marker
+      // Concurrently stream 3D character and target marker, and prime MindAR import early without camera permission
       const modelReady = loadMonsterAsset();
       const markerReady = loadMarkerAsset();
+      ensureMindARReady().catch((err) => {
+        console.warn('[MindAR] Early pre-import failed:', err);
+      });
 
       try {
         await Promise.all([modelReady, markerReady]);
@@ -3150,7 +3211,18 @@
       const session = createSession('ar');
 
       performance.mark('camera-request-start');
-      await ensureMindARReady();
+      try {
+        await Promise.race([
+          ensureMindARReady(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('MindAR readiness timeout (15s)')), 15000))
+        ]);
+      } catch (err) {
+        console.error('[AR] MindAR preparation failed:', err);
+        cleanARContainer();
+        els.cameraError.classList.remove('hidden');
+        showToast('Could not load AR tracking engine.');
+        return;
+      }
       if (!isCurrent(session)) return;
 
       const targetSrc = await getTargetSrc();
@@ -3262,12 +3334,20 @@
           video.setAttribute('playsinline', '');
           video.setAttribute('webkit-playsinline', '');
           video.muted = true;
-          video.onplaying = () => {
-            performance.mark('first-video-frame');
-            try {
-              performance.measure('camera-startup', 'camera-request-start', 'first-video-frame');
-            } catch (e) {}
+          const markFirstFrame = () => {
+            if (!performance.getEntriesByName('first-video-frame').length) {
+              performance.mark('first-video-frame');
+              try {
+                performance.measure('camera-startup', 'camera-request-start', 'first-video-frame');
+              } catch (e) {}
+            }
           };
+          if ('requestVideoFrameCallback' in video) {
+            video.requestVideoFrameCallback(markFirstFrame);
+          } else {
+            video.addEventListener('timeupdate', markFirstFrame, { once: true });
+          }
+          video.onplaying = markFirstFrame;
           if (video.paused) {
             try { await video.play(); } catch (e) { console.warn("Video play error:", e); }
           }
@@ -4166,10 +4246,18 @@
       }
     }
 
+    let pendingExplosionIntent = false;
+    let pendingStormIntent = false;
+
     async function trigger3DExplosion() {
       const session = activeSession;
       if (!isCurrent(session)) return;
       if (window.DISABLE_VFX || (typeof QualityPolicy !== 'undefined' && !QualityPolicy.getPolicy().enableVfxBursts)) return;
+
+      if (!session.firstCharacterVisible) {
+        pendingExplosionIntent = true;
+        return;
+      }
 
       try {
         await ensureExplosionTexture();
@@ -4507,6 +4595,11 @@
       const session = activeSession;
       if (!isCurrent(session)) return;
       if (window.DISABLE_VFX || (typeof QualityPolicy !== 'undefined' && !QualityPolicy.getPolicy().enableVfxBursts)) return;
+
+      if (!session.firstCharacterVisible) {
+        pendingStormIntent = true;
+        return;
+      }
 
       try {
         await ensureStormTexture();

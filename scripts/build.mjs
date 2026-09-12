@@ -178,7 +178,7 @@ async function build() {
   const inlineStyleRegex = /<style>[\s\S]*?<\/style>/i;
   builtHtml = builtHtml.replace(inlineStyleRegex, '');
 
-  // High-priority Preload tags for 3D model and marker before application module scripts
+  // High-priority Preload tags for 3D model and marker ahead of application modules
   const highPriorityPreloads = `
   <!-- High-Priority Preloads: Stream essential 3D character and target marker before module execution -->
   <link rel="preload" as="fetch" crossorigin="anonymous" href="assets/versioned/${glbFileName}" fetchpriority="high">
@@ -197,7 +197,11 @@ async function build() {
     };
   </script>
 `;
-  builtHtml = builtHtml.replace('</head>', `${highPriorityPreloads}</head>`);
+  if (builtHtml.includes('<script type="importmap">')) {
+    builtHtml = builtHtml.replace('<script type="importmap">', `${highPriorityPreloads}  <script type="importmap">`);
+  } else {
+    builtHtml = builtHtml.replace('</head>', `${highPriorityPreloads}</head>`);
+  }
 
   fs.writeFileSync(path.join(distDir, 'index.html'), builtHtml, 'utf8');
 
