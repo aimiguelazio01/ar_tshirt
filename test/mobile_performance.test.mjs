@@ -85,6 +85,14 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     assert.match(html, /roughness: 1,\s*\n\s*metalness: 0,/, 'Floating plate materials must disable glossy reflections');
   });
 
+  await t.test('0g. Software plates use a compact screen-safe layout', () => {
+    const html = fs.readFileSync('index.html', 'utf8');
+    assert.equal((html.match(/Compact screen-safe layout/g) || []).length, 6, 'All six plates must use the compact layout');
+    assert.match(html, /const btnWidth = 0\.48;/, 'Plate width must fit a mobile viewport');
+    assert.match(html, /const btnHeight = 0\.24;/, 'Plate height must fit a mobile viewport');
+    assert.match(html, /const isAttachedToCharacter = planesModel\.parent === monsterModel \|\| planesModel\.parent === simMonster;/, 'Attached plate layout must remain local while scaling');
+  });
+
   // =========================================================================
   // 1. Elapsed-time playback equivalence at 60/30/15/10/5 FPS & suspension
   // =========================================================================
