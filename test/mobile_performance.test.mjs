@@ -57,6 +57,21 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     assert.match(html, /setLoop\(THREE\.LoopRepeat, loopCount\)/, 'Reaction animation must use the requested loop count');
   });
 
+  await t.test('0d. Footer social links use the supplied profiles', () => {
+    const html = fs.readFileSync('index.html', 'utf8');
+    const socialLinks = [
+      'https://linkedin.com/in/mvirgilstuio/',
+      'https://facebook.com/profile.php?id=100009122059507',
+      'https://instagram.com/vfxmiguel/?hl=en',
+      'https://x.com/miguelvfx',
+      'https://youtube.com/@MVirgilStudio',
+      'https://vimeo.com/user261754571?fl=pp&amp;fe=sh'
+    ];
+    for (const link of socialLinks) {
+      assert.equal((html.match(new RegExp(link.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 2, `${link} must be present in both footers`);
+    }
+  });
+
   // =========================================================================
   // 1. Elapsed-time playback equivalence at 60/30/15/10/5 FPS & suspension
   // =========================================================================
