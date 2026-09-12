@@ -1362,11 +1362,14 @@
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
     import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+    import { createAnimationTime, onActionFinished } from './src/runtime/animation-time.mjs';
 
     window.THREE = THREE;
     window.GLTFLoader = GLTFLoader;
     window.SkeletonUtils = SkeletonUtils;
     window.MeshoptDecoder = MeshoptDecoder;
+    window.createAnimationTime = createAnimationTime;
+    window.onActionFinished = onActionFinished;
     performance.mark('core-libraries-ready');
 
     /* =====================================================================
@@ -2058,6 +2061,9 @@
     let nextSessionId = 0;
     let activeSession = null;
     const activeEffectTimers = new Set();
+    let activeReactionCleanup = null;
+    let rightArmActionCleanup = null;
+    let leftArmActionCleanup = null;
 
     function createSession(mode) {
       if (activeSession && !activeSession.abort.signal.aborted) {
@@ -2074,9 +2080,12 @@
         firstCharacterVisible: false,
         optionalFeaturesStarted: false,
         abort: new AbortController(),
-        cleanups: new Set()
+        cleanups: new Set(),
+        animationTime: createAnimationTime()
       };
       activeSession = session;
+      isSimulatorMode = (mode === 'simulator');
+      modeEntryMark = session.startedAt;
       sceneGeneration = session.id;
       isFirstCharacterVisible = false;
       optionalFeaturesStarted = false;
@@ -2348,6 +2357,12 @@
       isDocumentHidden = document.hidden;
       isPageVisible = !isDocumentHidden;
       PerformanceDiagnostics.resetWindows();
+      if (activeSession && activeSession.animationTime) {
+        activeSession.animationTime.reset();
+      }
+      if (clock) {
+        try { clock.getDelta(); } catch (e) {}
+      }
       if (isDocumentHidden) {
         console.log('[Lifecycle] Page hidden — pausing animation loops & inference');
         if (renderer && typeof renderer.setAnimationLoop === 'function') {
@@ -2359,11 +2374,22 @@
           simAnimId = null;
           PerformanceDiagnostics.unregisterLoop('sim_loop');
         }
+        if (mindarThree && mindarThree.controller && typeof mindarThree.controller.stopProcessVideo === 'function') {
+          try { mindarThree.controller.stopProcessVideo(); } catch (e) {}
+        }
       } else {
         console.log('[Lifecycle] Page visible — resuming active loop');
         if (!isSimulatorMode && isCameraRunning && renderer && typeof renderer.setAnimationLoop === 'function') {
           renderer.setAnimationLoop(renderLoop);
           PerformanceDiagnostics.registerLoop('ar_renderLoop');
+        }
+        if (!isSimulatorMode && isCameraRunning && mindarThree && mindarThree.controller && mindarThree.video && typeof mindarThree.controller.processVideo === 'function') {
+          try {
+            const track = mindarThree.video.srcObject?.getVideoTracks?.()[0];
+            if (track && track.readyState === 'live') {
+              mindarThree.controller.processVideo(mindarThree.video);
+            }
+          } catch (e) {}
         }
         if (isSimulatorMode && !simAnimId && typeof simLoopRef === 'function') {
           simAnimId = requestAnimationFrame(simLoopRef);
@@ -2570,7 +2596,19 @@
         activeSession = null;
       }
 
-      // Cancel all gesture and interaction timers
+      // Cancel all gesture and interaction timers and action listeners
+      if (activeReactionCleanup) {
+        activeReactionCleanup();
+        activeReactionCleanup = null;
+      }
+      if (rightArmActionCleanup) {
+        rightArmActionCleanup();
+        rightArmActionCleanup = null;
+      }
+      if (leftArmActionCleanup) {
+        leftArmActionCleanup();
+        leftArmActionCleanup = null;
+      }
       if (typeof reactTimer !== 'undefined' && reactTimer) {
         clearTimeout(reactTimer);
         reactTimer = null;
@@ -4659,7 +4697,11 @@
       isSequenceRunning = true;
       console.log('[Animation] DON\'T TOUCH triggered: playing frames 25 to 72');
 
-      // Cancel any pending timers
+      // Cancel any pending timers and listeners
+      if (activeReactionCleanup) {
+        activeReactionCleanup();
+        activeReactionCleanup = null;
+      }
       if (reactTimer) {
         clearTimeout(reactTimer);
         reactTimer = null;
@@ -4680,26 +4722,9 @@
       if (currArmUp && currArmUp.isRunning()) currArmUp.fadeOut(0.12);
       if (currArmDown && currArmDown.isRunning()) currArmDown.fadeOut(0.12);
 
-      // Play reaction animation from frame 25 to 72 and loop one more time (total 2 cycles)
-      currReact.reset();
-      currReact.setLoop(THREE.LoopRepeat, 2);
-      currReact.repetitions = 2;
-      currReact.clampWhenFinished = true;
-      currReact.fadeIn(0.08);
-      currReact.play();
-
-      setPanicButtonActive(false);
-      updatePanicButtonText("AGITATED!");
-      updatePanicButtonIcon("electric_bolt");
-      showToast("⚠️ I SAID DON'T TOUCH! (Frames 25-72 x2) 👹");
-
-      // Duration for 2 full cycles of frames 25 to 72 (scaled by playback speed):
-      const effectiveSpeed = (currReact.timeScale || (isSim ? simMixer?.timeScale : mixer?.timeScale) || CONFIG.animationSpeed || 1.0);
-      const singleCycleDuration = currReact.getClip().duration || ((72 - 25) / 24);
-      const reactDurationMs = (singleCycleDuration * 2 * 1000) / effectiveSpeed;
-
-      reactTimer = setTimeout(() => {
-        // Return smoothly to idle loop (frames 1-24)
+      const currentMixer = isSim ? simMixer : mixer;
+      activeReactionCleanup = onActionFinished(currentMixer, currReact, activeSession, () => {
+        activeReactionCleanup = null;
         if (currReact && currReact.isRunning()) {
           currReact.fadeOut(0.2);
         }
@@ -4715,9 +4740,21 @@
         setPanicButtonActive(true);
         updatePanicButtonText("DON'T TOUCH");
         updatePanicButtonIcon("warning");
-        reactTimer = null;
         console.log('[Animation] Frames 25-72 (2 cycles) completed -> restored idle loop (frames 1-24)');
-      }, Math.max(100, reactDurationMs - 40));
+      });
+
+      // Play reaction animation from frame 25 to 72 and loop one more time (total 2 cycles)
+      currReact.reset();
+      currReact.setLoop(THREE.LoopRepeat, 2);
+      currReact.repetitions = 2;
+      currReact.clampWhenFinished = true;
+      currReact.fadeIn(0.08);
+      currReact.play();
+
+      setPanicButtonActive(false);
+      updatePanicButtonText("AGITATED!");
+      updatePanicButtonIcon("electric_bolt");
+      showToast("⚠️ I SAID DON'T TOUCH! (Frames 25-72 x2) 👹");
     }
 
     function playIdleSequence() {
@@ -4727,6 +4764,10 @@
       const currLoop42 = isSim ? simActionLoop42 : actionLoop42;
       const currCalm = isSim ? simActionCalm : actionCalm;
 
+      if (activeReactionCleanup) {
+        activeReactionCleanup();
+        activeReactionCleanup = null;
+      }
       if (reactTimer) {
         clearTimeout(reactTimer);
         reactTimer = null;
@@ -4768,6 +4809,10 @@
       if (isRightArmCurrentlyUp) return; // Already raised and holding
       isRightArmCurrentlyUp = true;
 
+      if (rightArmActionCleanup) {
+        rightArmActionCleanup();
+        rightArmActionCleanup = null;
+      }
       if (rightArmDownTimer) {
         clearTimeout(rightArmDownTimer);
         rightArmDownTimer = null;
@@ -4798,6 +4843,10 @@
       if (!isRightArmCurrentlyUp) return;
       isRightArmCurrentlyUp = false;
 
+      if (rightArmActionCleanup) {
+        rightArmActionCleanup();
+        rightArmActionCleanup = null;
+      }
       if (rightArmDownTimer) {
         clearTimeout(rightArmDownTimer);
         rightArmDownTimer = null;
@@ -4809,16 +4858,9 @@
       const currArmDown = isSim ? simActionArmDown : actionArmDown;
 
       if (currArmDown) {
-        if (currArmUp && currArmUp.isRunning()) currArmUp.fadeOut(0.08);
-        currArmDown.reset();
-        currArmDown.setLoop(THREE.LoopOnce, 1);
-        currArmDown.clampWhenFinished = true;
-        currArmDown.fadeIn(0.08);
-        currArmDown.play();
-
-        const effectiveSpeed = (currArmDown.timeScale || (isSim ? simMixer?.timeScale : mixer?.timeScale) || CONFIG.animationSpeed || 1.0);
-        const durationMs = ((currArmDown.getClip().duration || 0.292) * 1000) / effectiveSpeed;
-        rightArmDownTimer = setTimeout(() => {
+        const currentMixer = isSim ? simMixer : mixer;
+        rightArmActionCleanup = onActionFinished(currentMixer, currArmDown, activeSession, () => {
+          rightArmActionCleanup = null;
           if (currArmDown) currArmDown.fadeOut(0.15);
           if (currIdle && !isSequenceRunning && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) {
             currIdle.reset();
@@ -4826,9 +4868,15 @@
             currIdle.fadeIn(0.15);
             currIdle.play();
           }
-          rightArmDownTimer = null;
           updateGestureHUD();
-        }, Math.max(60, durationMs - 40));
+        });
+
+        if (currArmUp && currArmUp.isRunning()) currArmUp.fadeOut(0.08);
+        currArmDown.reset();
+        currArmDown.setLoop(THREE.LoopOnce, 1);
+        currArmDown.clampWhenFinished = true;
+        currArmDown.fadeIn(0.08);
+        currArmDown.play();
       } else {
         if (currIdle && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) currIdle.reset().play();
         updateGestureHUD();
@@ -4848,6 +4896,10 @@
       if (isLeftArmCurrentlyUp) return; // Already raised and holding
       isLeftArmCurrentlyUp = true;
 
+      if (leftArmActionCleanup) {
+        leftArmActionCleanup();
+        leftArmActionCleanup = null;
+      }
       if (leftArmDownTimer) {
         clearTimeout(leftArmDownTimer);
         leftArmDownTimer = null;
@@ -4878,6 +4930,10 @@
       if (!isLeftArmCurrentlyUp) return;
       isLeftArmCurrentlyUp = false;
 
+      if (leftArmActionCleanup) {
+        leftArmActionCleanup();
+        leftArmActionCleanup = null;
+      }
       if (leftArmDownTimer) {
         clearTimeout(leftArmDownTimer);
         leftArmDownTimer = null;
@@ -4889,16 +4945,9 @@
       const currArmDown = isSim ? simActionArmDown : actionArmDown;
 
       if (currArmDown) {
-        if (currArmUp && currArmUp.isRunning()) currArmUp.fadeOut(0.08);
-        currArmDown.reset();
-        currArmDown.setLoop(THREE.LoopOnce, 1);
-        currArmDown.clampWhenFinished = true;
-        currArmDown.fadeIn(0.08);
-        currArmDown.play();
-
-        const effectiveSpeed = (currArmDown.timeScale || (isSim ? simMixer?.timeScale : mixer?.timeScale) || CONFIG.animationSpeed || 1.0);
-        const durationMs = ((currArmDown.getClip().duration || 0.292) * 1000) / effectiveSpeed;
-        leftArmDownTimer = setTimeout(() => {
+        const currentMixer = isSim ? simMixer : mixer;
+        leftArmActionCleanup = onActionFinished(currentMixer, currArmDown, activeSession, () => {
+          leftArmActionCleanup = null;
           if (currArmDown) currArmDown.fadeOut(0.15);
           if (currIdle && !isSequenceRunning && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) {
             currIdle.reset();
@@ -4906,9 +4955,15 @@
             currIdle.fadeIn(0.15);
             currIdle.play();
           }
-          leftArmDownTimer = null;
           updateGestureHUD();
-        }, Math.max(60, durationMs - 40));
+        });
+
+        if (currArmUp && currArmUp.isRunning()) currArmUp.fadeOut(0.08);
+        currArmDown.reset();
+        currArmDown.setLoop(THREE.LoopOnce, 1);
+        currArmDown.clampWhenFinished = true;
+        currArmDown.fadeIn(0.08);
+        currArmDown.play();
       } else {
         if (currIdle && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) currIdle.reset().play();
         updateGestureHUD();
@@ -4926,6 +4981,15 @@
       if (isSequenceRunning) return;
       isSequenceRunning = true;
       setPanicButtonActive(false);
+
+      if (rightArmActionCleanup) {
+        rightArmActionCleanup();
+        rightArmActionCleanup = null;
+      }
+      if (leftArmActionCleanup) {
+        leftArmActionCleanup();
+        leftArmActionCleanup = null;
+      }
 
       // Cancel any active arm raise state while in panic mode
       isRightArmCurrentlyUp = false;
@@ -6289,12 +6353,13 @@
 
     function renderLoop() {
       if (isDocumentHidden || !isCameraRunning || isSimulatorMode) return;
-      const rawDelta = clock ? clock.getDelta() : 0.016;
-      const delta = Math.max(0.001, Math.min(rawDelta || 0.016, 0.08));
-      const t = performance.now() * 0.001;
+      const animTime = activeSession ? activeSession.animationTime : null;
+      const nowMs = performance.now();
+      const elapsed = animTime ? animTime.tick(nowMs) : (clock ? clock.getDelta() : 0.016);
+      const t = nowMs * 0.001;
 
       if (mixer) {
-        mixer.update(delta);
+        mixer.update(elapsed);
       }
 
       // Prevent character from jumping through or behind the camera
@@ -6342,13 +6407,15 @@
         animMesh.rotation.y = Math.atan2(dx, dz);
       }
 
+      const decorativeDelta = Math.min(elapsed, 0.05);
+
       // Update ambient particles based on QualityPolicy drawRange and delta time
       if (particleSystem) {
         const policy = (typeof QualityPolicy !== 'undefined') ? QualityPolicy.getPolicy() : null;
         const activeCount = policy ? Math.min(policy.ambientParticles || 80, 220) : 80;
         const pos = particleSystem.geometry.attributes.position;
         const arr = pos.array;
-        const dtFactor = delta * 60;
+        const dtFactor = decorativeDelta * 60;
         for (let i = 0; i < activeCount; i++) {
           const idxY = i * 3 + 1;
           let y = arr[idxY] + particleVelocities[idxY] * dtFactor;
@@ -6359,14 +6426,14 @@
         pos.needsUpdate = true;
       }
 
-      // Update active 3D explosions and electric storm VFX in the render loop
-      updateEffects(delta);
+      // Update active 3D explosions and electric storm VFX in the render loop with active elapsed time
+      updateEffects(elapsed);
 
       // 3D Floating Buttons: Micro-float animation & Gesture Opacity Fade
       if (planesModel) {
         const opacityDiff = targetPlaneOpacity - currentPlaneOpacity;
         if (Math.abs(opacityDiff) > 0.005) {
-          const fadeFactor = 1.0 - Math.exp(-14.0 * delta);
+          const fadeFactor = 1.0 - Math.exp(-14.0 * decorativeDelta);
           currentPlaneOpacity += opacityDiff * fadeFactor;
           if (planesModel.userData && planesModel.userData.buttons) {
             planesModel.userData.buttons.forEach((btn) => {
@@ -6393,7 +6460,7 @@
           if (planesModel.userData && planesModel.userData.buttons) {
             planesModel.userData.buttons.forEach((btn, idx) => {
               if (btn.userData.pressOffset > 0.0005) {
-                btn.userData.pressOffset *= Math.exp(-12.0 * delta);
+                btn.userData.pressOffset *= Math.exp(-12.0 * decorativeDelta);
               } else {
                 btn.userData.pressOffset = 0;
               }
@@ -6710,10 +6777,12 @@
         }
         simAnimId = requestAnimationFrame(simLoop);
         PerformanceDiagnostics.registerLoop('sim_loop');
-        const rawDelta = simClock.getDelta();
-        const delta = Math.max(0.001, Math.min(rawDelta || 0.016, 0.08));
+        const animTime = activeSession ? activeSession.animationTime : null;
+        const nowMs = performance.now();
+        const elapsed = animTime ? animTime.tick(nowMs) : (simClock ? simClock.getDelta() : 0.016);
+        const t = nowMs * 0.001;
 
-        if (simMixer) simMixer.update(delta);
+        if (simMixer) simMixer.update(elapsed);
 
         // Prevent character from jumping through or behind the camera in simulator
         const simRoot = cachedSimRootBone || (simMonster ? (cachedSimRootBone = simMonster.getObjectByName('C_root')) : null);
@@ -6747,12 +6816,14 @@
           modelGroup.rotation.y += 0.004;
         }
 
+        const decorativeDelta = Math.min(elapsed, 0.05);
+
         // Update ambient particles based on QualityPolicy drawRange and delta time
         const simPolicy = (typeof QualityPolicy !== 'undefined') ? QualityPolicy.getPolicy() : null;
         const simActiveCount = simPolicy ? Math.min(simPolicy.ambientParticles || 80, 220) : 80;
         const pos = pGeo.attributes.position;
         const arr = pos.array;
-        const dtFactor = delta * 60;
+        const dtFactor = decorativeDelta * 60;
         for (let i = 0; i < simActiveCount; i++) {
           const idxY = i * 3 + 1;
           let y = arr[idxY] + vels[idxY] * dtFactor;
@@ -6761,14 +6832,14 @@
         }
         pos.needsUpdate = true;
 
-        // Update active VFX in simulator loop
-        updateEffects(delta);
+        // Update active VFX in simulator loop with active elapsed time
+        updateEffects(elapsed);
 
         // 3D Floating Buttons: Micro-float animation & Gesture Opacity Fade
         if (planesModel) {
           const opacityDiff = targetPlaneOpacity - currentPlaneOpacity;
           if (Math.abs(opacityDiff) > 0.005) {
-            const fadeFactor = 1.0 - Math.exp(-14.0 * delta);
+            const fadeFactor = 1.0 - Math.exp(-14.0 * decorativeDelta);
             currentPlaneOpacity += opacityDiff * fadeFactor;
             if (planesModel.userData && planesModel.userData.buttons) {
               planesModel.userData.buttons.forEach((btn) => {
@@ -6791,11 +6862,11 @@
             planesModel.visible = true;
             isPlaneInteractionActive = true;
             if (planesModel.userData && planesModel.userData.buttons) {
-              const simTime = performance.now() * 0.001;
+              const simTime = t;
               planesModel.userData.buttons.forEach((btn, idx) => {
                 // Tactile press recovery with elapsed time exponential decay
                 if (btn.userData.pressOffset > 0.0005) {
-                  btn.userData.pressOffset *= Math.exp(-12.0 * delta);
+                  btn.userData.pressOffset *= Math.exp(-12.0 * decorativeDelta);
                 } else {
                   btn.userData.pressOffset = 0;
                 }
