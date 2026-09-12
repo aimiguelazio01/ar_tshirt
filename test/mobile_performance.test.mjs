@@ -42,6 +42,15 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     assert.deepEqual(progress, [{ loadedBytes: 3, totalBytes: 3 }]);
   });
 
+  await t.test('0c. Panic music is included in the production build', () => {
+    assert.ok(fs.existsSync('assets/monster_metal.mp3'), 'Source panic music must exist');
+    assert.ok(fs.existsSync('dist/assets/monster_metal.mp3'), 'Production build must include panic music');
+    assert.ok(
+      fs.readFileSync('index.html', 'utf8').includes("new Audio('assets/monster_metal.mp3')"),
+      'Panic mode must play the supplied music file'
+    );
+  });
+
   // =========================================================================
   // 1. Elapsed-time playback equivalence at 60/30/15/10/5 FPS & suspension
   // =========================================================================

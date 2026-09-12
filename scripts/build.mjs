@@ -148,6 +148,7 @@ async function build() {
   if (fs.existsSync('assets/monster_tshirt.jpg')) fs.copyFileSync('assets/monster_tshirt.jpg', path.join(distDir, 'assets', 'monster_tshirt.jpg'));
   if (fs.existsSync('assets/MVstudio_logo_text.png')) fs.copyFileSync('assets/MVstudio_logo_text.png', path.join(distDir, 'assets', 'MVstudio_logo_text.png'));
   if (fs.existsSync('assets/monster_tshirt.mind')) fs.copyFileSync('assets/monster_tshirt.mind', path.join(distDir, 'assets', 'monster_tshirt.mind'));
+  if (fs.existsSync('assets/monster_metal.mp3')) fs.copyFileSync('assets/monster_metal.mp3', path.join(distDir, 'assets', 'monster_metal.mp3'));
   if (fs.existsSync('assets/social.png')) fs.copyFileSync('assets/social.png', path.join(distDir, 'assets', 'social.png'));
   if (fs.existsSync('assets/target_refrence.png')) fs.copyFileSync('assets/target_refrence.png', path.join(distDir, 'assets', 'target_refrence.png'));
   if (fs.existsSync('stitch')) copyDirRecursive('stitch', path.join(distDir, 'stitch'));

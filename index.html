@@ -2074,7 +2074,7 @@
     };
 
     let mindarThree, renderer, scene, camera, anchor;
-    let audioCtx, audioEnabled = true, bgAudioSource;
+    let audioCtx, audioEnabled = true, bgAudioSource, panicMusic;
     let currentFacing = 'environment';
     let modelScale = 1.20;
     let baseMarkerScale = 1.20;
@@ -4196,6 +4196,17 @@
       }
     }
 
+    function playPanicMusic() {
+      if (!audioEnabled) return;
+      try {
+        panicMusic = panicMusic || new Audio('assets/monster_metal.mp3');
+        panicMusic.currentTime = 0;
+        panicMusic.play().catch((err) => console.warn('[Panic] Metal track could not play:', err));
+      } catch (err) {
+        console.warn('[Panic] Metal track could not be initialized:', err);
+      }
+    }
+
     // ---------------------------------------------------------------
     // 3D Explosion FX using assets/textures/explosion_01.png (5x5 Sprite Sheet)
     // ---------------------------------------------------------------
@@ -5243,6 +5254,7 @@
       }
 
       playPanicAlarmSound();
+      playPanicMusic();
       showToast("⚠️ I SAID DON'T TOUCH! (Frames 25-72) 👹");
 
       // Play animation from frame 25 to 72 (smooth, no flickering)
@@ -6814,6 +6826,7 @@
     els.btnAudio.addEventListener('click', () => {
       audioEnabled = !audioEnabled;
       els.btnAudio.style.opacity = audioEnabled ? '1' : '.4';
+      if (!audioEnabled && panicMusic) panicMusic.pause();
     });
 
     // ---------------------------------------------------------------
