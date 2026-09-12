@@ -1411,13 +1411,10 @@
     const isDebugPerformance = urlParams.get('debugPerformance') === '1';
     window.DEBUG_PERFORMANCE = isDebugPerformance;
 
-    // Pose tracking powers the arm gesture animations by default. Hand tracking remains opt-in
-    // because it is the heavier mobile path; disableMediaPipe=1 still provides a full bypass.
-    const mediaPipeDisabled = urlParams.get('disableMediaPipe') === '1';
-    const legacyMediaPipeEnabled = urlParams.get('enableMediaPipe') === '1';
-    window.DISABLE_MEDIAPIPE = mediaPipeDisabled;
-    window.DISABLE_POSE = mediaPipeDisabled || urlParams.get('noPose') === '1';
-    window.DISABLE_HANDS = mediaPipeDisabled || urlParams.get('noHands') === '1' || !(legacyMediaPipeEnabled || urlParams.get('enableHands') === '1');
+    // Independent bottleneck isolation switches (MediaPipe disabled by default for maximum mobile speed)
+    window.DISABLE_MEDIAPIPE = urlParams.get('enableMediaPipe') === '1' ? false : true;
+    window.DISABLE_POSE = window.DISABLE_MEDIAPIPE || urlParams.get('noPose') === '1';
+    window.DISABLE_HANDS = window.DISABLE_MEDIAPIPE || urlParams.get('noHands') === '1';
     window.DISABLE_VFX = urlParams.get('noVfx') === '1';
 
     // Diagnostic-only controls: trackingDelegate=auto|cpu|gpu, cameraProfile=standard|economy, quality=auto|balanced|reduced
@@ -3532,7 +3529,7 @@
       }
 
       if (isTargetLocked) {
-        if (actionIdle && !actionIdle.isRunning() && (!actionReact || !actionReact.isRunning()) && (!actionLoop42 || !actionLoop42.isRunning()) && (!actionCalm || !actionCalm.isRunning()) && (!actionArmUp || !actionArmUp.isRunning()) && (!actionLeftArmDown || !actionLeftArmDown.isRunning()) && (!actionRightArmDown || !actionRightArmDown.isRunning())) {
+        if (actionIdle && !actionIdle.isRunning() && (!actionReact || !actionReact.isRunning()) && (!actionLoop42 || !actionLoop42.isRunning()) && (!actionCalm || !actionCalm.isRunning()) && (!actionArmUp || !actionArmUp.isRunning()) && (!actionArmDown || !actionArmDown.isRunning())) {
           actionIdle.reset();
           actionIdle.play();
         }
@@ -3547,9 +3544,9 @@
     // ---------------------------------------------------------------
     let animMesh, monsterModel, mixer, clock = new THREE.Clock();
     let actionIdle = null, actionReact = null, actionLoop42 = null, actionCalm = null;
-    let actionArmUp = null, actionLeftArmDown = null, actionRightArmDown = null;
+    let actionArmUp = null, actionArmDown = null;
     let simActionIdle = null, simActionReact = null, simActionLoop42 = null, simActionCalm = null;
-    let simActionArmUp = null, simActionLeftArmDown = null, simActionRightArmDown = null;
+    let simActionArmUp = null, simActionArmDown = null;
     let particleSystem, particleVelocities;
 
     function buildSceneContent(group) {
@@ -3726,19 +3723,13 @@
             actionArmUp.setLoop(THREE.LoopOnce, 1);
             actionArmUp.clampWhenFinished = true;
 
-            // 6. Left Arm Down: frames 73 to 117 (one-shot after left arm lowers)
-            const clipLeftArmDown = THREE.AnimationUtils.subclip(defaultClip, 'left_arm_down_73_117', 73, 117, 24);
-            actionLeftArmDown = mixer.clipAction(clipLeftArmDown);
-            actionLeftArmDown.setLoop(THREE.LoopOnce, 1);
-            actionLeftArmDown.clampWhenFinished = true;
+            // 6. Left Arm Down: frames 97 to 104 (one-shot)
+            const clipArmDown = THREE.AnimationUtils.subclip(defaultClip, 'arm_down_97_104', 97, 104, 24);
+            actionArmDown = mixer.clipAction(clipArmDown);
+            actionArmDown.setLoop(THREE.LoopOnce, 1);
+            actionArmDown.clampWhenFinished = true;
 
-            // 7. Right Arm Down: frames 118 to 160 (one-shot after right arm lowers)
-            const clipRightArmDown = THREE.AnimationUtils.subclip(defaultClip, 'right_arm_down_118_160', 118, 160, 24);
-            actionRightArmDown = mixer.clipAction(clipRightArmDown);
-            actionRightArmDown.setLoop(THREE.LoopOnce, 1);
-            actionRightArmDown.clampWhenFinished = true;
-
-            console.log('[AR] Animation sequence initialized: Idle [1-24] (' + clipIdle.duration.toFixed(2) + 's), React [24-42] (' + clipReact.duration.toFixed(2) + 's), Loop [42-60] (' + clipLoop42.duration.toFixed(2) + 's), Calm [61-85] (' + clipCalm.duration.toFixed(2) + 's), ArmUp [86-96] (' + clipArmUp.duration.toFixed(2) + 's), LeftArmDown [73-117] (' + clipLeftArmDown.duration.toFixed(2) + 's), RightArmDown [118-160] (' + clipRightArmDown.duration.toFixed(2) + 's)');
+            console.log('[AR] Animation sequence initialized: Idle [1-24] (' + clipIdle.duration.toFixed(2) + 's), React [24-42] (' + clipReact.duration.toFixed(2) + 's), Loop [42-60] (' + clipLoop42.duration.toFixed(2) + 's), Calm [61-85] (' + clipCalm.duration.toFixed(2) + 's), ArmUp [86-96] (' + clipArmUp.duration.toFixed(2) + 's), ArmDown [97-104] (' + clipArmDown.duration.toFixed(2) + 's)');
           }
         }
 
@@ -5007,14 +4998,12 @@
       const currLoop42 = isSim ? simActionLoop42 : actionLoop42;
       const currCalm = isSim ? simActionCalm : actionCalm;
       const currArmUp = isSim ? simActionArmUp : actionArmUp;
-      const currArmDowns = isSim ? [simActionLeftArmDown, simActionRightArmDown] : [actionLeftArmDown, actionRightArmDown];
+      const currArmDown = isSim ? simActionArmDown : actionArmDown;
       if (currIdle && currIdle.isRunning()) currIdle.fadeOut(0.12);
       if (currLoop42 && currLoop42.isRunning()) currLoop42.fadeOut(0.12);
       if (currCalm && currCalm.isRunning()) currCalm.fadeOut(0.12);
       if (currArmUp && currArmUp.isRunning()) currArmUp.fadeOut(0.12);
-      currArmDowns.forEach(action => {
-        if (action && action.isRunning()) action.fadeOut(0.12);
-      });
+      if (currArmDown && currArmDown.isRunning()) currArmDown.fadeOut(0.12);
 
       const currentMixer = isSim ? simMixer : mixer;
       activeReactionCleanup = onActionFinished(currentMixer, currReact, activeSession, () => {
@@ -5072,14 +5061,12 @@
       }
 
       const currArmUp = isSim ? simActionArmUp : actionArmUp;
-      const currArmDowns = isSim ? [simActionLeftArmDown, simActionRightArmDown] : [actionLeftArmDown, actionRightArmDown];
+      const currArmDown = isSim ? simActionArmDown : actionArmDown;
       if (currReact && currReact.isRunning()) currReact.fadeOut(0.2);
       if (currLoop42 && currLoop42.isRunning()) currLoop42.fadeOut(0.2);
       if (currCalm && currCalm.isRunning()) currCalm.fadeOut(0.2);
       if (currArmUp && currArmUp.isRunning()) currArmUp.fadeOut(0.2);
-      currArmDowns.forEach(action => {
-        if (action && action.isRunning()) action.fadeOut(0.2);
-      });
+      if (currArmDown && currArmDown.isRunning()) currArmDown.fadeOut(0.2);
 
       if (currIdle) {
         currIdle.reset();
@@ -5117,13 +5104,11 @@
       const isSim = isSimulatorMode;
       const currIdle = isSim ? simActionIdle : actionIdle;
       const currArmUp = isSim ? simActionArmUp : actionArmUp;
-      const currArmDowns = isSim ? [simActionLeftArmDown, simActionRightArmDown] : [actionLeftArmDown, actionRightArmDown];
+      const currArmDown = isSim ? simActionArmDown : actionArmDown;
 
       if (currArmUp) {
         if (currIdle && currIdle.isRunning()) currIdle.fadeOut(0.12);
-        currArmDowns.forEach(action => {
-          if (action && action.isRunning()) action.fadeOut(0.08);
-        });
+        if (currArmDown && currArmDown.isRunning()) currArmDown.fadeOut(0.08);
         currArmUp.reset();
         currArmUp.setLoop(THREE.LoopOnce, 1);
         currArmUp.clampWhenFinished = true;
@@ -5153,15 +5138,14 @@
       const isSim = isSimulatorMode;
       const currIdle = isSim ? simActionIdle : actionIdle;
       const currArmUp = isSim ? simActionArmUp : actionArmUp;
-      const currArmDown = isSim ? simActionRightArmDown : actionRightArmDown;
+      const currArmDown = isSim ? simActionArmDown : actionArmDown;
 
       if (currArmDown) {
         const currentMixer = isSim ? simMixer : mixer;
         rightArmActionCleanup = onActionFinished(currentMixer, currArmDown, activeSession, () => {
           rightArmActionCleanup = null;
           if (currArmDown) currArmDown.fadeOut(0.15);
-          const otherArmDown = isSim ? simActionLeftArmDown : actionLeftArmDown;
-          if (currIdle && !isSequenceRunning && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp && (!otherArmDown || !otherArmDown.isRunning())) {
+          if (currIdle && !isSequenceRunning && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) {
             currIdle.reset();
             currIdle.setLoop(THREE.LoopRepeat);
             currIdle.fadeIn(0.15);
@@ -5184,7 +5168,7 @@
       // TRIGGER 3D EXPLOSION EFFECT ONLY WHEN RIGHT ARM GOES DOWN
       if (triggerEffect) {
         trigger3DExplosion();
-        showToast('💥 Right Arm Down — Frames 118-160 + 3D Explosion');
+        showToast('💥 Right Arm Down — 3D Explosion Triggered!');
         console.log('[Gesture] Right Arm Down -> 3D Explosion triggered');
       }
     }
@@ -5207,13 +5191,11 @@
       const isSim = isSimulatorMode;
       const currIdle = isSim ? simActionIdle : actionIdle;
       const currArmUp = isSim ? simActionArmUp : actionArmUp;
-      const currArmDowns = isSim ? [simActionLeftArmDown, simActionRightArmDown] : [actionLeftArmDown, actionRightArmDown];
+      const currArmDown = isSim ? simActionArmDown : actionArmDown;
 
       if (currArmUp) {
         if (currIdle && currIdle.isRunning()) currIdle.fadeOut(0.12);
-        currArmDowns.forEach(action => {
-          if (action && action.isRunning()) action.fadeOut(0.08);
-        });
+        if (currArmDown && currArmDown.isRunning()) currArmDown.fadeOut(0.08);
         currArmUp.reset();
         currArmUp.setLoop(THREE.LoopOnce, 1);
         currArmUp.clampWhenFinished = true;
@@ -5243,15 +5225,14 @@
       const isSim = isSimulatorMode;
       const currIdle = isSim ? simActionIdle : actionIdle;
       const currArmUp = isSim ? simActionArmUp : actionArmUp;
-      const currArmDown = isSim ? simActionLeftArmDown : actionLeftArmDown;
+      const currArmDown = isSim ? simActionArmDown : actionArmDown;
 
       if (currArmDown) {
         const currentMixer = isSim ? simMixer : mixer;
         leftArmActionCleanup = onActionFinished(currentMixer, currArmDown, activeSession, () => {
           leftArmActionCleanup = null;
           if (currArmDown) currArmDown.fadeOut(0.15);
-          const otherArmDown = isSim ? simActionRightArmDown : actionRightArmDown;
-          if (currIdle && !isSequenceRunning && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp && (!otherArmDown || !otherArmDown.isRunning())) {
+          if (currIdle && !isSequenceRunning && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) {
             currIdle.reset();
             currIdle.setLoop(THREE.LoopRepeat);
             currIdle.fadeIn(0.15);
@@ -5274,7 +5255,7 @@
       // TRIGGER 3D ELECTRIC STORM EFFECT ONLY WHEN LEFT ARM GOES DOWN
       if (triggerEffect) {
         trigger3DStorm();
-        showToast('🌩️ Left Arm Down — Frames 73-117 + 3D Electric Storm');
+        showToast('🌩️ Left Arm Down — 3D Electric Storm Triggered!');
         console.log('[Gesture] Left Arm Down -> 3D Electric Storm triggered');
       }
     }
@@ -7036,17 +7017,12 @@
             simActionArmUp.setLoop(THREE.LoopOnce, 1);
             simActionArmUp.clampWhenFinished = true;
 
-            const clipLeftArmDown = THREE.AnimationUtils.subclip(defaultClip, 'sim_left_arm_down_73_117', 73, 117, 24);
-            simActionLeftArmDown = simMixer.clipAction(clipLeftArmDown);
-            simActionLeftArmDown.setLoop(THREE.LoopOnce, 1);
-            simActionLeftArmDown.clampWhenFinished = true;
+            const clipArmDown = THREE.AnimationUtils.subclip(defaultClip, 'sim_arm_down_97_104', 97, 104, 24);
+            simActionArmDown = simMixer.clipAction(clipArmDown);
+            simActionArmDown.setLoop(THREE.LoopOnce, 1);
+            simActionArmDown.clampWhenFinished = true;
 
-            const clipRightArmDown = THREE.AnimationUtils.subclip(defaultClip, 'sim_right_arm_down_118_160', 118, 160, 24);
-            simActionRightArmDown = simMixer.clipAction(clipRightArmDown);
-            simActionRightArmDown.setLoop(THREE.LoopOnce, 1);
-            simActionRightArmDown.clampWhenFinished = true;
-
-            console.log('[Simulator] Animation sequence initialized: Idle [1-24], React [25-72], Loop [42-60], Calm [61-85], ArmUp [86-96], LeftArmDown [73-117], RightArmDown [118-160]');
+            console.log('[Simulator] Animation sequence initialized: Idle [1-24], React [24-42], Loop [42-60], Calm [61-85], ArmUp [86-96], ArmDown [97-104]');
           }
         }
         modelGroup.add(simMonster);

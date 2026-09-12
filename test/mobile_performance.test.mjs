@@ -124,25 +124,6 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     assert.ok(!openAction.includes('cfg.isActive'), 'A plate tap must not toggle a software layer state');
   });
 
-  await t.test('0j. MediaPipe arm releases use the requested left and right animation ranges', () => {
-    const html = fs.readFileSync('index.html', 'utf8');
-    assert.match(
-      html,
-      /const clipLeftArmDown = THREE\.AnimationUtils\.subclip\(defaultClip, 'left_arm_down_73_117', 73, 117, 24\)/,
-      'Left arm release must use frames 73-117'
-    );
-    assert.match(
-      html,
-      /const clipRightArmDown = THREE\.AnimationUtils\.subclip\(defaultClip, 'right_arm_down_118_160', 118, 160, 24\)/,
-      'Right arm release must use frames 118-160'
-    );
-    assert.match(html, /const currArmDown = isSim \? simActionLeftArmDown : actionLeftArmDown;/, 'Left release must select its own clip');
-    assert.match(html, /const currArmDown = isSim \? simActionRightArmDown : actionRightArmDown;/, 'Right release must select its own clip');
-    assert.match(html, /const mediaPipeDisabled = urlParams\.get\('disableMediaPipe'\) === '1';/, 'MediaPipe must have an explicit opt-out switch');
-    assert.match(html, /window\.DISABLE_POSE = mediaPipeDisabled \|\| urlParams\.get\('noPose'\) === '1';/, 'Pose tracking must be enabled by default');
-    assert.match(html, /triggerRightArmDown\(\);[\s\S]*triggerLeftArmDown\(\);/, 'Pose processing must handle both arm-down transitions');
-  });
-
   // =========================================================================
   // 1. Elapsed-time playback equivalence at 60/30/15/10/5 FPS & suspension
   // =========================================================================
