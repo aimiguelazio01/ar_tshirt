@@ -18,49 +18,48 @@ async function initVision() {
       'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
     );
 
-    const [pose, hand] = await Promise.all([
-      PoseLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
-          delegate: 'GPU'
-        },
+    const localPoseUrl = new URL('assets/models/pose_landmarker_lite.task', self.location.href).href;
+    const remotePoseUrl = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+    const localHandUrl = new URL('assets/models/hand_landmarker.task', self.location.href).href;
+    const remoteHandUrl = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+
+    async function createPose(url, delegate) {
+      return PoseLandmarker.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: url, delegate },
         runningMode: 'IMAGE',
         numPoses: 1,
         minPoseDetectionConfidence: 0.5,
         minPosePresenceConfidence: 0.5,
         minTrackingConfidence: 0.5
-      }).catch(err => {
-        console.warn('[Worker] GPU delegate failed for pose, falling back to CPU:', err);
-        return PoseLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
-            delegate: 'CPU'
-          },
-          runningMode: 'IMAGE',
-          numPoses: 1
-        });
-      }),
-      HandLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-          delegate: 'GPU'
-        },
+      });
+    }
+
+    async function createHand(url, delegate) {
+      return HandLandmarker.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: url, delegate },
         runningMode: 'IMAGE',
         numHands: 2,
         minHandDetectionConfidence: 0.5,
         minHandPresenceConfidence: 0.5,
         minTrackingConfidence: 0.5
-      }).catch(err => {
-        console.warn('[Worker] GPU delegate failed for hands, falling back to CPU:', err);
-        return HandLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-            delegate: 'CPU'
-          },
-          runningMode: 'IMAGE',
-          numHands: 2
-        });
-      })
+      });
+    }
+
+    const [pose, hand] = await Promise.all([
+      createPose(localPoseUrl, 'GPU')
+        .catch(() => createPose(localPoseUrl, 'CPU'))
+        .catch(() => createPose(remotePoseUrl, 'GPU'))
+        .catch(err => {
+          console.warn('[Worker] GPU/local delegate failed for pose, falling back to CPU remote:', err);
+          return createPose(remotePoseUrl, 'CPU');
+        }),
+      createHand(localHandUrl, 'GPU')
+        .catch(() => createHand(localHandUrl, 'CPU'))
+        .catch(() => createHand(remoteHandUrl, 'GPU'))
+        .catch(err => {
+          console.warn('[Worker] GPU/local delegate failed for hands, falling back to CPU remote:', err);
+          return createHand(remoteHandUrl, 'CPU');
+        })
     ]);
 
     poseLandmarker = pose;
@@ -75,7 +74,7 @@ async function initVision() {
 }
 
 self.onmessage = async (e) => {
-  const { type, bitmap, timestamp, disablePose, disableHands } = e.data;
+  const { type, bitmap, timestamp, disablePose, disableHands, task } = e.data;
 
   if (type === 'init') {
     initVision();
@@ -93,9 +92,13 @@ self.onmessage = async (e) => {
     const duration = { pose: 0, hand: 0 };
     let poseResult = null;
     let handResult = null;
+    const requestedTask = task || 'both';
 
     try {
-      if (!disablePose && poseLandmarker) {
+      const shouldRunPose = (requestedTask === 'both' || requestedTask === 'pose') && !disablePose && poseLandmarker;
+      const shouldRunHand = (requestedTask === 'both' || requestedTask === 'hand') && !disableHands && handLandmarker;
+
+      if (shouldRunPose) {
         const t0 = performance.now();
         const res = poseLandmarker.detect(bitmap);
         duration.pose = performance.now() - t0;
@@ -106,7 +109,7 @@ self.onmessage = async (e) => {
         }
       }
 
-      if (!disableHands && handLandmarker) {
+      if (shouldRunHand) {
         const t0 = performance.now();
         const res = handLandmarker.detect(bitmap);
         duration.hand = performance.now() - t0;
@@ -128,6 +131,7 @@ self.onmessage = async (e) => {
     self.postMessage({
       type: 'result',
       timestamp,
+      task: requestedTask,
       pose: poseResult,
       hands: handResult,
       duration

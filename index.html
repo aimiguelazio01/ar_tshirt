@@ -1691,44 +1691,54 @@
     // ---------------------------------------------------------------
     // Camera Polyfill / Resilient Shimming
     // ---------------------------------------------------------------
+    let activeMediaStream = null;
+
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       const nativeGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
       const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
       navigator.mediaDevices.getUserMedia = async function (constraints) {
+        // Pre-emptively release any existing media stream so hardware lock is released
+        if (activeMediaStream) {
+          try {
+            activeMediaStream.getTracks().forEach(track => {
+              try { track.stop(); } catch (e) {}
+            });
+          } catch (e) {}
+          activeMediaStream = null;
+        }
+
         let c = constraints ? JSON.parse(JSON.stringify(constraints)) : { video: true, audio: false };
 
-        // On desktop PC/laptop with external or single webcam, facingMode constraint often hangs or throws OverconstrainedError
-        if (!isMobile && c && c.video && typeof c.video === 'object' && c.video.facingMode) {
-          console.log('[CameraShim] Desktop PC detected: removing facingMode constraint:', c.video.facingMode);
-          delete c.video.facingMode;
-          if (Object.keys(c.video).length === 0) {
-            c.video = true;
+        // Desktop vs Mobile constraint normalization
+        if (c && c.video && typeof c.video === 'object') {
+          if (!isMobile) {
+            // On desktop PC with external/single webcam, facingMode constraint causes OverconstrainedError or device hang
+            delete c.video.facingMode;
+            if (Object.keys(c.video).length === 0) {
+              c.video = true;
+            }
+          } else {
+            // On mobile, ensure facingMode is ideal (not exact) to avoid OverconstrainedError
+            if (typeof c.video.facingMode === 'string') {
+              c.video.facingMode = { ideal: c.video.facingMode };
+            } else if (c.video.facingMode && typeof c.video.facingMode === 'object' && c.video.facingMode.exact) {
+              c.video.facingMode = { ideal: c.video.facingMode.exact };
+            }
+
+            if (!c.video.width && !c.video.height) {
+              c.video.width = { ideal: 1280 };
+              c.video.height = { ideal: 720 };
+            }
           }
         }
 
-        // On mobile devices, optimize facingMode & resolution for fast hardware startup
-        if (isMobile && c && c.video && typeof c.video === 'object') {
-          // 1. Relax exact facingMode to ideal for broad manufacturer compatibility
-          if (c.video.facingMode && typeof c.video.facingMode === 'object' && c.video.facingMode.exact) {
-            c.video.facingMode = { ideal: c.video.facingMode.exact };
-          }
-
-          // 2. High-speed camera negotiation:
-          // Without explicit ideal resolution, Android rear cameras default to maximum sensor capability (4K/1080p),
-          // causing 3-5s camera hardware negotiation, autofocus hunting, and heavy WebAssembly buffer overhead.
-          // 1280x720 ideal lets Android camera HAL initialize the rear sensor immediately (<300ms) with fast 30fps stream.
-          if (!c.video.width && !c.video.height) {
-            c.video.width = { ideal: 1280 };
-            c.video.height = { ideal: 720 };
-          }
-        }
-
+        let stream = null;
         try {
-          return await nativeGUM(c);
+          stream = await nativeGUM(c);
         } catch (err) {
           console.warn('[CameraShim] Primary getUserMedia failed:', err, 'Constraints:', c);
-          // Auto-fallback: try relaxed constraints with preferred facing mode
+          // Fallback 1: Relaxed facing mode ideal
           if (c && c.video) {
             let facingPref = 'environment';
             if (typeof c.video === 'object' && c.video.facingMode) {
@@ -1736,18 +1746,26 @@
             }
             try {
               console.log('[CameraShim] Retrying with relaxed facing preference:', facingPref);
-              return await nativeGUM({ audio: false, video: { facingMode: { ideal: facingPref } } });
+              stream = await nativeGUM({ audio: false, video: { facingMode: { ideal: facingPref } } });
             } catch (err2) {
               console.warn('[CameraShim] Relaxed fallback failed, trying generic video:', err2);
+              // Fallback 2: Pure generic video (guaranteed standard across all webcams)
               try {
-                return await nativeGUM({ audio: false, video: true });
+                stream = await nativeGUM({ audio: false, video: true });
               } catch (err3) {
-                console.warn('[CameraShim] All getUserMedia fallbacks failed');
+                console.warn('[CameraShim] All getUserMedia fallbacks failed:', err3);
+                throw (err3.name === 'NotReadableError' || err2.name === 'NotReadableError' || err.name === 'NotReadableError')
+                  ? err
+                  : err3;
               }
             }
+          } else {
+            throw err;
           }
-          throw err;
         }
+
+        activeMediaStream = stream;
+        return stream;
       };
     }
 
@@ -2178,10 +2196,21 @@
     let isWorkerSupported = typeof Worker !== 'undefined';
     let isWorkerTrackingReady = false;
     let isWorkerProcessing = false;
+    let lastWorkerPoseTime = 0;
+    let lastWorkerHandTime = 0;
+    let lastWorkerTaskDispatched = 'pose';
+    let arResizeHandler = null;
     let offscreenCanvas = null;
     let offscreenCtx = null;
     let lastMainThreadInferenceTime = 0;
     const MAIN_THREAD_FALLBACK_INTERVAL = 200; // 5 Hz fallback
+
+    // Pre-allocated scratch math objects to eliminate GC pauses in render loops
+    const _scratchV1 = new THREE.Vector3();
+    const _scratchV2 = new THREE.Vector3();
+    const _scratchQ1 = new THREE.Quaternion();
+    const _scratchQ2 = new THREE.Quaternion();
+    const _scratchM1 = new THREE.Matrix4();
     let headBone = null, headRestRot = null, neckBone = null, neckRestRot = null;
     let simHeadBone = null, simHeadRestRot = null;
     let detectedCameras = [];
@@ -2308,7 +2337,36 @@
         try { renderer.setAnimationLoop(null); } catch (e) { }
       }
 
-      // 3. Stop MindAR camera tracking without destroying the instance
+      if (arResizeHandler) {
+        window.removeEventListener('resize', arResizeHandler);
+        window.removeEventListener('orientationchange', arResizeHandler);
+        arResizeHandler = null;
+      }
+
+      // 3. Stop MindAR camera tracking and explicitly release hardware media streams
+      if (activeMediaStream) {
+        try {
+          activeMediaStream.getTracks().forEach(track => {
+            try { track.stop(); } catch (e) {}
+          });
+        } catch (e) {}
+        activeMediaStream = null;
+      }
+
+      if (els.arContainer) {
+        const videos = els.arContainer.querySelectorAll('video');
+        videos.forEach(v => {
+          if (v.srcObject && typeof v.srcObject.getTracks === 'function') {
+            v.srcObject.getTracks().forEach(track => {
+              try { track.stop(); } catch (e) {}
+            });
+          }
+          v.srcObject = null;
+          try { v.pause(); } catch (e) {}
+          try { v.remove(); } catch (e) {}
+        });
+      }
+
       if (mindarThree) {
         try { mindarThree.stop(); } catch (e) { }
       }
@@ -2368,12 +2426,15 @@
       let desc = "Could not activate the camera stream.";
 
       const errStr = (err && (err.name || err.message || (typeof err === 'string' ? err : ''))) || '';
-      if (errStr.includes('NotAllowed') || errStr.includes('PermissionDenied')) {
+      if (!window.isSecureContext && location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+        title = "HTTPS Required for Mobile Camera";
+        desc = "Mobile browsers (Android Chrome / iOS Safari) require HTTPS to access camera. Please open https://" + location.hostname + ":8443 on your phone.";
+      } else if (errStr.includes('NotAllowed') || errStr.includes('PermissionDenied')) {
         title = "Camera Permission Denied";
         desc = "Camera access was blocked by your browser. Please click the camera/lock icon in your address bar to allow camera access, then click 'Retry Camera'.";
       } else if (errStr.includes('NotReadable') || errStr.includes('TrackStart')) {
-        title = "Camera In Use by Another App";
-        desc = "Another program (such as Zoom, Microsoft Teams, Discord, OBS, or another browser tab) is currently using your webcam. Please close it and click 'Retry Camera'.";
+        title = "Camera In Use by Another App / Tab";
+        desc = "Your webcam is currently held by another program (Zoom, Teams, Discord, OBS, or another browser tab). Please close other camera tabs/apps and click 'Retry Camera'.";
       } else if (errStr.includes('Abort') || errStr.includes('Timeout')) {
         title = "Camera Timeout / Device Busy";
         desc = "The camera took too long to respond. Ensure your webcam is firmly plugged in and that Windows Camera Privacy ('Let desktop apps access your camera') is enabled.";
@@ -2689,14 +2750,7 @@
             renderer.setClearColor(0x000000, 0);
           }
           anchor = mindarThree.addAnchor(0); // target index 0 = garment artwork
-
           buildSceneContent(anchor.group);
-
-          anchor.onTargetFound = () => {
-            performance.mark('first-marker-detected');
-            setLockState(true);
-          };
-          anchor.onTargetLost = () => setLockState(false);
         } else {
           mindarThree.shouldFaceUser = (facing === 'user');
           ({ renderer, scene, camera } = mindarThree);
@@ -2706,14 +2760,34 @@
           buildSceneContent(anchor.group);
         }
 
+        anchor.onTargetFound = () => {
+          performance.mark('first-marker-detected');
+          setLockState(true);
+        };
+        anchor.onTargetLost = () => setLockState(false);
+
         // Start rendering preview IMMEDIATELY so 3D character is visible from frame 1
         QualityPolicy.applyToRenderer(renderer, camera);
         renderer.setAnimationLoop(renderLoop);
 
         await mindarThree.start();
+        isCameraRunning = true;
         if (camera) {
           camera.near = 0.05;
           camera.updateProjectionMatrix();
+        }
+
+        // Lock quality policy right after MindAR start overrides renderer pixel ratio
+        QualityPolicy.applyToRenderer(renderer, camera);
+
+        if (!arResizeHandler) {
+          arResizeHandler = () => {
+            if (isCameraRunning && !isSimulatorMode && renderer && camera) {
+              QualityPolicy.applyToRenderer(renderer, camera);
+            }
+          };
+          window.addEventListener('resize', arResizeHandler, { passive: true });
+          window.addEventListener('orientationchange', arResizeHandler, { passive: true });
         }
 
         currentFacing = mindarThree.shouldFaceUser ? 'user' : 'environment';
@@ -5277,10 +5351,9 @@
           } else if (planesModel) {
             planesModel.updateMatrixWorld(true);
             for (const plane of interactivePlanes) {
-              const worldPos = new THREE.Vector3();
-              plane.getWorldPosition(worldPos);
-              worldPos.project(activeCam);
-              const distToPlaneNDC = Math.hypot(ndcX - worldPos.x, ndcY - worldPos.y);
+              plane.getWorldPosition(_scratchV1);
+              _scratchV1.project(activeCam);
+              const distToPlaneNDC = Math.hypot(ndcX - _scratchV1.x, ndcY - _scratchV1.y);
               if (distToPlaneNDC < 0.20) {
                 targetPlate = plane;
                 break;
@@ -5432,19 +5505,19 @@
         const now = performance.now();
         const age = now - (data.timestamp || now);
         if (window.PerformanceDiagnostics && data.duration) {
-          PerformanceDiagnostics.recordInference('pose', data.duration.pose || 0, age);
-          PerformanceDiagnostics.recordInference('hand', data.duration.hand || 0, age);
+          if (data.duration.pose) PerformanceDiagnostics.recordInference('pose', data.duration.pose, age);
+          if (data.duration.hand) PerformanceDiagnostics.recordInference('hand', data.duration.hand, age);
         }
         const activeVideo = els.arContainer ? els.arContainer.querySelector('video') : null;
         if (data.pose && activeVideo) {
           processPoseLandmarks(data.pose.landmarks[0], activeVideo);
-        } else if (hasPoseDetected && !data.pose) {
+        } else if ((data.task === 'pose' || data.task === 'both') && hasPoseDetected && !data.pose) {
           processPoseLandmarks(null, activeVideo);
         }
 
         if (data.hands && activeVideo) {
           processHandLandmarks(data.hands.landmarks, data.hands.handednesses, activeVideo);
-        } else if (!data.hands) {
+        } else if ((data.task === 'hand' || data.task === 'both') && !data.hands) {
           processHandLandmarks(null, null, activeVideo);
         }
       } else if (data.type === 'busy') {
@@ -5453,7 +5526,7 @@
     }
 
     function dispatchTrackingFrame(video) {
-      if (!video || video.paused || video.ended || video.readyState < 2 || isDocumentHidden) {
+      if (!video || video.paused || video.ended || video.readyState < 2 || isDocumentHidden || isSimulatorMode) {
         return;
       }
       if (window.DISABLE_POSE && window.DISABLE_HANDS) {
@@ -5466,32 +5539,75 @@
           return;
         }
 
+        const now = performance.now();
+        const isReduced = QualityPolicy && QualityPolicy.profile === 'reduced';
+        const poseInterval = isReduced ? 166 : 100; // 6 Hz or 10 Hz
+        const handInterval = isReduced ? 100 : 66;  // 10 Hz or 15 Hz
+
+        const canRunPose = !window.DISABLE_POSE;
+        // Hand tracking is only needed when 3D floating buttons are active & visible
+        const canRunHands = !window.DISABLE_HANDS && isTargetLocked && isPlaneInteractionActive && !arePlanesDisappeared;
+
+        const isPoseDue = canRunPose && (now - lastWorkerPoseTime >= poseInterval);
+        const isHandDue = canRunHands && (now - lastWorkerHandTime >= handInterval);
+
+        if (!isPoseDue && !isHandDue) {
+          return;
+        }
+
+        let chosenTask = 'pose';
+        if (isPoseDue && isHandDue) {
+          // Alternate tasks to prevent simultaneous heavy inference spikes
+          chosenTask = lastWorkerTaskDispatched === 'pose' ? 'hand' : 'pose';
+        } else if (isHandDue) {
+          chosenTask = 'hand';
+        } else {
+          chosenTask = 'pose';
+        }
+
         const vw = video.videoWidth;
         const vh = video.videoHeight;
         if (!vw || !vh) return;
 
-        const maxEdge = QualityPolicy && QualityPolicy.profile === 'reduced' ? 480 : 640;
+        const maxEdge = isReduced ? 480 : 640;
         const scale = Math.min(1.0, maxEdge / Math.max(vw, vh));
         const targetW = Math.round(vw * scale);
         const targetH = Math.round(vh * scale);
 
-        if (!offscreenCanvas) {
-          offscreenCanvas = document.createElement('canvas');
-          offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: false });
-        }
-        if (offscreenCanvas.width !== targetW || offscreenCanvas.height !== targetH) {
-          offscreenCanvas.width = targetW;
-          offscreenCanvas.height = targetH;
-        }
-
-        offscreenCtx.drawImage(video, 0, 0, targetW, targetH);
         isWorkerProcessing = true;
+        lastWorkerTaskDispatched = chosenTask;
+        if (chosenTask === 'pose') lastWorkerPoseTime = now;
+        if (chosenTask === 'hand') lastWorkerHandTime = now;
         const sendTimestamp = performance.now();
 
-        createImageBitmap(offscreenCanvas).then(bitmap => {
+        // Hardware-accelerated direct bitmap capture from video (bypasses main-thread canvas stall)
+        let bitmapPromise = null;
+        if ('createImageBitmap' in window) {
+          try {
+            bitmapPromise = createImageBitmap(video, { resizeWidth: targetW, resizeHeight: targetH, resizeQuality: 'low' });
+          } catch (e) {
+            bitmapPromise = null;
+          }
+        }
+
+        if (!bitmapPromise) {
+          if (!offscreenCanvas) {
+            offscreenCanvas = document.createElement('canvas');
+            offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: false });
+          }
+          if (offscreenCanvas.width !== targetW || offscreenCanvas.height !== targetH) {
+            offscreenCanvas.width = targetW;
+            offscreenCanvas.height = targetH;
+          }
+          offscreenCtx.drawImage(video, 0, 0, targetW, targetH);
+          bitmapPromise = createImageBitmap(offscreenCanvas);
+        }
+
+        bitmapPromise.then(bitmap => {
           trackingWorker.postMessage({
             type: 'detect',
             bitmap,
+            task: chosenTask,
             timestamp: sendTimestamp,
             disablePose: window.DISABLE_POSE,
             disableHands: window.DISABLE_HANDS
@@ -5571,11 +5687,9 @@
       // Prevent character from jumping through or behind the camera
       const arRoot = monsterModel ? monsterModel.getObjectByName('C_root') : null;
       if (arRoot && camera && monsterModel) {
-        const modelWorldPos = new THREE.Vector3();
-        monsterModel.getWorldPosition(modelWorldPos);
-        const camWorldPos = new THREE.Vector3();
-        camera.getWorldPosition(camWorldPos);
-        const distToCam = modelWorldPos.distanceTo(camWorldPos);
+        monsterModel.getWorldPosition(_scratchV1);
+        camera.getWorldPosition(_scratchV2);
+        const distToCam = _scratchV1.distanceTo(_scratchV2);
         const currScale = modelScale || 1.0;
         // Leave safe buffer so monster fills viewport without penetrating near plane
         const safeMaxDist = Math.max(0.25, distToCam - 0.40);
@@ -5590,16 +5704,13 @@
 
       // Always face and align with the camera so that it remains fully visible
       if (isTargetLocked && monsterModel && camera && anchor && anchor.group && anchor.group.visible) {
-        const camWorldQuat = new THREE.Quaternion();
-        camera.getWorldQuaternion(camWorldQuat);
-        const targetWorldQuat = camWorldQuat.clone();
+        camera.getWorldQuaternion(_scratchQ1);
 
         if (monsterModel.parent) {
-          const invParentQuat = new THREE.Quaternion();
-          monsterModel.parent.getWorldQuaternion(invParentQuat).invert();
-          monsterModel.quaternion.copy(invParentQuat).multiply(targetWorldQuat);
+          monsterModel.parent.getWorldQuaternion(_scratchQ2).invert();
+          monsterModel.quaternion.copy(_scratchQ2).multiply(_scratchQ1);
         } else {
-          monsterModel.quaternion.copy(targetWorldQuat);
+          monsterModel.quaternion.copy(_scratchQ1);
         }
 
         // Subtle idle breathing motion along Z
@@ -5610,10 +5721,9 @@
         }
       } else if (animMesh && camera && anchor && anchor.group && anchor.group.visible) {
         anchor.group.updateMatrixWorld(true);
-        const camWorldPos = new THREE.Vector3();
-        camera.getWorldPosition(camWorldPos);
-        const invParent = new THREE.Matrix4().copy(anchor.group.matrixWorld).invert();
-        const localCamPos = camWorldPos.applyMatrix4(invParent);
+        camera.getWorldPosition(_scratchV1);
+        _scratchM1.copy(anchor.group.matrixWorld).invert();
+        const localCamPos = _scratchV1.applyMatrix4(_scratchM1);
         const dx = localCamPos.x - animMesh.position.x;
         const dz = localCamPos.z - animMesh.position.z;
         animMesh.rotation.y = Math.atan2(dx, dz);
@@ -5621,11 +5731,14 @@
 
       if (particleSystem) {
         const pos = particleSystem.geometry.attributes.position;
-        for (let i = 0; i < pos.count; i++) {
-          let y = pos.getY(i) + particleVelocities[i * 3 + 1];
+        const arr = pos.array;
+        const count = pos.count;
+        for (let i = 0; i < count; i++) {
+          const idxY = i * 3 + 1;
+          let y = arr[idxY] + particleVelocities[idxY];
           if (y > 0.6) y = -0.2;
-          pos.setY(i, y);
-          pos.setX(i, pos.getX(i) + particleVelocities[i * 3 + 0]);
+          arr[idxY] = y;
+          arr[i * 3] += particleVelocities[i * 3];
         }
         pos.needsUpdate = true;
       }
@@ -5639,7 +5752,22 @@
       // 3D Floating Buttons: Micro-float animation & Gesture Opacity Fade
       if (planesModel) {
         const FADE_RATE = 0.20;
-        currentPlaneOpacity += (targetPlaneOpacity - currentPlaneOpacity) * FADE_RATE;
+        const opacityDiff = targetPlaneOpacity - currentPlaneOpacity;
+        if (Math.abs(opacityDiff) > 0.005) {
+          currentPlaneOpacity += opacityDiff * FADE_RATE;
+          if (planesModel.userData && planesModel.userData.buttons) {
+            planesModel.userData.buttons.forEach((btn) => {
+              if (btn.userData.materials) {
+                btn.userData.materials.forEach(mat => {
+                  mat.opacity = currentPlaneOpacity;
+                  mat.transparent = true;
+                });
+              }
+            });
+          }
+        } else {
+          currentPlaneOpacity = targetPlaneOpacity;
+        }
 
         if (currentPlaneOpacity < 0.03 || !isTargetLocked) {
           planesModel.visible = false;
@@ -5648,17 +5776,9 @@
           planesModel.visible = true;
           isPlaneInteractionActive = true;
 
-          // Update materials opacity
+          // Tactile press recovery & float
           if (planesModel.userData && planesModel.userData.buttons) {
             planesModel.userData.buttons.forEach((btn, idx) => {
-              if (btn.userData.materials) {
-                btn.userData.materials.forEach(mat => {
-                  mat.opacity = currentPlaneOpacity;
-                  mat.transparent = true;
-                });
-              }
-
-              // Tactile press recovery
               if (btn.userData.pressOffset > 0.001) {
                 btn.userData.pressOffset *= 0.82;
               } else {
@@ -5971,11 +6091,9 @@
         // Prevent character from jumping through or behind the camera in simulator
         const simRoot = simMonster ? simMonster.getObjectByName('C_root') : null;
         if (simRoot && simCamera && simMonster) {
-          const modelWorldPos = new THREE.Vector3();
-          simMonster.getWorldPosition(modelWorldPos);
-          const camWorldPos = new THREE.Vector3();
-          simCamera.getWorldPosition(camWorldPos);
-          const distToCam = modelWorldPos.distanceTo(camWorldPos);
+          simMonster.getWorldPosition(_scratchV1);
+          simCamera.getWorldPosition(_scratchV2);
+          const distToCam = _scratchV1.distanceTo(_scratchV2);
           const currScale = (simMonster.scale && simMonster.scale.y) || 1.0;
           const safeMaxDist = Math.max(0.3, distToCam - 0.50);
           const maxAllowedBoneZ = safeMaxDist / Math.max(0.01, currScale);
@@ -5989,13 +6107,12 @@
 
         // Always face and align with the camera
         if (simMonster && simCamera) {
-          const targetWorldQuat = simCamera.quaternion.clone();
+          _scratchQ1.copy(simCamera.quaternion);
           if (simMonster.parent) {
-            const invParentQuat = new THREE.Quaternion();
-            simMonster.parent.getWorldQuaternion(invParentQuat).invert();
-            simMonster.quaternion.copy(invParentQuat).multiply(targetWorldQuat);
+            simMonster.parent.getWorldQuaternion(_scratchQ2).invert();
+            simMonster.quaternion.copy(_scratchQ2).multiply(_scratchQ1);
           } else {
-            simMonster.quaternion.copy(targetWorldQuat);
+            simMonster.quaternion.copy(_scratchQ1);
           }
         }
 
@@ -6004,17 +6121,36 @@
         }
 
         const pos = pGeo.attributes.position;
-        for (let i = 0; i < pos.count; i++) {
-          let y = pos.getY(i) + vels[i * 3 + 1];
+        const arr = pos.array;
+        const count = pos.count;
+        for (let i = 0; i < count; i++) {
+          const idxY = i * 3 + 1;
+          let y = arr[idxY] + vels[idxY];
           if (y > 1.5) y = -1.5;
-          pos.setY(i, y);
+          arr[idxY] = y;
         }
         pos.needsUpdate = true;
 
         // 3D Floating Buttons: Micro-float animation & Gesture Opacity Fade
         if (planesModel) {
           const FADE_RATE = 0.20;
-          currentPlaneOpacity += (targetPlaneOpacity - currentPlaneOpacity) * FADE_RATE;
+          const opacityDiff = targetPlaneOpacity - currentPlaneOpacity;
+          if (Math.abs(opacityDiff) > 0.005) {
+            currentPlaneOpacity += opacityDiff * FADE_RATE;
+            if (planesModel.userData && planesModel.userData.buttons) {
+              planesModel.userData.buttons.forEach((btn) => {
+                if (btn.userData.materials) {
+                  btn.userData.materials.forEach(mat => {
+                    mat.opacity = currentPlaneOpacity;
+                    mat.transparent = true;
+                  });
+                }
+              });
+            }
+          } else {
+            currentPlaneOpacity = targetPlaneOpacity;
+          }
+
           if (currentPlaneOpacity < 0.03) {
             planesModel.visible = false;
             isPlaneInteractionActive = false;
@@ -6024,13 +6160,6 @@
             if (planesModel.userData && planesModel.userData.buttons) {
               const simTime = performance.now() * 0.001;
               planesModel.userData.buttons.forEach((btn, idx) => {
-                if (btn.userData.materials) {
-                  btn.userData.materials.forEach(mat => {
-                    mat.opacity = currentPlaneOpacity;
-                    mat.transparent = true;
-                  });
-                }
-
                 // Tactile press recovery
                 if (btn.userData.pressOffset > 0.001) {
                   btn.userData.pressOffset *= 0.82;
@@ -6044,11 +6173,6 @@
               });
             }
           }
-        }
-
-        const simVideo = els.arContainer ? els.arContainer.querySelector('video') : null;
-        if (simVideo) {
-          dispatchTrackingFrame(simVideo);
         }
 
         simRenderer.render(simScene, simCamera);
