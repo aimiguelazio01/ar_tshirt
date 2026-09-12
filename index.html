@@ -1048,14 +1048,19 @@
             </button>
           </div>
 
-          <!-- Center: Panic button -->
-          <button
-            class="justify-self-center px-2 sm:px-3.5 h-9 sm:h-10 md:h-11 rounded-full bg-red-600/95 hover:bg-red-500 active:scale-95 flex items-center justify-center gap-1 text-white font-bold text-[10px] sm:text-xs tracking-wider shadow-[0_0_20px_rgba(239,68,68,0.55)] border border-red-400/40 transition-all cursor-pointer btn-panic-pulse whitespace-nowrap"
-            id="btn-panic" title="DON'T TOUCH!">
-            <span class="material-symbols-outlined text-[15px] sm:text-[17px]">warning</span>
-            <span class="hidden sm:inline">DON'T TOUCH</span>
-            <span class="inline sm:hidden">PANIC</span>
-          </button>
+          <!-- Center: Panic and software plate controls -->
+          <div class="justify-self-center flex items-center gap-1.5 sm:gap-2 pointer-events-auto">
+            <button
+              class="px-2 sm:px-3.5 h-9 sm:h-10 md:h-11 rounded-full bg-red-600/95 hover:bg-red-500 active:scale-95 flex items-center justify-center gap-1 text-white font-bold text-[10px] sm:text-xs tracking-wider shadow-[0_0_20px_rgba(239,68,68,0.55)] border border-red-400/40 transition-all cursor-pointer btn-panic-pulse whitespace-nowrap"
+              id="btn-panic" title="DON'T TOUCH!">
+              <span class="material-symbols-outlined text-[15px] sm:text-[17px]">warning</span>
+              <span class="hidden sm:inline">DON'T TOUCH</span>
+              <span class="inline sm:hidden">PANIC</span>
+            </button>
+            <button class="ui-hud-orb flex-shrink-0" id="btn-toggle-plates" title="Hide Software Plates" aria-label="Hide Software Plates" aria-pressed="true">
+              <span class="material-symbols-outlined text-[18px] sm:text-[20px]">layers</span>
+            </button>
+          </div>
 
           <!-- Right side: Simulator Mode Switch -->
           <div class="flex items-center justify-self-end pointer-events-auto">
@@ -2049,6 +2054,7 @@
       lensLabel: document.getElementById('lens-label'),
       btnClose: document.getElementById('btn-close'),
       btnAudio: document.getElementById('btn-audio'),
+      btnTogglePlates: document.getElementById('btn-toggle-plates'),
       toast: document.getElementById('toast'),
       arContainer: document.getElementById('ar-container'),
       btnSizeDown: document.getElementById('btn-size-down'),
@@ -2482,6 +2488,7 @@
 
     // MediaPipe Pose Gesture State (Elapsed Time Debounce: >= 70ms)
     let arePlanesDisappeared = false;
+    let arePlanesManuallyHidden = false;
     let targetPlaneOpacity = 0.88;
     let currentPlaneOpacity = 0.88;
     let rightArmUpStartTime = 0;
@@ -2491,6 +2498,35 @@
     let handRaisedStartTime = 0;
     let handLoweredStartTime = 0;
     const GESTURE_DEBOUNCE_MS = 70;
+
+    function areSoftwarePlatesVisible() {
+      return !arePlanesDisappeared && !arePlanesManuallyHidden;
+    }
+
+    function updateSoftwarePlatesToggleButton() {
+      const btn = els.btnTogglePlates;
+      if (!btn) return;
+      const isEnabled = !arePlanesManuallyHidden;
+      const label = isEnabled ? 'Hide Software Plates' : 'Show Software Plates';
+      btn.title = label;
+      btn.setAttribute('aria-label', label);
+      btn.setAttribute('aria-pressed', String(isEnabled));
+      btn.classList.toggle('opacity-40', !isEnabled);
+      const icon = btn.querySelector('.material-symbols-outlined');
+      if (icon) icon.textContent = isEnabled ? 'layers' : 'layers_clear';
+    }
+
+    function setSoftwarePlatesEnabled(enabled) {
+      arePlanesManuallyHidden = !enabled;
+      targetPlaneOpacity = areSoftwarePlatesVisible() ? 0.88 : 0;
+      if (!enabled) {
+        isPlaneInteractionActive = false;
+        resetAllPlanes();
+        clearActivePlane();
+      }
+      updateSoftwarePlatesToggleButton();
+      showToast(enabled ? 'Software Plates Enabled' : 'Software Plates Disabled');
+    }
 
     // Web Worker gesture tracking state
     let currentWorkerId = 0;
@@ -3451,10 +3487,10 @@
       }
 
       if (planesModel) {
-        planesModel.visible = isTargetLocked && !arePlanesDisappeared;
+        planesModel.visible = isTargetLocked && areSoftwarePlatesVisible();
       }
 
-      isPlaneInteractionActive = isTargetLocked && !arePlanesDisappeared;
+      isPlaneInteractionActive = isTargetLocked && areSoftwarePlatesVisible();
 
       if (!isPlaneInteractionActive) {
         resetAllPlanes();
@@ -3614,7 +3650,7 @@
           planesModel.position.set(0, 0, 0);
           planesModel.rotation.set(0, 0, 0);
           planesModel.scale.set(1, 1, 1);
-          planesModel.visible = isTargetLocked && !arePlanesDisappeared;
+          planesModel.visible = isTargetLocked && areSoftwarePlatesVisible();
           monsterModel.add(planesModel);
         }
 
@@ -5270,17 +5306,17 @@
         planesModel.position.set(0, 0, 0);
         planesModel.rotation.set(0, 0, 0);
         planesModel.scale.set(1, 1, 1);
-        planesModel.visible = isTargetLocked && !arePlanesDisappeared;
+        planesModel.visible = isTargetLocked && areSoftwarePlatesVisible();
         monsterModel.add(planesModel);
       } else {
         if (modelScale) planesModel.scale.set(modelScale, modelScale, modelScale);
         if (monsterGarmentPos) planesModel.position.copy(monsterGarmentPos);
         planesModel.rotation.set(0, 0, 0);
-        planesModel.visible = isTargetLocked && !arePlanesDisappeared;
+        planesModel.visible = isTargetLocked && areSoftwarePlatesVisible();
         group.add(planesModel);
       }
-      isPlaneInteractionActive = isTargetLocked && !arePlanesDisappeared;
-      console.log('[3D Buttons] Attached 4 procedural 3D software plates to AR scene');
+      isPlaneInteractionActive = isTargetLocked && areSoftwarePlatesVisible();
+      console.log('[3D Buttons] Attached 6 procedural 3D software plates to AR scene');
     }
 
     // ---------------------------------------------------------------
@@ -5604,7 +5640,7 @@
       // Raycast index finger against interactive planes when visible
       const indexTip = landmarks[19] || landmarks[20] || landmarks[15] || landmarks[16];
       const activeCam = isSimulatorMode ? simCamera : camera;
-      if (indexTip && !arePlanesDisappeared && isPlaneInteractionActive && activeCam && interactivePlanes.length > 0) {
+      if (indexTip && areSoftwarePlatesVisible() && isPlaneInteractionActive && activeCam && interactivePlanes.length > 0) {
         const { ndcX, ndcY } = handToNDC(indexTip, video, els.arContainer);
         pointer.set(ndcX, ndcY);
         if (planesModel) planesModel.updateMatrixWorld(true);
@@ -5634,9 +5670,9 @@
         handRaisedStartTime = 0;
         if ((now - handLoweredStartTime) >= GESTURE_DEBOUNCE_MS && arePlanesDisappeared) {
           arePlanesDisappeared = false;
-          targetPlaneOpacity = 0.88;
-          showToast('👇 Arms Down — Planes Visible ✨');
-          console.log('[PoseTracking] Arms down -> showing planes');
+          targetPlaneOpacity = areSoftwarePlatesVisible() ? 0.88 : 0;
+          showToast(areSoftwarePlatesVisible() ? '👇 Arms Down — Planes Visible ✨' : '👇 Arms Down — Plates Disabled');
+          console.log('[PoseTracking] Arms down -> updating plate visibility');
           updateGestureHUD(null, false);
         }
       }
@@ -6436,7 +6472,7 @@
         const handInterval = Math.round(1000 / (policy.handCeilingHz || 15));
 
         const canRunPose = !window.DISABLE_POSE;
-        const canRunHands = !window.DISABLE_HANDS && isTargetLocked && isPlaneInteractionActive && !arePlanesDisappeared;
+        const canRunHands = !window.DISABLE_HANDS && isTargetLocked && isPlaneInteractionActive && areSoftwarePlatesVisible();
 
         const isPoseDue = canRunPose && (now - lastWorkerPoseTime >= poseInterval);
         const isHandDue = canRunHands && (now - lastWorkerHandTime >= handInterval);
@@ -6557,7 +6593,7 @@
       }
 
       const canRunPose = !window.DISABLE_POSE && typeof updatePoseTracking === 'function' && poseLandmarker;
-      const canRunHands = !window.DISABLE_HANDS && typeof updateHandTracking === 'function' && handLandmarker && isTargetLocked && isPlaneInteractionActive && !arePlanesDisappeared;
+      const canRunHands = !window.DISABLE_HANDS && typeof updateHandTracking === 'function' && handLandmarker && isTargetLocked && isPlaneInteractionActive && areSoftwarePlatesVisible();
 
       const isPoseDue = canRunPose && (now - lastFallbackPoseTime >= MAIN_THREAD_FALLBACK_INTERVAL);
       const isHandDue = canRunHands && (now - lastFallbackHandTime >= MAIN_THREAD_FALLBACK_INTERVAL);
@@ -6812,8 +6848,8 @@
       els.reticleHint.classList.add('hide');
 
       arePlanesDisappeared = false;
-      targetPlaneOpacity = 0.88;
-      currentPlaneOpacity = 0.88;
+      targetPlaneOpacity = areSoftwarePlatesVisible() ? 0.88 : 0;
+      currentPlaneOpacity = targetPlaneOpacity;
 
       // Set up Three.js standalone scene
       simScene = new THREE.Scene();
@@ -6951,9 +6987,9 @@
           planesModel.position.set(0, 0, 0);
           planesModel.rotation.set(0, 0, 0);
           planesModel.scale.set(1, 1, 1);
-          planesModel.visible = !arePlanesDisappeared;
+          planesModel.visible = areSoftwarePlatesVisible();
           simMonster.add(planesModel);
-          isPlaneInteractionActive = !arePlanesDisappeared;
+          isPlaneInteractionActive = areSoftwarePlatesVisible();
           console.log('[3D Buttons] Attached procedural 3D software plates directly to simMonster');
         }
 
@@ -7291,7 +7327,8 @@
     function handleSceneTap(clientX, clientY) {
       const currentCam = isSimulatorMode ? simCamera : camera;
       if (!currentCam) return false;
-      if (!isSimulatorMode && (!isTargetLocked || arePlanesDisappeared)) return false;
+      if (!areSoftwarePlatesVisible()) return false;
+      if (!isSimulatorMode && !isTargetLocked) return false;
 
       const rect = els.arContainer ? els.arContainer.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
       const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
@@ -7565,6 +7602,14 @@
           els.unsupported.classList.add('hidden');
           startSimulatorMode();
         });
+      }
+
+      if (els.btnTogglePlates) {
+        els.btnTogglePlates.addEventListener('click', (e) => {
+          e.stopPropagation();
+          setSoftwarePlatesEnabled(arePlanesManuallyHidden);
+        });
+        updateSoftwarePlatesToggleButton();
       }
 
       // Wire copy link button on unsupported screen

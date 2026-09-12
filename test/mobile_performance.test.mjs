@@ -93,6 +93,14 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     assert.match(html, /const isAttachedToCharacter = planesModel\.parent === monsterModel \|\| planesModel\.parent === simMonster;/, 'Attached plate layout must remain local while scaling');
   });
 
+  await t.test('0h. Software plates have a manual enable and disable control', () => {
+    const html = fs.readFileSync('index.html', 'utf8');
+    assert.ok(html.includes('id="btn-toggle-plates"'), 'Plate toggle button must be present beside Panic');
+    assert.match(html, /let arePlanesManuallyHidden = false;/, 'Manual plate visibility state must be tracked separately from gestures');
+    assert.match(html, /function setSoftwarePlatesEnabled\(enabled\)/, 'Manual plate visibility setter must be present');
+    assert.match(html, /targetPlaneOpacity = areSoftwarePlatesVisible\(\) \? 0\.88 : 0;/, 'Manual toggle must animate plate visibility');
+  });
+
   // =========================================================================
   // 1. Elapsed-time playback equivalence at 60/30/15/10/5 FPS & suspension
   // =========================================================================
