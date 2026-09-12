@@ -78,6 +78,13 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     assert.ok(!html.toLowerCase().includes('monster graphic tee'), 'Old product label must be removed');
   });
 
+  await t.test('0f. Character and software plates use matte materials', () => {
+    const html = fs.readFileSync('index.html', 'utf8');
+    assert.match(html, /function applyMatteMaterial\(material\)/, 'Matte material helper must be present');
+    assert.ok((html.match(/applyMatteMaterial\(child\.material\)/g) || []).length >= 2, 'AR and simulator character materials must be matte');
+    assert.match(html, /roughness: 1,\s*\n\s*metalness: 0,/, 'Floating plate materials must disable glossy reflections');
+  });
+
   // =========================================================================
   // 1. Elapsed-time playback equivalence at 60/30/15/10/5 FPS & suspension
   // =========================================================================

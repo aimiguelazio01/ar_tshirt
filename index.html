@@ -3528,6 +3528,25 @@
       attachPlanesModel(group);
     }
 
+    // Keep the character and floating software plates matte so studio lighting
+    // does not create distracting metallic or clear-coat highlights.
+    function applyMatteMaterial(material) {
+      if (!material) return;
+      if (Array.isArray(material)) {
+        material.forEach(applyMatteMaterial);
+        return;
+      }
+      if ('roughness' in material) material.roughness = 1;
+      if ('metalness' in material) material.metalness = 0;
+      if ('clearcoat' in material) material.clearcoat = 0;
+      if ('clearcoatRoughness' in material) material.clearcoatRoughness = 1;
+      if ('sheen' in material) material.sheen = 0;
+      if ('transmission' in material) material.transmission = 0;
+      if ('iridescence' in material) material.iridescence = 0;
+      if ('specularIntensity' in material) material.specularIntensity = 0;
+      material.needsUpdate = true;
+    }
+
     function attachMonsterModel(group) {
       const instantiateModel = (gltf) => {
         // Clone scene using SkeletonUtils for full skinned mesh/skeleton integrity
@@ -3540,6 +3559,7 @@
             child.castShadow = false;
             child.receiveShadow = false;
             if (child.material) {
+              applyMatteMaterial(child.material);
               child.material.side = THREE.FrontSide;
               child.material.transparent = false;
               child.material.depthWrite = true;
@@ -4056,8 +4076,8 @@
           color: 0x0a0f16,
           emissive: new THREE.Color(cfg.emissive),
           emissiveIntensity: 0.65,
-          roughness: 0.22,
-          metalness: 0.82,
+          roughness: 1,
+          metalness: 0,
           transparent: true,
           opacity: currentPlaneOpacity,
           depthWrite: false
@@ -4094,8 +4114,8 @@
           emissiveMap: canvasTex,
           emissive: new THREE.Color(0xffffff),
           emissiveIntensity: 0.75,
-          roughness: 0.22,
-          metalness: 0.08,
+          roughness: 1,
+          metalness: 0,
           transparent: true,
           opacity: currentPlaneOpacity,
           depthWrite: false
@@ -6861,6 +6881,7 @@
           if (child.isMesh) {
             child.frustumCulled = false;
             if (child.material) {
+              applyMatteMaterial(child.material);
               child.material.side = THREE.FrontSide;
               child.material.transparent = false;
               child.material.depthWrite = true;
