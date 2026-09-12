@@ -1880,13 +1880,19 @@
       };
     }
 
+    const ASSET_CFG = (typeof window !== 'undefined' && window.__ASSET_CONFIG__) || {};
+
     const CONFIG = {
       // Target AR Marker compiled file (generated from assets/monster_tshirt.jpg)
-      targetUrl: "assets/versioned/monster_tshirt.mind",
+      targetUrl: ASSET_CFG.targetMarker || "assets/versioned/monster_tshirt.mind",
 
       // 3D Character model: Primary is lossless EXT_meshopt compressed (1.64 MB, 50% lighter), with fallback
-      modelUrl: "assets/versioned/monster_anime_bs_v02.b016e6cc.opt.glb",
+      modelUrl: ASSET_CFG.monsterModel || "assets/versioned/monster_anime_bs_v02.b016e6cc.opt.glb",
       fallbackModelUrl: "assets/3d/monster/monster_anime_bs_v02.glb",
+      explosionTextureUrl: ASSET_CFG.explosionTexture || "assets/versioned/explosion_01.png",
+      stormTextureUrl: ASSET_CFG.stormTexture || "assets/versioned/storm_01.png",
+      poseModelUrl: ASSET_CFG.poseModel || "assets/models/pose_landmarker_lite.task",
+      handModelUrl: ASSET_CFG.handModel || "assets/models/hand_landmarker.task",
 
       // §5.5 — in production, fetch this from your CMS/asset server per campaign/garment ID
       // read from the NFC URL, e.g. tapwear.app/ar?drop=001
@@ -3937,7 +3943,7 @@
       if (!explosionTexturePromise) {
         explosionTexturePromise = new Promise((resolve, reject) => {
           const loader = new (window.THREE ? window.THREE.TextureLoader : THREE.TextureLoader)();
-          loader.load('assets/versioned/explosion_01.png', (tex) => {
+          loader.load(CONFIG.explosionTextureUrl || 'assets/versioned/explosion_01.png', (tex) => {
             tex.generateMipmaps = false;
             tex.minFilter = THREE.LinearFilter;
             tex.magFilter = THREE.LinearFilter;
@@ -4260,7 +4266,7 @@
       if (!stormTexturePromise) {
         stormTexturePromise = new Promise((resolve, reject) => {
           const loader = new (window.THREE ? window.THREE.TextureLoader : THREE.TextureLoader)();
-          loader.load('assets/versioned/storm_01.png', (tex) => {
+          loader.load(CONFIG.stormTextureUrl || 'assets/versioned/storm_01.png', (tex) => {
             tex.generateMipmaps = false;
             tex.minFilter = THREE.LinearFilter;
             tex.magFilter = THREE.LinearFilter;
@@ -5037,7 +5043,7 @@
         const PoseLandmarkerClass = mod.PoseLandmarker || window.PoseLandmarker;
 
         const modelCandidates = [
-          "assets/models/pose_landmarker_lite.task",
+          CONFIG.poseModelUrl || "assets/models/pose_landmarker_lite.task",
           "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
         ];
 
@@ -5523,7 +5529,7 @@
         const HandLandmarkerClass = mod.HandLandmarker || window.HandLandmarker;
 
         const handModelCandidates = [
-          "assets/models/hand_landmarker.task",
+          CONFIG.handModelUrl || "assets/models/hand_landmarker.task",
           "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
         ];
 
@@ -5898,8 +5904,8 @@
           workerId,
           assets: {
             wasmUrl: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm',
-            poseModelUrl: new URL('assets/models/pose_landmarker_lite.task', location.href).href,
-            handModelUrl: new URL('assets/models/hand_landmarker.task', location.href).href
+            poseModelUrl: new URL(CONFIG.poseModelUrl || 'assets/models/pose_landmarker_lite.task', location.href).href,
+            handModelUrl: new URL(CONFIG.handModelUrl || 'assets/models/hand_landmarker.task', location.href).href
           },
           enabledTasks: ['pose', 'hand']
         });

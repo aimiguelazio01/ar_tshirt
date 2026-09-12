@@ -6,11 +6,14 @@
   "devDependencies": {
     "@gltf-transform/core": "^4.1.0",
     "@gltf-transform/extensions": "^4.1.0",
-    "meshoptimizer": "^0.21.0"
+    "meshoptimizer": "^0.21.0",
+    "tailwindcss": "^3.4.17"
   },
   "scripts": {
-    "compress:monster": "node scripts/compress_monster.mjs",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/**/*.test.mjs",
+    "verify": "node scripts/verify_mobile_performance.mjs",
+    "compress:monster": "node scripts/compress_monster.mjs"
   },
   "repository": {
     "type": "git",

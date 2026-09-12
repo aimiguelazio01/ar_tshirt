@@ -1,13 +1,57 @@
 {
-  "version": "1.0.0",
-  "timestamp": "2026-09-12T01:26:13.279Z",
+  "build": "feeaa56",
+  "timestamp": "2026-09-12T11:36:43.186Z",
   "assets": {
-    "monsterModel": "assets/versioned/monster_anime_bs_v02.b016e6cc.opt.glb",
-    "monsterModelAlias": "assets/versioned/monster_anime_bs_v02.opt.glb",
-    "targetMarker": "assets/monster_tshirt.mind",
-    "explosionTexture": "assets/textures/explosion_01.png",
-    "stormTexture": "assets/textures/storm_01.png",
-    "poseModel": "assets/models/pose_landmarker_lite.task",
-    "handModel": "assets/models/hand_landmarker.task"
-  }
+    "css": "assets/versioned/app.27b82acd748f12e7.css",
+    "monsterModel": "assets/versioned/monster_anime_bs_v02.14aafd7be127b129.opt.glb",
+    "targetMarker": "assets/versioned/monster_tshirt.5b232297ec697e77.mind",
+    "explosionTexture": "assets/versioned/explosion_01.e12b04b08b5f3bca.png",
+    "stormTexture": "assets/versioned/storm_01.8b30bf6f217ec3cb.png",
+    "poseModel": "assets/versioned/pose_landmarker_lite.59929e1d1ee95287.task",
+    "handModel": "assets/versioned/hand_landmarker.fbc2a30080c3c557.task"
+  },
+  "inventory": [
+    {
+      "name": "CSS Bundle",
+      "path": "assets/versioned/app.27b82acd748f12e7.css",
+      "size": 36646,
+      "hash": "27b82acd748f12e7"
+    },
+    {
+      "name": "Monster GLB",
+      "path": "assets/versioned/monster_anime_bs_v02.14aafd7be127b129.opt.glb",
+      "size": 1721096,
+      "hash": "14aafd7be127b129"
+    },
+    {
+      "name": "Target Mind",
+      "path": "assets/versioned/monster_tshirt.5b232297ec697e77.mind",
+      "size": 1005747,
+      "hash": "5b232297ec697e77"
+    },
+    {
+      "name": "Explosion Texture",
+      "path": "assets/versioned/explosion_01.e12b04b08b5f3bca.png",
+      "size": 2345635,
+      "hash": "e12b04b08b5f3bca"
+    },
+    {
+      "name": "Storm Texture",
+      "path": "assets/versioned/storm_01.8b30bf6f217ec3cb.png",
+      "size": 1909643,
+      "hash": "8b30bf6f217ec3cb"
+    },
+    {
+      "name": "Pose Landmarker",
+      "path": "assets/versioned/pose_landmarker_lite.59929e1d1ee95287.task",
+      "size": 5777746,
+      "hash": "59929e1d1ee95287"
+    },
+    {
+      "name": "Hand Landmarker",
+      "path": "assets/versioned/hand_landmarker.fbc2a30080c3c557.task",
+      "size": 7819105,
+      "hash": "fbc2a30080c3c557"
+    }
+  ]
 }
