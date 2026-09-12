@@ -103,10 +103,19 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
 
   await t.test('0i. Each visible software plate opens its matching window when tapped', () => {
     const html = fs.readFileSync('index.html', 'utf8');
-    assert.match(html, /side: THREE\.DoubleSide/, 'Plate faces must accept taps from either side while floating');
-    assert.match(html, /function findNearestInteractivePlane\(ndcX, ndcY, activeCamera\)/, 'Tap handling must include a nearby-plate fallback');
-    assert.match(html, /const targetPlane = hits\[0\]\?\.object \|\| findNearestInteractivePlane\(ndcX, ndcY, currentCam\);/, 'Tap handling must use the closest visible plate when the ray misses');
-    assert.match(html, /openSoftwareModal\(cfg\.id\);/, 'A pressed plate must open the modal for its own software id');
+    assert.match(html, /#ar-container\s*\{[\s\S]*?touch-action: none;/, 'The scene must receive mobile pointer gestures');
+    assert.match(html, /\.ar-ready-hud \.ar-hud \{[\s\S]*?pointer-events: none !important;/, 'Full-screen HUD decoration must not block plate taps');
+    assert.match(html, /const frontMat = new THREE\.MeshStandardMaterial\(\{[\s\S]*?side: THREE\.DoubleSide/, 'The raycast face must accept taps from either side while floating');
+    assert.match(html, /function findNearestInteractivePlane\(clientX, clientY, rect, activeCamera\)/, 'Tap handling must use projected plate bounds when a ray misses');
+    assert.match(html, /const SCENE_TAP_SLOP_PX = 12;/, 'Finger jitter must not be misclassified as a drag');
+    assert.match(html, /els\.arContainer\.addEventListener\('pointerdown', onScenePointerDown/, 'Scene interaction must use one Pointer Events path');
+    assert.match(html, /function openSoftwarePlate\(targetMesh\)/, 'Plate taps must have a dedicated open-only action');
+    assert.match(html, /return openSoftwarePlate\(targetPlane\);/, 'The tapped plate must open its matching software window');
+    assert.ok(!html.includes('onSimPointerDown'), 'Simulator must not register a competing touch handler');
+    const openAction = html.match(/function openSoftwarePlate\(targetMesh\) \{[\s\S]*?\n    \}/)?.[0] || '';
+    assert.match(openAction, /openSoftwareModal\(cfg\.id\);/, 'A plate tap must open the modal for its own software id');
+    assert.ok(!openAction.includes('trigger3D'), 'A plate tap must not launch VFX effects');
+    assert.ok(!openAction.includes('cfg.isActive'), 'A plate tap must not toggle a software layer state');
   });
 
   // =========================================================================

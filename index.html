@@ -103,6 +103,7 @@
       overflow: hidden;
       width: 100vw;
       height: 100vh;
+      touch-action: none;
     }
 
     #ar-container video {
@@ -554,6 +555,11 @@
 
     .ar-ready-hud .ar-hud {
       opacity: 1;
+      /* Decorative full-screen HUD layers must never sit above the 3D canvas. */
+      pointer-events: none !important;
+    }
+
+    .ar-ready-hud .ar-hud .pointer-events-auto {
       pointer-events: auto !important;
     }
 
@@ -2669,7 +2675,8 @@
     let detectedCameras = [];
     let isSimulatorMode = false;
     let simAnimId = null, simRenderer, simScene, simCamera, simMonster, simMixer;
-    let isDragging = false, prevMouseX = 0, prevMouseY = 0;
+    let isDragging = false;
+    let simInteractionRoot = null;
     let cachedArRootBone = null;
     let cachedSimRootBone = null;
     let cachedVideoEl = null;
@@ -2792,6 +2799,7 @@
     function cleanARContainer() {
       sceneGeneration++;
       isCameraRunning = false;
+      if (typeof resetScenePointerState === 'function') resetScenePointerState();
 
       if (activeSession) {
         try { activeSession.abort.abort(); } catch (e) {}
@@ -3459,7 +3467,7 @@
 
     let isTargetLocked = false;
     let arRotY = 0, arRotX = 0;
-    let isArDragging = false, arPrevX = 0, arPrevY = 0;
+    let isArDragging = false;
     let monsterGarmentPos = null;
 
     function setLockState(locked) {
@@ -4110,9 +4118,7 @@
           metalness: 0,
           transparent: true,
           opacity: currentPlaneOpacity,
-          depthWrite: false,
-          // Keep the visible face tappable even while its floating rotation turns it from the camera.
-          side: THREE.DoubleSide
+          depthWrite: false
         });
         const bodyMesh = new THREE.Mesh(bevelGeo, bodyMat);
         bodyMesh.castShadow = false;
@@ -4150,7 +4156,9 @@
           metalness: 0,
           transparent: true,
           opacity: currentPlaneOpacity,
-          depthWrite: false
+          depthWrite: false,
+          // The raycast target stays tappable while the plate floats and rotates.
+          side: THREE.DoubleSide
         });
 
         const frontGeo = new THREE.PlaneGeometry(btnWidth - 0.004, btnHeight - 0.004);
@@ -5300,6 +5308,17 @@
       if (typeof openSoftwareModal === 'function') {
         openSoftwareModal(cfg.id);
       }
+      return true;
+    }
+
+    function openSoftwarePlate(targetMesh) {
+      const btnGroup = targetMesh?.userData?.btnGroup || targetMesh?.parent;
+      const cfg = btnGroup?.userData?.config;
+      if (!cfg || !SOFTWARE_DETAILS[cfg.id]) return false;
+
+      btnGroup.userData.pressOffset = 0.035;
+      playPopSound();
+      openSoftwareModal(cfg.id);
       return true;
     }
 
@@ -6884,6 +6903,7 @@
       const modelGroup = new THREE.Group();
       modelGroup.rotation.set(0, 0, 0);
       simScene.add(modelGroup);
+      simInteractionRoot = modelGroup;
 
       // Floating particles
       // Floating particles: Allocate capacity once, use setDrawRange for active ambient particles
@@ -7010,59 +7030,16 @@
         }
       });
 
-      // Pointer drag to orbit/rotate or tap to toggle 3D buttons
-      let simStartX = 0, simStartY = 0;
-      const onSimPointerDown = (e) => {
-        isDragging = true;
-        prevMouseX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
-        prevMouseY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
-        simStartX = prevMouseX;
-        simStartY = prevMouseY;
-      };
-      const onSimPointerMove = (e) => {
-        if (!isDragging) return;
-        const clientX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
-        const clientY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
-        const deltaX = clientX - prevMouseX;
-        const deltaY = clientY - prevMouseY;
-        modelGroup.rotation.y += deltaX * 0.01;
-        modelGroup.rotation.x += deltaY * 0.005;
-        prevMouseX = clientX;
-        prevMouseY = clientY;
-      };
-      const onSimPointerUp = (e) => {
-        if (isDragging) {
-          isDragging = false;
-          const clientX = (e && e.clientX !== undefined) ? e.clientX : ((e && e.changedTouches && e.changedTouches[0] && e.changedTouches[0].clientX) || prevMouseX);
-          const clientY = (e && e.clientY !== undefined) ? e.clientY : ((e && e.changedTouches && e.changedTouches[0] && e.changedTouches[0].clientY) || prevMouseY);
-          const dist = Math.hypot(clientX - simStartX, clientY - simStartY);
-          if (dist < 8) {
-            handleSceneTap(clientX, clientY);
-          }
-        }
-      };
-
       const onSimResize = () => {
         if (!simCamera || !simRenderer) return;
         QualityPolicy.applyToRenderer(simRenderer, simCamera);
       };
 
-      window.addEventListener('mousedown', onSimPointerDown);
-      window.addEventListener('mousemove', onSimPointerMove);
-      window.addEventListener('mouseup', onSimPointerUp);
-      window.addEventListener('touchstart', onSimPointerDown, { passive: true });
-      window.addEventListener('touchmove', onSimPointerMove, { passive: true });
-      window.addEventListener('touchend', onSimPointerUp);
       window.addEventListener('resize', onSimResize);
 
       simCleanupFn = () => {
-        window.removeEventListener('mousedown', onSimPointerDown);
-        window.removeEventListener('mousemove', onSimPointerMove);
-        window.removeEventListener('mouseup', onSimPointerUp);
-        window.removeEventListener('touchstart', onSimPointerDown);
-        window.removeEventListener('touchmove', onSimPointerMove);
-        window.removeEventListener('touchend', onSimPointerUp);
         window.removeEventListener('resize', onSimResize);
+        simInteractionRoot = null;
 
         if (simAnimId) {
           cancelAnimationFrame(simAnimId);
@@ -7327,17 +7304,75 @@
     // ---------------------------------------------------------------
     // 8. 3D Scene Interaction & Tap Raycasting for 3D Buttons
     // ---------------------------------------------------------------
-    function findNearestInteractivePlane(ndcX, ndcY, activeCamera) {
+    function isSoftwareModalOpen() {
+      const modal = document.getElementById('software-content-modal');
+      return !!modal && !modal.classList.contains('hidden');
+    }
+
+    function isObjectVisibleInScene(object) {
+      for (let current = object; current; current = current.parent) {
+        if (!current.visible) return false;
+      }
+      return true;
+    }
+
+    function getActiveSceneRect() {
+      const activeRenderer = isSimulatorMode ? simRenderer : renderer;
+      const sceneElement = activeRenderer?.domElement || els.arContainer;
+      return sceneElement?.getBoundingClientRect() || {
+        left: 0,
+        top: 0,
+        width: window.innerWidth,
+        height: window.innerHeight
+      };
+    }
+
+    function findNearestInteractivePlane(clientX, clientY, rect, activeCamera) {
       if (!activeCamera || !planesModel || interactivePlanes.length === 0) return null;
 
       planesModel.updateMatrixWorld(true);
       let nearestPlane = null;
-      let nearestDistance = 0.18;
+      let nearestDistance = Infinity;
+      const tapPaddingPx = 8;
 
       for (const plane of interactivePlanes) {
-        plane.getWorldPosition(_scratchV1);
-        _scratchV1.project(activeCamera);
-        const distance = Math.hypot(ndcX - _scratchV1.x, ndcY - _scratchV1.y);
+        if (!isObjectVisibleInScene(plane)) continue;
+        const geometry = plane.geometry;
+        if (!geometry) continue;
+        if (!geometry.boundingBox) geometry.computeBoundingBox();
+        const bounds = geometry.boundingBox;
+        if (!bounds) continue;
+
+        plane.getWorldPosition(_scratchV2);
+        _scratchV2.project(activeCamera);
+        if (_scratchV2.z < -1 || _scratchV2.z > 1) continue;
+
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minY = Infinity;
+        let maxY = -Infinity;
+        for (const [x, y] of [
+          [bounds.min.x, bounds.min.y],
+          [bounds.min.x, bounds.max.y],
+          [bounds.max.x, bounds.min.y],
+          [bounds.max.x, bounds.max.y]
+        ]) {
+          plane.localToWorld(_scratchV1.set(x, y, 0));
+          _scratchV1.project(activeCamera);
+          const screenX = rect.left + (_scratchV1.x + 1) * 0.5 * rect.width;
+          const screenY = rect.top + (1 - _scratchV1.y) * 0.5 * rect.height;
+          minX = Math.min(minX, screenX);
+          maxX = Math.max(maxX, screenX);
+          minY = Math.min(minY, screenY);
+          maxY = Math.max(maxY, screenY);
+        }
+
+        if (clientX < minX - tapPaddingPx || clientX > maxX + tapPaddingPx ||
+            clientY < minY - tapPaddingPx || clientY > maxY + tapPaddingPx) continue;
+
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+        const distance = Math.hypot(clientX - centerX, clientY - centerY);
         if (distance < nearestDistance) {
           nearestDistance = distance;
           nearestPlane = plane;
@@ -7350,24 +7385,28 @@
     function handleSceneTap(clientX, clientY) {
       const currentCam = isSimulatorMode ? simCamera : camera;
       if (!currentCam) return false;
+      if (isSoftwareModalOpen()) return false;
       if (!areSoftwarePlatesVisible()) return false;
+      if (!isPlaneInteractionActive) return false;
       if (!isSimulatorMode && !isTargetLocked) return false;
 
-      const rect = els.arContainer ? els.arContainer.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+      const rect = getActiveSceneRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
       const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
       const ndcY = -((clientY - rect.top) / rect.height) * 2 + 1;
 
       pointer.set(ndcX, ndcY);
       if (planesModel) planesModel.updateMatrixWorld(true);
+      currentCam.updateMatrixWorld();
       raycaster.setFromCamera(pointer, currentCam);
 
       // 1. Check 3D interactive button planes
       if (interactivePlanes.length > 0) {
         const hits = raycaster.intersectObjects(interactivePlanes, false);
-        const targetPlane = hits[0]?.object || findNearestInteractivePlane(ndcX, ndcY, currentCam);
+        const directHit = hits.find(hit => isObjectVisibleInScene(hit.object))?.object;
+        const targetPlane = directHit || findNearestInteractivePlane(clientX, clientY, rect, currentCam);
         if (targetPlane) {
-          toggleButtonState(targetPlane);
-          return true;
+          return openSoftwarePlate(targetPlane);
         }
       }
 
@@ -7390,36 +7429,140 @@
       return false;
     }
 
-    if (els.arContainer) {
-      let arStartX = 0, arStartY = 0;
-      els.arContainer.addEventListener('pointerdown', (e) => {
-        if (e.target.closest && (e.target.closest('.hud-top') || e.target.closest('.hud-bottom') || e.target.closest('#modal-marker') || e.target.closest('.ar-hud'))) return;
-        isArDragging = true;
-        arStartX = e.clientX;
-        arStartY = e.clientY;
-        arPrevX = e.clientX;
-        arPrevY = e.clientY;
-      });
-      window.addEventListener('pointermove', (e) => {
-        if (!isArDragging) return;
-        const dx = e.clientX - arPrevX;
-        const dy = e.clientY - arPrevY;
-        arPrevX = e.clientX;
-        arPrevY = e.clientY;
-        arRotY += dx * 0.008;
-        arRotX += dy * 0.008;
-        arRotX = Math.max(-0.6, Math.min(0.6, arRotX));
-      });
-      window.addEventListener('pointerup', (e) => {
-        if (isArDragging) {
-          isArDragging = false;
-          const dist = Math.hypot(e.clientX - arStartX, e.clientY - arStartY);
-          if (dist < 8) {
-            handleSceneTap(e.clientX, e.clientY);
-          }
+    const SCENE_TAP_SLOP_PX = 12;
+    const scenePointerState = {
+      pointers: new Map(),
+      primaryPointerId: null,
+      isDragging: false,
+      usedMultiplePointers: false,
+      pinchDistance: 0,
+      pinchScale: 1
+    };
+
+    function resetScenePointerState() {
+      scenePointerState.pointers.clear();
+      scenePointerState.primaryPointerId = null;
+      scenePointerState.isDragging = false;
+      scenePointerState.usedMultiplePointers = false;
+      scenePointerState.pinchDistance = 0;
+      isArDragging = false;
+      isDragging = false;
+    }
+
+    function beginScenePinch() {
+      const pointers = [...scenePointerState.pointers.values()];
+      if (pointers.length < 2) return;
+      scenePointerState.usedMultiplePointers = true;
+      scenePointerState.isDragging = true;
+      scenePointerState.pinchDistance = Math.hypot(
+        pointers[0].clientX - pointers[1].clientX,
+        pointers[0].clientY - pointers[1].clientY
+      );
+      scenePointerState.pinchScale = modelScale;
+    }
+
+    function rotateActiveScene(deltaX, deltaY) {
+      if (isSimulatorMode && simInteractionRoot) {
+        simInteractionRoot.rotation.y += deltaX * 0.01;
+        simInteractionRoot.rotation.x = Math.max(-0.6, Math.min(0.6, simInteractionRoot.rotation.x + deltaY * 0.005));
+        return;
+      }
+      arRotY += deltaX * 0.008;
+      arRotX = Math.max(-0.6, Math.min(0.6, arRotX + deltaY * 0.008));
+    }
+
+    function onScenePointerDown(e) {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (isSoftwareModalOpen()) return;
+
+      e.preventDefault();
+      const point = {
+        startX: e.clientX,
+        startY: e.clientY,
+        clientX: e.clientX,
+        clientY: e.clientY
+      };
+      scenePointerState.pointers.set(e.pointerId, point);
+      if (scenePointerState.pointers.size === 1) {
+        scenePointerState.primaryPointerId = e.pointerId;
+        scenePointerState.isDragging = false;
+        scenePointerState.usedMultiplePointers = false;
+      } else {
+        beginScenePinch();
+      }
+      try { els.arContainer.setPointerCapture(e.pointerId); } catch (err) {}
+    }
+
+    function onScenePointerMove(e) {
+      const point = scenePointerState.pointers.get(e.pointerId);
+      if (!point) return;
+      e.preventDefault();
+
+      const previousX = point.clientX;
+      const previousY = point.clientY;
+      point.clientX = e.clientX;
+      point.clientY = e.clientY;
+
+      if (scenePointerState.pointers.size > 1) {
+        const pointers = [...scenePointerState.pointers.values()];
+        const currentDistance = Math.hypot(
+          pointers[0].clientX - pointers[1].clientX,
+          pointers[0].clientY - pointers[1].clientY
+        );
+        if (scenePointerState.pinchDistance > 10) {
+          applyModelScale(scenePointerState.pinchScale * (currentDistance / scenePointerState.pinchDistance), false);
         }
-      });
-      window.addEventListener('pointercancel', () => { isArDragging = false; });
+        return;
+      }
+
+      if (e.pointerId !== scenePointerState.primaryPointerId) return;
+      const movedDistance = Math.hypot(e.clientX - point.startX, e.clientY - point.startY);
+      if (movedDistance > SCENE_TAP_SLOP_PX) {
+        scenePointerState.isDragging = true;
+        isArDragging = true;
+        isDragging = true;
+      }
+      if (scenePointerState.isDragging) {
+        rotateActiveScene(e.clientX - previousX, e.clientY - previousY);
+      }
+    }
+
+    function onScenePointerUp(e) {
+      const point = scenePointerState.pointers.get(e.pointerId);
+      if (!point) return;
+      e.preventDefault();
+      const shouldOpenPlate = scenePointerState.pointers.size === 1 &&
+        e.pointerId === scenePointerState.primaryPointerId &&
+        !scenePointerState.isDragging &&
+        !scenePointerState.usedMultiplePointers;
+      scenePointerState.pointers.delete(e.pointerId);
+      try { els.arContainer.releasePointerCapture(e.pointerId); } catch (err) {}
+
+      if (shouldOpenPlate) {
+        handleSceneTap(e.clientX, e.clientY);
+      }
+
+      if (scenePointerState.pointers.size === 0) {
+        resetScenePointerState();
+      } else if (scenePointerState.pointers.size === 1) {
+        const [remainingId, remainingPoint] = scenePointerState.pointers.entries().next().value;
+        scenePointerState.primaryPointerId = remainingId;
+        remainingPoint.startX = remainingPoint.clientX;
+        remainingPoint.startY = remainingPoint.clientY;
+      }
+    }
+
+    function onScenePointerCancel(e) {
+      scenePointerState.pointers.delete(e.pointerId);
+      if (scenePointerState.pointers.size === 0) resetScenePointerState();
+    }
+
+    if (els.arContainer) {
+      els.arContainer.addEventListener('pointerdown', onScenePointerDown, { passive: false });
+      els.arContainer.addEventListener('pointermove', onScenePointerMove, { passive: false });
+      els.arContainer.addEventListener('pointerup', onScenePointerUp, { passive: false });
+      els.arContainer.addEventListener('pointercancel', onScenePointerCancel, { passive: false });
+      els.arContainer.addEventListener('lostpointercapture', onScenePointerCancel, { passive: false });
     }
 
     function applyModelScale(newScale, showToastMsg = false) {
@@ -7493,27 +7636,6 @@
         applyModelScale(modelScale * factor, true);
       }, { passive: false });
     }
-
-    // Touch pinch to zoom on mobile
-    let initialPinchDist = 0;
-    let initialPinchScale = 1.0;
-    window.addEventListener('touchstart', (e) => {
-      if (e.touches && e.touches.length === 2) {
-        const dx = e.touches[0].clientX - e.touches[1].clientX;
-        const dy = e.touches[0].clientY - e.touches[1].clientY;
-        initialPinchDist = Math.hypot(dx, dy);
-        initialPinchScale = modelScale;
-      }
-    }, { passive: true });
-    window.addEventListener('touchmove', (e) => {
-      if (e.touches && e.touches.length === 2 && initialPinchDist > 10) {
-        const dx = e.touches[0].clientX - e.touches[1].clientX;
-        const dy = e.touches[0].clientY - e.touches[1].clientY;
-        const currentDist = Math.hypot(dx, dy);
-        const newScale = initialPinchScale * (currentDist / initialPinchDist);
-        applyModelScale(newScale, false);
-      }
-    }, { passive: true });
 
     if (els.btnShowMarker) {
       els.btnShowMarker.addEventListener('click', () => {
