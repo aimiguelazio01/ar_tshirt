@@ -1781,6 +1781,7 @@
       // read from the NFC URL, e.g. tapwear.app/ar?drop=001
       contentUrl: null,
 
+      animationSpeed: isMobileDevice ? 1.35 : 1.25, // Calibrated playback speed for responsive mobile interaction
       maxParticles: 220,          // §5.1 performance budget
       smoothing: 0.35,             // one-euro-ish lerp factor, tune for jitter vs. lag
     };
@@ -2922,6 +2923,7 @@
       frontLight.position.set(0, 0, 4);
       const pointLight = new THREE.PointLight(0x4fe3d0, 2.2, 10);
       pointLight.position.set(-1, 1, 2);
+      pointLight.visible = (typeof QualityPolicy !== 'undefined') ? QualityPolicy.getPolicy().enableSecondaryLights : true;
 
       const lightContainer = scene || group;
       lightContainer.add(ambLight);
@@ -2971,6 +2973,10 @@
               child.material.depthWrite = true;
               child.material.depthTest = true;
               child.material.needsUpdate = true;
+              if (isMobileDevice) {
+                child.material.precision = 'mediump';
+                child.material.dithering = false;
+              }
             }
           }
         });
@@ -3024,6 +3030,8 @@
 
         if (gltf.animations && gltf.animations.length > 0) {
           mixer = new THREE.AnimationMixer(monsterModel);
+          const defaultSpeed = CONFIG.animationSpeed || (isMobileDevice ? 1.35 : 1.25);
+          mixer.timeScale = defaultSpeed;
           const defaultClip = gltf.animations.find(c => c && c.name && c.name.toLowerCase().includes('default')) ||
             gltf.animations[0];
           if (defaultClip) {
@@ -4334,9 +4342,10 @@
       updatePanicButtonIcon("electric_bolt");
       showToast("⚠️ I SAID DON'T TOUCH! (Frames 25-72 x2) 👹");
 
-      // Duration for 2 full cycles of frames 25 to 72:
+      // Duration for 2 full cycles of frames 25 to 72 (scaled by playback speed):
+      const effectiveSpeed = (currReact.timeScale || (isSim ? simMixer?.timeScale : mixer?.timeScale) || CONFIG.animationSpeed || 1.0);
       const singleCycleDuration = currReact.getClip().duration || ((72 - 25) / 24);
-      const reactDurationMs = singleCycleDuration * 2 * 1000;
+      const reactDurationMs = (singleCycleDuration * 2 * 1000) / effectiveSpeed;
 
       reactTimer = setTimeout(() => {
         // Return smoothly to idle loop (frames 1-24)
@@ -4456,7 +4465,8 @@
         currArmDown.fadeIn(0.08);
         currArmDown.play();
 
-        const durationMs = (currArmDown.getClip().duration || 0.292) * 1000;
+        const effectiveSpeed = (currArmDown.timeScale || (isSim ? simMixer?.timeScale : mixer?.timeScale) || CONFIG.animationSpeed || 1.0);
+        const durationMs = ((currArmDown.getClip().duration || 0.292) * 1000) / effectiveSpeed;
         rightArmDownTimer = setTimeout(() => {
           if (currArmDown) currArmDown.fadeOut(0.15);
           if (currIdle && !isSequenceRunning && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) {
@@ -4535,7 +4545,8 @@
         currArmDown.fadeIn(0.08);
         currArmDown.play();
 
-        const durationMs = (currArmDown.getClip().duration || 0.292) * 1000;
+        const effectiveSpeed = (currArmDown.timeScale || (isSim ? simMixer?.timeScale : mixer?.timeScale) || CONFIG.animationSpeed || 1.0);
+        const durationMs = ((currArmDown.getClip().duration || 0.292) * 1000) / effectiveSpeed;
         leftArmDownTimer = setTimeout(() => {
           if (currArmDown) currArmDown.fadeOut(0.15);
           if (currIdle && !isSequenceRunning && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) {
@@ -5677,7 +5688,8 @@
 
     function renderLoop() {
       if (isDocumentHidden || !isCameraRunning || isSimulatorMode) return;
-      const delta = clock ? clock.getDelta() : 0.016;
+      const rawDelta = clock ? clock.getDelta() : 0.016;
+      const delta = Math.max(0.001, Math.min(rawDelta || 0.016, 0.08));
       const t = performance.now() * 0.001;
 
       if (mixer) {
@@ -5916,6 +5928,10 @@
               child.material.depthWrite = true;
               child.material.depthTest = true;
               child.material.needsUpdate = true;
+              if (isMobileDevice) {
+                child.material.precision = 'mediump';
+                child.material.dithering = false;
+              }
             }
           }
         });
@@ -5937,6 +5953,8 @@
 
         if (gltf.animations && gltf.animations.length > 0) {
           simMixer = new THREE.AnimationMixer(simMonster);
+          const defaultSpeed = CONFIG.animationSpeed || (isMobileDevice ? 1.35 : 1.25);
+          simMixer.timeScale = defaultSpeed;
           const defaultClip = gltf.animations.find(c => c && c.name && c.name.toLowerCase().includes('default')) ||
             gltf.animations[0];
           if (defaultClip) {
@@ -6084,7 +6102,8 @@
           return;
         }
         simAnimId = requestAnimationFrame(simLoop);
-        const delta = simClock.getDelta();
+        const rawDelta = simClock.getDelta();
+        const delta = Math.max(0.001, Math.min(rawDelta || 0.016, 0.08));
 
         if (simMixer) simMixer.update(delta);
 
@@ -6777,6 +6796,18 @@
         }
       };
     })();
+
+    function setAnimationSpeed(speed) {
+      const val = parseFloat(speed);
+      if (!isNaN(val) && val > 0) {
+        CONFIG.animationSpeed = val;
+        if (mixer) mixer.timeScale = val;
+        if (simMixer) simMixer.timeScale = val;
+        console.log(`[Animation] Playback speed updated to ${val}x`);
+      }
+      return (mixer ? mixer.timeScale : (simMixer ? simMixer.timeScale : CONFIG.animationSpeed));
+    }
+    window.setAnimationSpeed = setAnimationSpeed;
 
     // Expose core WebAR engine methods on window
     window.initAR = initAR;
