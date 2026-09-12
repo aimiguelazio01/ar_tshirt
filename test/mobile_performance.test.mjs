@@ -53,6 +53,8 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     assert.ok(!html.includes('playPanicAlarmSound'), 'Synthesized panic alarm must be removed');
     assert.ok(!html.includes('id="btn-capture"'), 'Orange capture button must be removed');
     assert.match(html, /grid grid-cols-3 items-center/, 'Control row must use a centered three-column layout');
+    assert.match(html, /playDontTouchSequence\(3\)/, 'Panic mode must request three animation loops');
+    assert.match(html, /setLoop\(THREE\.LoopRepeat, loopCount\)/, 'Reaction animation must use the requested loop count');
   });
 
   // =========================================================================

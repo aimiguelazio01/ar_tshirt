@@ -4881,7 +4881,8 @@
       // Retained for backwards compatibility
     }
 
-    function playDontTouchSequence() {
+    function playDontTouchSequence(repetitions = 2) {
+      const loopCount = Math.max(1, repetitions);
       const isSim = isSimulatorMode;
       const currIdle = isSim ? simActionIdle : actionIdle;
       const currReact = isSim ? simActionReact : actionReact;
@@ -4939,13 +4940,13 @@
         setPanicButtonActive(true);
         updatePanicButtonText("DON'T TOUCH");
         updatePanicButtonIcon("warning");
-        console.log('[Animation] Frames 25-72 (2 cycles) completed -> restored idle loop (frames 1-24)');
+        console.log(`[Animation] Frames 25-72 (${loopCount} cycles) completed -> restored idle loop (frames 1-24)`);
       });
 
-      // Play reaction animation from frame 25 to 72 and loop one more time (total 2 cycles)
+      // Play reaction animation from frame 25 to 72 for the requested number of cycles.
       currReact.reset();
-      currReact.setLoop(THREE.LoopRepeat, 2);
-      currReact.repetitions = 2;
+      currReact.setLoop(THREE.LoopRepeat, loopCount);
+      currReact.repetitions = loopCount;
       currReact.clampWhenFinished = true;
       currReact.fadeIn(0.08);
       currReact.play();
@@ -4953,7 +4954,7 @@
       setPanicButtonActive(false);
       updatePanicButtonText("AGITATED!");
       updatePanicButtonIcon("electric_bolt");
-      showToast("⚠️ I SAID DON'T TOUCH! (Frames 25-72 x2) 👹");
+      showToast(`⚠️ I SAID DON'T TOUCH! (Frames 25-72 x${loopCount}) 👹`);
     }
 
     function playIdleSequence() {
@@ -5203,10 +5204,10 @@
       }
 
       playPanicMusic();
-      showToast("⚠️ I SAID DON'T TOUCH! (Frames 25-72) 👹");
+      showToast("⚠️ I SAID DON'T TOUCH! (Frames 25-72 x3) 👹");
 
       // Play animation from frame 25 to 72 (smooth, no flickering)
-      playDontTouchSequence();
+      playDontTouchSequence(3);
     }
 
     function toggleButtonState(targetMesh) {
