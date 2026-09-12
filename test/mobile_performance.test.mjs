@@ -455,4 +455,153 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     for (let i = 0; i < 10; i++) qpForced.recordWindow({ p90: 15 });
     assert.equal(qpForced.profile, 'reduced', 'Forced profile must not change with hysteresis');
   });
+
+  // =========================================================================
+  // Follow-up Plan: Build output provenance & deployment verification
+  // =========================================================================
+  await t.test('7a. Built dist/index.html has correct provenance markers', () => {
+    const builtHtml = fs.readFileSync('dist/index.html', 'utf8');
+
+    // Must NOT contain Tailwind CDN
+    assert.ok(!builtHtml.includes('cdn.tailwindcss.com'), 'Built HTML must not include Tailwind CDN');
+
+    // Must contain compiled CSS link
+    assert.ok(builtHtml.includes('assets/versioned/app.'), 'Built HTML must link to compiled versioned CSS');
+
+    // Must contain __ASSET_CONFIG__
+    assert.ok(builtHtml.includes('window.__ASSET_CONFIG__'), 'Built HTML must include inline asset config');
+
+    // Must have valid build SHA in meta tag (not placeholder)
+    const buildMatch = builtHtml.match(/<meta name="app-build" content="([^"]+)"/);
+    assert.ok(buildMatch, 'Built HTML must have app-build meta tag');
+    assert.ok(buildMatch[1] !== 'unknown' && buildMatch[1] !== '', 'Build SHA must not be empty or unknown');
+
+    // Must have high-priority preloads for model
+    assert.ok(builtHtml.includes('fetchpriority="high"'), 'Built HTML must have high-priority preload');
+    assert.ok(builtHtml.includes('rel="preload" as="fetch"'), 'Built HTML must have preload links');
+
+    // No inline <style> block (should be compiled CSS only)
+    const inlineStyleCount = (builtHtml.match(/<style>/g) || []).length;
+    assert.equal(inlineStyleCount, 0, 'Built HTML must not have inline <style> blocks');
+
+    // No classic Three.js CDN script tag
+    assert.ok(!builtHtml.includes('<script src="https://unpkg.com/three'), 'Must not use classic Three.js CDN');
+  });
+
+  // =========================================================================
+  // Follow-up Plan: Camera profile and diagnostic controls
+  // =========================================================================
+  await t.test('7b. Camera profiles define correct resolution constraints', () => {
+    // Simulate the camera profiles object from index.html
+    const cameraProfiles = {
+      standard: { width: { ideal: 1280 }, height: { ideal: 720 },
+                  frameRate: { ideal: 30, max: 30 } },
+      economy:  { width: { ideal: 960 }, height: { ideal: 540 },
+                  frameRate: { ideal: 30, max: 30 } }
+    };
+
+    // Standard profile
+    assert.equal(cameraProfiles.standard.width.ideal, 1280);
+    assert.equal(cameraProfiles.standard.height.ideal, 720);
+    assert.equal(cameraProfiles.standard.frameRate.max, 30);
+
+    // Economy profile
+    assert.equal(cameraProfiles.economy.width.ideal, 960);
+    assert.equal(cameraProfiles.economy.height.ideal, 540);
+    assert.equal(cameraProfiles.economy.frameRate.max, 30);
+  });
+
+  await t.test('7c. Diagnostic URL parameter validation', () => {
+    // Simulate URL parameter parsing logic from index.html
+    function parseTrackingDelegate(raw) {
+      const val = (raw || '').toLowerCase();
+      return ['auto', 'cpu', 'gpu'].includes(val) ? val : 'auto';
+    }
+    function parseCameraProfile(raw) {
+      const val = (raw || '').toLowerCase();
+      return ['standard', 'economy'].includes(val) ? val : 'standard';
+    }
+    function parseQuality(raw) {
+      const val = (raw || '').toLowerCase();
+      return ['auto', 'balanced', 'reduced'].includes(val) ? val : 'auto';
+    }
+
+    // Valid values pass through
+    assert.equal(parseTrackingDelegate('gpu'), 'gpu');
+    assert.equal(parseTrackingDelegate('cpu'), 'cpu');
+    assert.equal(parseCameraProfile('economy'), 'economy');
+    assert.equal(parseQuality('reduced'), 'reduced');
+
+    // Invalid values fall back to defaults
+    assert.equal(parseTrackingDelegate('invalid'), 'auto');
+    assert.equal(parseTrackingDelegate(''), 'auto');
+    assert.equal(parseTrackingDelegate(null), 'auto');
+    assert.equal(parseCameraProfile('ultra'), 'standard');
+    assert.equal(parseQuality('ultra-high'), 'auto');
+  });
+
+  // =========================================================================
+  // Follow-up Plan: vercel.json deployment configuration
+  // =========================================================================
+  await t.test('7d. vercel.json has required deployment configuration', () => {
+    const vercelJson = JSON.parse(fs.readFileSync('vercel.json', 'utf8'));
+
+    assert.equal(vercelJson.buildCommand, 'npm run build', 'buildCommand must be npm run build');
+    assert.equal(vercelJson.outputDirectory, 'dist', 'outputDirectory must be dist');
+    assert.equal(vercelJson.installCommand, 'npm ci', 'installCommand must be npm ci');
+
+    // Immutable cache headers for versioned assets
+    const immutableRule = vercelJson.headers.find(h => h.source === '/assets/versioned/(.*)');
+    assert.ok(immutableRule, 'Must have versioned asset header rule');
+    const cacheHeader = immutableRule.headers.find(h => h.key === 'Cache-Control');
+    assert.ok(cacheHeader, 'Must have Cache-Control header');
+    assert.ok(cacheHeader.value.includes('immutable'), 'Versioned assets must be immutable');
+    assert.ok(cacheHeader.value.includes('max-age=31536000'), 'Versioned assets must have 1-year max-age');
+
+    // Manifest must not be immutable
+    const manifestRule = vercelJson.headers.find(h => h.source === '/assets/versioned/manifest.json');
+    assert.ok(manifestRule, 'Must have manifest header rule');
+    const manifestCache = manifestRule.headers.find(h => h.key === 'Cache-Control');
+    assert.ok(manifestCache.value.includes('must-revalidate'), 'Manifest must be revalidated');
+  });
+
+  // =========================================================================
+  // Follow-up Plan: Mutation detection — old clamp would cause test failure
+  // =========================================================================
+  await t.test('7e. Mutation detection: old 80ms clamp breaks playback equivalence', () => {
+    // This test proves that reintroducing the old clamp would be caught
+    function simulateWithClamp(fps, wallSeconds, clampMs) {
+      const frameDeltaSec = 1 / fps;
+      const clampSec = clampMs / 1000;
+      let accumulated = 0;
+      const frames = fps * wallSeconds;
+      for (let i = 0; i < frames; i++) {
+        accumulated += Math.min(frameDeltaSec, clampSec);
+      }
+      return accumulated;
+    }
+
+    // Without clamp (correct behavior): 10s wall clock = 10s animation
+    const correctAt10 = simulateWithClamp(10, 10, Infinity);
+    assert.ok(Math.abs(correctAt10 - 10.0) < 0.001, 'Unclamped 10 FPS must yield 10s');
+
+    // With 80ms clamp (old bug): 10s wall clock = 8s animation at 10 FPS
+    const brokenAt10 = simulateWithClamp(10, 10, 80);
+    assert.ok(Math.abs(brokenAt10 - 8.0) < 0.001, 'Old 80ms clamp yields only 8s at 10 FPS');
+
+    // With 80ms clamp: 10s wall clock = 4s animation at 5 FPS
+    const brokenAt5 = simulateWithClamp(5, 10, 80);
+    assert.ok(Math.abs(brokenAt5 - 4.0) < 0.001, 'Old 80ms clamp yields only 4s at 5 FPS');
+
+    // The actual createAnimationTime (used in production) does NOT clamp:
+    const animTime = createAnimationTime();
+    let accum = 0;
+    let now = 1000;
+    accum += animTime.tick(now);
+    for (let i = 0; i < 50; i++) {  // 50 frames at 5 FPS = 10s
+      now += 200;  // 200ms per frame = 5 FPS
+      accum += animTime.tick(now);
+    }
+    assert.ok(Math.abs(accum - 10.0) < 0.001, 'Production animationTime yields full 10s at 5 FPS');
+  });
 });

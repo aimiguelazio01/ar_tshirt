@@ -66,4 +66,44 @@ assert.ok(immutableRule && immutableRule.headers.some(hdr => hdr.value.includes(
 
 console.log('✅ Step 6 contracts passed');
 
+// 7. Follow-up Plan: Diagnostic controls, camera profiles, animation-time, provenance
+assert.ok(indexHtml.includes('DIAGNOSTIC_TRACKING_DELEGATE'), 'DIAGNOSTIC_TRACKING_DELEGATE missing');
+assert.ok(indexHtml.includes('DIAGNOSTIC_CAMERA_PROFILE'), 'DIAGNOSTIC_CAMERA_PROFILE missing');
+assert.ok(indexHtml.includes('DIAGNOSTIC_QUALITY'), 'DIAGNOSTIC_QUALITY missing');
+assert.ok(indexHtml.includes('cameraProfiles'), 'cameraProfiles object missing');
+assert.ok(indexHtml.includes("width: { ideal: 960 }") && indexHtml.includes("height: { ideal: 540 }"), 'Economy camera profile (960x540) missing');
+assert.ok(indexHtml.includes("width: { ideal: 1280 }") && indexHtml.includes("height: { ideal: 720 }"), 'Standard camera profile (1280x720) missing');
+assert.ok(indexHtml.includes('createAnimationTime'), 'createAnimationTime integration missing');
+assert.ok(indexHtml.includes('animTime.tick'), 'animationTime.tick usage in render loop missing');
+assert.ok(indexHtml.includes('animationTime.reset()'), 'animationTime.reset() on visibility change missing');
+assert.ok(indexHtml.includes("isSimulatorMode = (mode === 'simulator')"), 'Authoritative mode assignment in createSession missing');
+assert.ok(indexHtml.includes('cancelWorkerIdleDisposal'), 'cancelWorkerIdleDisposal on AR entry missing');
+assert.ok(indexHtml.includes('scheduleWorkerIdleDisposal'), 'scheduleWorkerIdleDisposal missing');
+assert.ok(indexHtml.includes('disposeTrackingWorkerGracefully'), 'Graceful worker disposal missing');
+assert.ok(indexHtml.includes('onFirstCharacterVisible'), 'onFirstCharacterVisible scheduling hook missing');
+assert.ok(indexHtml.includes('scheduleOptionalFeatures'), 'scheduleOptionalFeatures staging missing');
+
+// Build provenance: vercel.json must have installCommand
+assert.ok(vercelJson.installCommand === 'npm ci', 'vercel.json must specify installCommand: npm ci');
+assert.ok(vercelJson.buildCommand === 'npm run build', 'vercel.json must specify buildCommand: npm run build');
+
+// Built HTML provenance: must have app-build meta tag with non-placeholder SHA
+assert.ok(distHtml.includes('<meta name="app-build"'), 'dist/index.html must include app-build meta tag');
+assert.ok(!distHtml.includes('content="unknown"'), 'dist/index.html must not have unknown build SHA');
+
+// Preloads: model and marker must be preloaded
+assert.ok(distHtml.includes('rel="preload" as="fetch"'), 'dist/index.html must include preload links for model/marker');
+assert.ok(distHtml.includes('fetchpriority="high"'), 'dist/index.html must include high-priority preload for model');
+
+// Runtime modules must be copied to dist
+assert.ok(fs.existsSync('dist/src/runtime/animation-time.mjs'), 'dist must include animation-time.mjs');
+assert.ok(fs.existsSync('dist/src/runtime/session-state.mjs'), 'dist must include session-state.mjs');
+assert.ok(fs.existsSync('dist/src/runtime/quality-policy.mjs'), 'dist must include quality-policy.mjs');
+assert.ok(fs.existsSync('dist/src/runtime/tracking-scheduler.mjs'), 'dist must include tracking-scheduler.mjs');
+
+// No classic Three.js script tag in built HTML (only importmap/module)
+assert.ok(!distHtml.includes('<script src="https://unpkg.com/three'), 'dist/index.html must not use classic Three.js CDN script');
+
+console.log('✅ Step 7 follow-up contracts passed');
+
 console.log('\n🎉 ALL MOBILE PERFORMANCE CONTRACTS VERIFIED SUCCESSFULLY!');
