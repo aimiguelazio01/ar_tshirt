@@ -1064,7 +1064,7 @@
               <span class="inline sm:hidden">PANIC</span>
             </button>
             <button class="ui-hud-orb flex-shrink-0" id="btn-toggle-plates" title="Hide Software Plates" aria-label="Hide Software Plates" aria-pressed="true">
-              <span class="material-symbols-outlined text-[18px] sm:text-[20px]">layers</span>
+              <span class="text-[8px] sm:text-[9px] font-mono font-bold tracking-wide">workflow</span>
             </button>
           </div>
 
@@ -2518,8 +2518,6 @@
       btn.setAttribute('aria-label', label);
       btn.setAttribute('aria-pressed', String(isEnabled));
       btn.classList.toggle('opacity-40', !isEnabled);
-      const icon = btn.querySelector('.material-symbols-outlined');
-      if (icon) icon.textContent = isEnabled ? 'layers' : 'layers_clear';
     }
 
     function setSoftwarePlatesEnabled(enabled) {

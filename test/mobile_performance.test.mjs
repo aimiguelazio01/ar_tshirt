@@ -99,6 +99,8 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     assert.match(html, /let arePlanesManuallyHidden = false;/, 'Manual plate visibility state must be tracked separately from gestures');
     assert.match(html, /function setSoftwarePlatesEnabled\(enabled\)/, 'Manual plate visibility setter must be present');
     assert.match(html, /targetPlaneOpacity = areSoftwarePlatesVisible\(\) \? 0\.88 : 0;/, 'Manual toggle must animate plate visibility');
+    assert.match(html, /id="btn-toggle-plates"[^>]*>[\s\S]*>workflow<\//, 'Plate toggle must display the workflow text label');
+    assert.ok(!html.includes('layers_clear'), 'Plate toggle must not use the old on/off icon');
   });
 
   await t.test('0i. Each visible software plate opens its matching window when tapped', () => {
