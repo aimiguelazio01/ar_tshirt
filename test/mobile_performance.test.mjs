@@ -108,7 +108,8 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     assert.match(html, /const frontMat = new THREE\.MeshStandardMaterial\(\{[\s\S]*?side: THREE\.DoubleSide/, 'The raycast face must accept taps from either side while floating');
     assert.match(html, /function findNearestInteractivePlane\(clientX, clientY, rect, activeCamera\)/, 'Tap handling must use projected plate bounds when a ray misses');
     assert.match(html, /const SCENE_TAP_SLOP_PX = 12;/, 'Finger jitter must not be misclassified as a drag');
-    assert.match(html, /els\.arContainer\.addEventListener\('pointerdown', onScenePointerDown/, 'Scene interaction must use one Pointer Events path');
+    assert.match(html, /window\.addEventListener\('pointerdown', onScenePointerDown, \{ capture: true, passive: false \}\)/, 'Scene input must capture taps before the AR renderer consumes them');
+    assert.match(html, /function isScenePointerEvent\(e\)/, 'Captured scene input must ignore modal and HUD controls');
     assert.match(html, /function openSoftwarePlate\(targetMesh\)/, 'Plate taps must have a dedicated open-only action');
     assert.match(html, /return openSoftwarePlate\(targetPlane\);/, 'The tapped plate must open its matching software window');
     assert.ok(!html.includes('onSimPointerDown'), 'Simulator must not register a competing touch handler');

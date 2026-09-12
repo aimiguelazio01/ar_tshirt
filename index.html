@@ -7471,9 +7471,17 @@
       arRotX = Math.max(-0.6, Math.min(0.6, arRotX + deltaY * 0.008));
     }
 
+    function isScenePointerEvent(e) {
+      if (isWelcomeScreenActive || !els.ar || els.ar.classList.contains('hidden') || isSoftwareModalOpen()) return false;
+      const target = e.target;
+      if (!(target instanceof Element)) return false;
+      if (!els.arContainer.contains(target)) return false;
+      return !target.closest('button, a, input, select, textarea, [role="button"]');
+    }
+
     function onScenePointerDown(e) {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
-      if (isSoftwareModalOpen()) return;
+      if (!isScenePointerEvent(e)) return;
 
       e.preventDefault();
       const point = {
@@ -7558,11 +7566,12 @@
     }
 
     if (els.arContainer) {
-      els.arContainer.addEventListener('pointerdown', onScenePointerDown, { passive: false });
-      els.arContainer.addEventListener('pointermove', onScenePointerMove, { passive: false });
-      els.arContainer.addEventListener('pointerup', onScenePointerUp, { passive: false });
-      els.arContainer.addEventListener('pointercancel', onScenePointerCancel, { passive: false });
-      els.arContainer.addEventListener('lostpointercapture', onScenePointerCancel, { passive: false });
+      // Capture phase runs before the AR renderer can consume canvas touch events.
+      window.addEventListener('pointerdown', onScenePointerDown, { capture: true, passive: false });
+      window.addEventListener('pointermove', onScenePointerMove, { capture: true, passive: false });
+      window.addEventListener('pointerup', onScenePointerUp, { capture: true, passive: false });
+      window.addEventListener('pointercancel', onScenePointerCancel, { capture: true, passive: false });
+      window.addEventListener('lostpointercapture', onScenePointerCancel, { capture: true, passive: false });
     }
 
     function applyModelScale(newScale, showToastMsg = false) {
