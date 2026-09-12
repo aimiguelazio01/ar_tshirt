@@ -1354,6 +1354,7 @@
     import { createSessionManager } from './src/runtime/session-state.mjs';
     import { createTrackingScheduler } from './src/runtime/tracking-scheduler.mjs';
     import { createQualityPolicy } from './src/runtime/quality-policy.mjs';
+    import { readResponseArrayBuffer } from './src/runtime/response-body.mjs';
 
     window.THREE = THREE;
     window.GLTFLoader = GLTFLoader;
@@ -1965,18 +1966,14 @@
           if (compiledMindUrl) return compiledMindUrl;
           const url = CONFIG.targetUrl;
           if (url.endsWith('.mind')) {
-            try {
-              const res = await fetch(url);
-              if (res.ok) {
-                const blob = await res.blob();
-                compiledMindUrl = URL.createObjectURL(blob);
-                console.log('[Marker] Target marker .mind cached as Blob URL successfully');
-                return compiledMindUrl;
-              }
-            } catch (err) {
-              console.warn('[Marker] Marker blob fetch failed, falling back to direct URL:', err);
+            const res = await fetch(url);
+            if (!res.ok) {
+              throw new Error(`Failed to fetch AR marker: HTTP ${res.status}`);
             }
-            return url;
+            const blob = await res.blob();
+            compiledMindUrl = URL.createObjectURL(blob);
+            console.log('[Marker] Target marker .mind cached as Blob URL successfully');
+            return compiledMindUrl;
           }
 
           // In-browser compiler fallback for image files
@@ -2175,38 +2172,14 @@
           throw new Error(`Failed to fetch 3D model: HTTP ${res.status}`);
         }
 
-        const contentLength = res.headers.get('content-length');
-        const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
-        let loadedBytes = 0;
-
-        const reader = res.body ? res.body.getReader() : null;
-        let arrayBuffer;
-
-        if (reader && totalBytes > 0) {
-          const chunks = [];
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-            loadedBytes += value.length;
-            const pct = Math.min(88, Math.round((loadedBytes / totalBytes) * 88));
-            if (els.progressFill) els.progressFill.style.width = pct + '%';
-            if (els.progressPct) els.progressPct.textContent = pct + '%';
-            if (els.progressText) els.progressText.textContent = `DOWNLOADING 3D ASSETS (${pct}%)`;
-          }
-          clearTimeout(timeoutId);
-          const allChunks = new Uint8Array(loadedBytes);
-          let position = 0;
-          for (const chunk of chunks) {
-            allChunks.set(chunk, position);
-            position += chunk.length;
-          }
-          arrayBuffer = allChunks.buffer;
-        } else {
-          if (els.progressText) els.progressText.textContent = 'DOWNLOADING 3D ASSETS…';
-          arrayBuffer = await res.arrayBuffer();
-          clearTimeout(timeoutId);
-        }
+        if (els.progressText) els.progressText.textContent = 'DOWNLOADING 3D ASSETS…';
+        const arrayBuffer = await readResponseArrayBuffer(res, ({ loadedBytes, totalBytes }) => {
+          const pct = Math.min(88, Math.round((loadedBytes / totalBytes) * 88));
+          if (els.progressFill) els.progressFill.style.width = pct + '%';
+          if (els.progressPct) els.progressPct.textContent = pct + '%';
+          if (els.progressText) els.progressText.textContent = `DOWNLOADING 3D ASSETS (${pct}%)`;
+        });
+        clearTimeout(timeoutId);
 
         performance.mark('model-download-end');
         try {
@@ -2233,7 +2206,7 @@
 
         sharedGltf = gltf;
         preloadedGLTF = gltf;
-        console.log('[Model] Monster asset parsed and cached successfully. Total bytes:', loadedBytes || arrayBuffer.byteLength);
+        console.log('[Model] Monster asset parsed and cached successfully. Total bytes:', arrayBuffer.byteLength);
         return gltf;
       } catch (error) {
         clearTimeout(timeoutId);
@@ -2276,13 +2249,26 @@
       });
     }
 
+    async function retryAssetLoad() {
+      if (els.progressText) els.progressText.textContent = 'RETRYING AR ASSETS…';
+      updateWelcomeBtn('PREPARING');
+      await Promise.all([loadMonsterAsset(), loadMarkerAsset()]);
+      isAssetsLoaded = true;
+      if (els.progressText) {
+        els.progressText.textContent = 'READY';
+        els.progressFill.style.width = '100%';
+        els.progressPct.textContent = '100%';
+      }
+      updateWelcomeBtn(isCameraRunning ? 'READY' : 'ENABLE_CAMERA');
+    }
+
     function showModelRetryUI(err) {
       if (els.progressText) {
         els.progressText.textContent = 'FAILED TO LOAD 3D MODEL';
       }
       updateWelcomeBtn('RETRY');
       showToast('Model load error — Tap to retry', 8000, () => {
-        retryModelLoad().catch(() => {});
+        retryAssetLoad().catch(() => {});
       });
     }
 
@@ -2977,8 +2963,8 @@
         desc = `The camera stream could not be started (${errStr || 'device timeout or in use'}). You can retry or click 'Preview 3D Instead'.`;
       }
 
-      els.cameraErrorTitle.textContent = title;
-      els.cameraErrorDesc.textContent = desc;
+      if (els.cameraErrorTitle) els.cameraErrorTitle.textContent = title;
+      if (els.cameraErrorDesc) els.cameraErrorDesc.textContent = desc;
     }
 
     // ---------------------------------------------------------------
@@ -3012,9 +2998,13 @@
           if (arrow) arrow.style.display = 'inline';
           break;
         case 'RETRY':
+          btn.disabled = false;
+          txt.textContent = 'RETRY LOADING';
+          if (arrow) arrow.style.display = 'inline';
+          break;
         case 'RETRY_CAMERA':
           btn.disabled = false;
-          txt.textContent = isAssetsLoaded ? 'RETRY CAMERA' : 'RETRY LOADING';
+          txt.textContent = 'RETRY CAMERA';
           if (arrow) arrow.style.display = 'inline';
           break;
         case 'UNSUPPORTED':
@@ -3046,7 +3036,6 @@
       if (permissionState === 'granted' || (!isMobile && permissionState !== 'denied')) {
         try {
           await initAR();
-          isCameraRunning = true;
           const video = els.arContainer.querySelector('video');
           if (video && isWelcomeScreenActive) {
             video.classList.add('camera-welcome-blur');
@@ -3071,8 +3060,10 @@
     async function handleEnterArClick() {
       if (!isAssetsLoaded) {
         try {
-          await retryModelLoad();
+          await retryAssetLoad();
         } catch (err) {
+          console.error('[Preload] Asset retry failed:', err);
+          updateWelcomeBtn('RETRY');
           return;
         }
       }
@@ -3081,7 +3072,6 @@
         updateWelcomeBtn('STARTING_CAMERA');
         try {
           await initAR();
-          isCameraRunning = true;
           const video = els.arContainer.querySelector('video');
           if (video && isWelcomeScreenActive) {
             video.classList.add('camera-welcome-blur');
@@ -3170,7 +3160,7 @@
         if (els.progressText) {
           els.progressText.textContent = 'PRELOAD FAILED — TAP TO RETRY';
         }
-        updateWelcomeBtn('RETRY_CAMERA');
+        updateWelcomeBtn('RETRY');
       }
     }
 
@@ -3265,9 +3255,9 @@
       } catch (err) {
         console.error('[AR] MindAR preparation failed:', err);
         cleanARContainer();
-        els.cameraError.classList.remove('hidden');
+        showCameraError(err);
         showToast('Could not load AR tracking engine.');
-        return;
+        throw err;
       }
       if (!isCurrent(session)) return;
 
@@ -3342,7 +3332,6 @@
           cleanupCameraAttempt();
           return;
         }
-        isCameraRunning = true;
         if (camera) {
           camera.near = 0.05;
           camera.updateProjectionMatrix();
@@ -3395,10 +3384,18 @@
           }
           video.onplaying = markFirstFrame;
           if (video.paused) {
-            try { await video.play(); } catch (e) { console.warn("Video play error:", e); }
+            await video.play();
+          }
+          const stream = video.srcObject;
+          const activeVideoTrack = stream && stream.getVideoTracks && stream.getVideoTracks().some(track => track.readyState === 'live');
+          if (!activeVideoTrack) {
+            throw new Error('Camera started without an active video track');
           }
           startVideoTrackingScheduler(video, session);
+        } else {
+          throw new Error('Camera started without a video element');
         }
+        isCameraRunning = true;
         if (renderer && renderer.domElement) {
           renderer.domElement.style.zIndex = '2';
           renderer.domElement.style.background = 'transparent';
@@ -3429,7 +3426,6 @@
         } catch (err3) {
           console.error("All camera start attempts failed:", err3);
           cleanARContainer();
-          els.cameraError.classList.remove('hidden');
           throw err || err3;
         }
       }

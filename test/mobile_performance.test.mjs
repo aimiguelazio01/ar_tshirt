@@ -9,12 +9,38 @@ import { createAnimationTime, onActionFinished } from '../src/runtime/animation-
 import { createSessionManager } from '../src/runtime/session-state.mjs';
 import { createTrackingScheduler } from '../src/runtime/tracking-scheduler.mjs';
 import { createQualityPolicy } from '../src/runtime/quality-policy.mjs';
+import { canStreamWithProgress, readResponseArrayBuffer } from '../src/runtime/response-body.mjs';
 
 function computeSha(buffer, length = 16) {
   return crypto.createHash('sha256').update(buffer).digest('hex').slice(0, length);
 }
 
 test('Mobile Performance — Step 6 Production Tests', async (t) => {
+
+  await t.test('0. Model response reader never locks an indeterminate or compressed response', async () => {
+    const compressedResponse = new Response(new Uint8Array([1, 2, 3]), {
+      headers: { 'content-encoding': 'br' }
+    });
+    assert.equal(canStreamWithProgress(compressedResponse), false);
+    assert.deepEqual([...new Uint8Array(await readResponseArrayBuffer(compressedResponse))], [1, 2, 3]);
+
+    const indeterminateResponse = new Response(new Uint8Array([4, 5, 6]));
+    assert.equal(canStreamWithProgress(indeterminateResponse), false);
+    assert.deepEqual([...new Uint8Array(await readResponseArrayBuffer(indeterminateResponse))], [4, 5, 6]);
+  });
+
+  await t.test('0b. Model response reader streams only identity responses with an honest byte total', async () => {
+    const response = new Response(new Uint8Array([7, 8, 9]), {
+      headers: { 'content-length': '3', 'content-encoding': 'identity' }
+    });
+    const progress = [];
+    assert.equal(canStreamWithProgress(response), true);
+    assert.deepEqual(
+      [...new Uint8Array(await readResponseArrayBuffer(response, item => progress.push(item)))],
+      [7, 8, 9]
+    );
+    assert.deepEqual(progress, [{ loadedBytes: 3, totalBytes: 3 }]);
+  });
 
   // =========================================================================
   // 1. Elapsed-time playback equivalence at 60/30/15/10/5 FPS & suspension
