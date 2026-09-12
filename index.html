@@ -5,6 +5,7 @@
   <meta charset="utf-8" />
   <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     name="viewport" />
+  <meta name="app-build" content="3700930" />
   <title>MONSTER AR — Apparel Experience</title>
 
   <!-- Google Fonts: Plus Jakarta Sans (Modern Editorial & Product Sans), Inter & JetBrains Mono -->
@@ -1504,10 +1505,16 @@
 
     // Local in-memory telemetry recording (zero network overhead, zero console hijacking)
     const PerformanceDiagnostics = {
+      buildSha: document.querySelector('meta[name="app-build"]')?.content || '3700930',
       lastFrameTime: 0,
       currentWindowStart: performance.now(),
       currentWindowIntervals: [],
       rollingWindows: [], // 2-second sampling windows
+      registeredLoops: new Set(),
+      registeredWorkers: new Set(),
+      poseTimestamps: [],
+      handTimestamps: [],
+      milestones: {},
       metrics: {
         medianFrameInterval: 0,
         p90FrameInterval: 0,
@@ -1526,7 +1533,38 @@
         handHz: 0,
         resultAge: 0,
         sceneGeneration: 0,
-        activeLoops: 0
+        activeLoops: 0,
+        activeWorkers: 0,
+        modelDownloadDuration: 0,
+        modelParseDuration: 0,
+        cameraRequestDuration: 0,
+        firstVideoFrameDuration: 0,
+        firstMarkerDetectionDuration: 0,
+        firstCharacterRenderDuration: 0
+      },
+      registerLoop(name) {
+        this.registeredLoops.add(name);
+        this.metrics.activeLoops = this.registeredLoops.size;
+      },
+      unregisterLoop(name) {
+        this.registeredLoops.delete(name);
+        this.metrics.activeLoops = this.registeredLoops.size;
+      },
+      registerWorker(id) {
+        this.registeredWorkers.add(id);
+        this.metrics.activeWorkers = this.registeredWorkers.size;
+      },
+      unregisterWorker(id) {
+        this.registeredWorkers.delete(id);
+        this.metrics.activeWorkers = this.registeredWorkers.size;
+      },
+      resetWindows() {
+        this.lastFrameTime = 0;
+        this.currentWindowStart = performance.now();
+        this.currentWindowIntervals = [];
+      },
+      recordMilestone(name, value) {
+        this.milestones[name] = value;
       },
       recordFrame(renderer) {
         const now = performance.now();
@@ -1543,10 +1581,8 @@
           this.currentWindowIntervals = [];
         }
 
-        let active = 0;
-        if (typeof isCameraRunning !== 'undefined' && isCameraRunning && !isSimulatorMode && renderer) active++;
-        if (typeof isSimulatorMode !== 'undefined' && isSimulatorMode && simAnimId) active++;
-        this.metrics.activeLoops = active;
+        this.metrics.activeLoops = this.registeredLoops.size;
+        this.metrics.activeWorkers = this.registeredWorkers.size;
         if (typeof sceneGeneration !== 'undefined') {
           this.metrics.sceneGeneration = sceneGeneration;
         }
@@ -1582,6 +1618,14 @@
         this.metrics.p90FrameInterval = Number(p90.toFixed(2));
         this.metrics.p95FrameInterval = Number(p95.toFixed(2));
         this.metrics.medianFps = median > 0 ? Number((1000 / median).toFixed(1)) : 0;
+
+        // Compute rolling 1-second Hz for pose and hand inferences
+        const oneSecAgo = now - 1000;
+        this.poseTimestamps = this.poseTimestamps.filter(t => t >= oneSecAgo);
+        this.handTimestamps = this.handTimestamps.filter(t => t >= oneSecAgo);
+        this.metrics.poseHz = this.poseTimestamps.length;
+        this.metrics.handHz = this.handTimestamps.length;
+
         this.rollingWindows.push({ time: Number(now.toFixed(0)), median: this.metrics.medianFrameInterval, p90: this.metrics.p90FrameInterval, p95: this.metrics.p95FrameInterval, count: sorted.length });
         if (this.rollingWindows.length > 30) this.rollingWindows.shift();
 
@@ -1590,10 +1634,13 @@
         }
       },
       recordInference(task, duration, age) {
+        const now = performance.now();
         if (task === 'pose') {
           this.metrics.poseInferenceDuration = Number(duration.toFixed(1));
+          this.poseTimestamps.push(now);
         } else if (task === 'hand') {
           this.metrics.handInferenceDuration = Number(duration.toFixed(1));
+          this.handTimestamps.push(now);
         }
         if (typeof age === 'number') {
           this.metrics.resultAge = Number(age.toFixed(1));
@@ -1601,7 +1648,9 @@
       },
       getSnapshot() {
         return {
+          buildSha: this.buildSha,
           ...this.metrics,
+          milestones: { ...this.milestones },
           qualityProfile: (typeof QualityPolicy !== 'undefined') ? QualityPolicy.profile : 'desktop',
           marks: performance.getEntriesByType('mark').map(m => ({ name: m.name, time: Number(m.startTime.toFixed(1)) })),
           measures: performance.getEntriesByType('measure').map(m => ({ name: m.name, duration: Number(m.duration.toFixed(1)) }))
@@ -1611,9 +1660,11 @@
     window.PerformanceDiagnostics = PerformanceDiagnostics;
 
     function logPerformanceSummary() {
+      if (!window.DEBUG_PERFORMANCE) return;
       try {
         const snap = PerformanceDiagnostics.getSnapshot();
         console.group('⏱️ WebAR Diagnostics & Performance Snapshot');
+        console.log('Build SHA:', snap.buildSha);
         console.table(snap.marks);
         if (snap.measures.length > 0) {
           console.table(snap.measures);
@@ -1626,7 +1677,9 @@
           triangles: snap.triangles,
           buffer: `${snap.drawingBufferWidth}x${snap.drawingBufferHeight} (DPR: ${snap.pixelRatio})`,
           textures: snap.textures,
-          geometries: snap.geometries
+          geometries: snap.geometries,
+          activeLoops: snap.activeLoops,
+          activeWorkers: snap.activeWorkers
         });
         console.groupEnd();
       } catch (e) {}
@@ -2160,22 +2213,27 @@
     document.addEventListener('visibilitychange', () => {
       isDocumentHidden = document.hidden;
       isPageVisible = !isDocumentHidden;
+      PerformanceDiagnostics.resetWindows();
       if (isDocumentHidden) {
         console.log('[Lifecycle] Page hidden — pausing animation loops & inference');
         if (renderer && typeof renderer.setAnimationLoop === 'function') {
           try { renderer.setAnimationLoop(null); } catch (e) {}
+          PerformanceDiagnostics.unregisterLoop('ar_renderLoop');
         }
         if (simAnimId) {
           cancelAnimationFrame(simAnimId);
           simAnimId = null;
+          PerformanceDiagnostics.unregisterLoop('sim_loop');
         }
       } else {
         console.log('[Lifecycle] Page visible — resuming active loop');
         if (!isSimulatorMode && isCameraRunning && renderer && typeof renderer.setAnimationLoop === 'function') {
           renderer.setAnimationLoop(renderLoop);
+          PerformanceDiagnostics.registerLoop('ar_renderLoop');
         }
         if (isSimulatorMode && !simAnimId && typeof simLoopRef === 'function') {
           simAnimId = requestAnimationFrame(simLoopRef);
+          PerformanceDiagnostics.registerLoop('sim_loop');
         }
       }
     });
@@ -2336,6 +2394,7 @@
       // 2. Stop AR animation loop before clearing renderer references
       if (renderer && typeof renderer.setAnimationLoop === 'function') {
         try { renderer.setAnimationLoop(null); } catch (e) { }
+        PerformanceDiagnostics.unregisterLoop('ar_renderLoop');
       }
 
       if (arResizeHandler) {
@@ -2770,6 +2829,7 @@
         // Start rendering preview IMMEDIATELY so 3D character is visible from frame 1
         QualityPolicy.applyToRenderer(renderer, camera);
         renderer.setAnimationLoop(renderLoop);
+        PerformanceDiagnostics.registerLoop('ar_renderLoop');
 
         await mindarThree.start();
         isCameraRunning = true;
@@ -6093,15 +6153,18 @@
         simCamera = null;
         simMonster = null;
         simLoopRef = null;
+        PerformanceDiagnostics.unregisterLoop('sim_loop');
       };
 
       const simClock = new THREE.Clock();
       const simLoop = () => {
         if (isDocumentHidden || !isSimulatorMode) {
           simAnimId = null;
+          PerformanceDiagnostics.unregisterLoop('sim_loop');
           return;
         }
         simAnimId = requestAnimationFrame(simLoop);
+        PerformanceDiagnostics.registerLoop('sim_loop');
         const rawDelta = simClock.getDelta();
         const delta = Math.max(0.001, Math.min(rawDelta || 0.016, 0.08));
 
