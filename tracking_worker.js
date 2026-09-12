@@ -34,10 +34,22 @@ async function createLandmarker(type, vision, url, delegate) {
   }
 }
 
-async function initTask(type, vision, localUrl, remoteUrl) {
+async function initTask(type, vision, localUrl, remoteUrl, requestedDelegate = 'auto') {
+  if (requestedDelegate === 'cpu') {
+    try {
+      return await createLandmarker(type, vision, localUrl, 'CPU');
+    } catch (err) {
+      console.warn(`[Worker] Local CPU failed for ${type}, trying remote CPU:`, err);
+      return await createLandmarker(type, vision, remoteUrl, 'CPU');
+    }
+  }
   try {
     return await createLandmarker(type, vision, localUrl, 'GPU');
   } catch (err1) {
+    if (requestedDelegate === 'gpu') {
+      console.warn(`[Worker] Forced GPU failed for ${type}:`, err1);
+      throw err1;
+    }
     console.warn(`[Worker] GPU delegate failed for ${type}, falling back to CPU:`, err1);
     try {
       return await createLandmarker(type, vision, localUrl, 'CPU');
@@ -53,7 +65,7 @@ async function initTask(type, vision, localUrl, remoteUrl) {
   }
 }
 
-async function initVision(workerId, assets = {}, enabledTasks = ['pose', 'hand']) {
+async function initVision(workerId, assets = {}, enabledTasks = ['pose', 'hand'], delegate = 'auto') {
   if (isReady) {
     self.postMessage({ type: 'ready', workerId });
     return;
@@ -67,6 +79,11 @@ async function initVision(workerId, assets = {}, enabledTasks = ['pose', 'hand']
       assets.wasmUrl || 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
     );
 
+    if (!isInitializing || currentWorkerId !== workerId) {
+      disposeLandmarkers();
+      return;
+    }
+
     const localPoseUrl = assets.poseModelUrl || new URL('assets/models/pose_landmarker_lite.task', self.location.href).href;
     const remotePoseUrl = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
     const localHandUrl = assets.handModelUrl || new URL('assets/models/hand_landmarker.task', self.location.href).href;
@@ -74,14 +91,14 @@ async function initVision(workerId, assets = {}, enabledTasks = ['pose', 'hand']
 
     // Sequential initialization to reduce peak memory usage
     if (enabledTasks.includes('pose') && !poseLandmarker) {
-      poseLandmarker = await initTask('pose', vision, localPoseUrl, remotePoseUrl);
+      poseLandmarker = await initTask('pose', vision, localPoseUrl, remotePoseUrl, delegate);
       if (!isInitializing || currentWorkerId !== workerId) {
         disposeLandmarkers();
         return;
       }
     }
     if (enabledTasks.includes('hand') && !handLandmarker) {
-      handLandmarker = await initTask('hand', vision, localHandUrl, remoteHandUrl);
+      handLandmarker = await initTask('hand', vision, localHandUrl, remoteHandUrl, delegate);
       if (!isInitializing || currentWorkerId !== workerId) {
         disposeLandmarkers();
         return;
@@ -121,10 +138,10 @@ self.onmessage = async (e) => {
   const data = e.data;
   if (!data) return;
 
-  const { type, workerId, sessionId, frameId, task, capturedAt, bitmap, assets, enabledTasks } = data;
+  const { type, workerId, sessionId, frameId, task, capturedAt, bitmap, assets, enabledTasks, delegate } = data;
 
   if (type === 'init') {
-    initVision(workerId || 'default', assets, enabledTasks);
+    initVision(workerId || 'default', assets, enabledTasks, delegate || 'auto');
     return;
   }
 

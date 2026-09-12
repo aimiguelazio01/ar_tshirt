@@ -1393,11 +1393,32 @@
     window.DISABLE_HANDS = urlParams.get('noHands') === '1';
     window.DISABLE_VFX = urlParams.get('noVfx') === '1';
 
+    // Diagnostic-only controls: trackingDelegate=auto|cpu|gpu, cameraProfile=standard|economy, quality=auto|balanced|reduced
+    const rawTrackingDelegate = (urlParams.get('trackingDelegate') || '').toLowerCase();
+    window.DIAGNOSTIC_TRACKING_DELEGATE = ['auto', 'cpu', 'gpu'].includes(rawTrackingDelegate) ? rawTrackingDelegate : 'auto';
+
+    const rawCameraProfile = (urlParams.get('cameraProfile') || '').toLowerCase();
+    window.DIAGNOSTIC_CAMERA_PROFILE = ['standard', 'economy'].includes(rawCameraProfile) ? rawCameraProfile : 'standard';
+
+    const rawQuality = (urlParams.get('quality') || '').toLowerCase();
+    window.DIAGNOSTIC_QUALITY = ['auto', 'balanced', 'reduced'].includes(rawQuality) ? rawQuality : 'auto';
+
+    const cameraProfiles = {
+      standard: { width: { ideal: 1280 }, height: { ideal: 720 },
+                  frameRate: { ideal: 30, max: 30 } },
+      economy:  { width: { ideal: 960 }, height: { ideal: 540 },
+                  frameRate: { ideal: 30, max: 30 } }
+    };
+    window.cameraProfiles = cameraProfiles;
+
     if (isDebugPerformance) {
-      console.log('🔧 [Diagnostics] Performance mode active. Isolation flags:', {
+      console.log('🔧 [Diagnostics] Performance mode active. Controls:', {
         DISABLE_POSE: window.DISABLE_POSE,
         DISABLE_HANDS: window.DISABLE_HANDS,
-        DISABLE_VFX: window.DISABLE_VFX
+        DISABLE_VFX: window.DISABLE_VFX,
+        trackingDelegate: window.DIAGNOSTIC_TRACKING_DELEGATE,
+        cameraProfile: window.DIAGNOSTIC_CAMERA_PROFILE,
+        quality: window.DIAGNOSTIC_QUALITY
       });
     }
 
@@ -1423,7 +1444,10 @@
 
     const QualityPolicy = {
       isMobile: isMobileDevice,
-      profile: isMobileDevice ? 'balanced' : 'desktop', // 'desktop', 'balanced', or 'reduced'
+      forcedProfile: (window.DIAGNOSTIC_QUALITY && window.DIAGNOSTIC_QUALITY !== 'auto') ? window.DIAGNOSTIC_QUALITY : null,
+      profile: (window.DIAGNOSTIC_QUALITY && window.DIAGNOSTIC_QUALITY !== 'auto')
+        ? window.DIAGNOSTIC_QUALITY
+        : (isMobileDevice ? 'balanced' : 'desktop'), // 'desktop', 'balanced', or 'reduced'
       consecutiveHighWindows: 0,
       consecutiveLowWindows: 0,
 
@@ -1496,7 +1520,7 @@
       },
 
       recordWindow(windowStats) {
-        if (!this.isMobile) return;
+        if (!this.isMobile || this.forcedProfile) return;
         const p90 = windowStats.p90;
         if (p90 > 40) {
           this.consecutiveHighWindows++;
@@ -1563,6 +1587,10 @@
     // Local in-memory telemetry recording (zero network overhead, zero console hijacking)
     const PerformanceDiagnostics = {
       buildSha: document.querySelector('meta[name="app-build"]')?.content || '3700930',
+      cameraProfile: window.DIAGNOSTIC_CAMERA_PROFILE || 'standard',
+      trackingDelegate: window.DIAGNOSTIC_TRACKING_DELEGATE || 'auto',
+      diagnosticQuality: window.DIAGNOSTIC_QUALITY || 'auto',
+      actualCameraSettings: null,
       lastFrameTime: 0,
       currentWindowStart: performance.now(),
       currentWindowIntervals: [],
@@ -1710,6 +1738,10 @@
       getSnapshot() {
         return {
           buildSha: this.buildSha,
+          cameraProfile: this.cameraProfile,
+          actualCameraSettings: this.actualCameraSettings,
+          trackingDelegate: this.trackingDelegate,
+          diagnosticQuality: this.diagnosticQuality,
           ...this.metrics,
           milestones: { ...this.milestones },
           qualityProfile: (typeof QualityPolicy !== 'undefined') ? QualityPolicy.profile : 'desktop',
@@ -1726,6 +1758,13 @@
         const snap = PerformanceDiagnostics.getSnapshot();
         console.group('⏱️ WebAR Diagnostics & Performance Snapshot');
         console.log('Build SHA:', snap.buildSha);
+        console.log('Diagnostic Controls:', {
+          cameraProfile: snap.cameraProfile,
+          actualCameraSettings: snap.actualCameraSettings,
+          trackingDelegate: snap.trackingDelegate,
+          diagnosticQuality: snap.diagnosticQuality,
+          qualityProfile: snap.qualityProfile
+        });
         console.table(snap.marks);
         if (snap.measures.length > 0) {
           console.table(snap.measures);
@@ -1840,9 +1879,13 @@
               c.video.facingMode = { ideal: c.video.facingMode.exact };
             }
 
+            const activeCamProfile = cameraProfiles[window.DIAGNOSTIC_CAMERA_PROFILE || 'standard'] || cameraProfiles.standard;
             if (!c.video.width && !c.video.height) {
-              c.video.width = { ideal: 1280 };
-              c.video.height = { ideal: 720 };
+              c.video.width = activeCamProfile.width;
+              c.video.height = activeCamProfile.height;
+              if (activeCamProfile.frameRate) {
+                c.video.frameRate = activeCamProfile.frameRate;
+              }
             }
           }
         }
@@ -1879,6 +1922,12 @@
         }
 
         activeMediaStream = stream;
+        try {
+          const videoTrack = stream.getVideoTracks()[0];
+          if (videoTrack && typeof videoTrack.getSettings === 'function') {
+            PerformanceDiagnostics.actualCameraSettings = videoTrack.getSettings();
+          }
+        } catch (e) {}
         return stream;
       };
     }
@@ -2277,7 +2326,8 @@
                 poseModelUrl: new URL(CONFIG.poseModelUrl || 'assets/models/pose_landmarker_lite.task', location.href).href,
                 handModelUrl: new URL(CONFIG.handModelUrl || 'assets/models/hand_landmarker.task', location.href).href
               },
-              enabledTasks
+              enabledTasks,
+              delegate: window.DIAGNOSTIC_TRACKING_DELEGATE || 'auto'
             });
             await ensureWorkerTrackingReady();
             workerStarted = true;
@@ -6204,7 +6254,11 @@
             poseModelUrl: new URL(CONFIG.poseModelUrl || 'assets/models/pose_landmarker_lite.task', location.href).href,
             handModelUrl: new URL(CONFIG.handModelUrl || 'assets/models/hand_landmarker.task', location.href).href
           },
-          enabledTasks: ['pose', 'hand']
+          enabledTasks: [
+            ...(!window.DISABLE_POSE ? ['pose'] : []),
+            ...(!window.DISABLE_HANDS ? ['hand'] : [])
+          ],
+          delegate: window.DIAGNOSTIC_TRACKING_DELEGATE || 'auto'
         });
       } catch (e) {
         activateMainThreadFallback('Worker constructor failed: ' + (e.message || String(e)));
@@ -6408,9 +6462,11 @@
           return;
         }
 
-        const isReduced = QualityPolicy && QualityPolicy.profile === 'reduced';
-        const poseInterval = isReduced ? 166 : 100; // 6 Hz or 10 Hz
-        const handInterval = isReduced ? 100 : 66;  // 10 Hz or 15 Hz
+        const policy = (typeof QualityPolicy !== 'undefined' && QualityPolicy.getPolicy)
+          ? QualityPolicy.getPolicy()
+          : { poseCeilingHz: 10, handCeilingHz: 15, trackingFrameMaxEdge: 640 };
+        const poseInterval = Math.round(1000 / (policy.poseCeilingHz || 10));
+        const handInterval = Math.round(1000 / (policy.handCeilingHz || 15));
 
         const canRunPose = !window.DISABLE_POSE;
         const canRunHands = !window.DISABLE_HANDS && isTargetLocked && isPlaneInteractionActive && !arePlanesDisappeared;
@@ -6435,7 +6491,7 @@
         const vh = video.videoHeight;
         if (!vw || !vh) return;
 
-        const maxEdge = isReduced ? 480 : 640;
+        const maxEdge = policy.trackingFrameMaxEdge || 640;
         const scale = Math.min(1.0, maxEdge / Math.max(vw, vh));
         const targetW = Math.round(vw * scale);
         const targetH = Math.round(vh * scale);
