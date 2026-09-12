@@ -323,6 +323,18 @@
       transition: filter 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1) !important;
     }
 
+    /* Reduced Quality Mode Overrides: eliminate expensive live camera and modal backdrop blurs */
+    body.reduced-quality #ar-container video.camera-welcome-blur {
+      filter: brightness(0.35) !important;
+    }
+    body.reduced-quality .backdrop-blur-xl,
+    body.reduced-quality .backdrop-blur-2xl,
+    body.reduced-quality .backdrop-blur-md,
+    body.reduced-quality .backdrop-blur-sm {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+
     #screen-welcome {
       position: absolute;
       inset: 0;
@@ -1395,6 +1407,21 @@
     // ---------------------------------------------------------------
     const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (window.innerWidth <= 768);
 
+    function applyBufferBudget(renderer, container, policy) {
+      const width = container ? container.clientWidth : window.innerWidth;
+      const height = container ? container.clientHeight : window.innerHeight;
+      if (!width || !height) return;
+
+      const ratio = Math.min(
+        window.devicePixelRatio || 1,
+        policy.maxPixelRatio,
+        Math.sqrt(policy.maxBufferPixels / (width * height))
+      );
+
+      renderer.setPixelRatio(ratio);
+      renderer.setSize(width, height, false);
+    }
+
     const QualityPolicy = {
       isMobile: isMobileDevice,
       profile: isMobileDevice ? 'balanced' : 'desktop', // 'desktop', 'balanced', or 'reduced'
@@ -1406,9 +1433,15 @@
           return {
             maxPixelRatio: Math.min(window.devicePixelRatio || 1, 2),
             maxBufferPixels: 2073600, // 1080p
+            ambientParticles: 160,
+            sparksPerEffect: 20,
             particleMultiplier: 1.0,
             enableSecondaryLights: true,
+            temporaryEffectLights: true,
             enableVfxBursts: true,
+            poseCeilingHz: 15,
+            handCeilingHz: 20,
+            trackingFrameMaxEdge: 720,
             profile: 'desktop'
           };
         }
@@ -1416,9 +1449,15 @@
           return {
             maxPixelRatio: 0.75,
             maxBufferPixels: 650000,
+            ambientParticles: 30,
+            sparksPerEffect: 6,
             particleMultiplier: 0.5,
             enableSecondaryLights: false,
-            enableVfxBursts: false,
+            temporaryEffectLights: false,
+            enableVfxBursts: true,
+            poseCeilingHz: 6,
+            handCeilingHz: 10,
+            trackingFrameMaxEdge: 480,
             profile: 'reduced'
           };
         }
@@ -1426,34 +1465,34 @@
         return {
           maxPixelRatio: 1.0,
           maxBufferPixels: 1000000,
+          ambientParticles: 80,
+          sparksPerEffect: 12,
           particleMultiplier: 1.0,
           enableSecondaryLights: true,
+          temporaryEffectLights: true,
           enableVfxBursts: true,
+          poseCeilingHz: 10,
+          handCeilingHz: 15,
+          trackingFrameMaxEdge: 640,
           profile: 'balanced'
         };
       },
 
-      applyToRenderer(targetRenderer, targetCamera) {
+      applyToRenderer(targetRenderer, targetCamera, targetContainer) {
         if (!targetRenderer) return;
         const policy = this.getPolicy();
-        const width = window.innerWidth;
-        const height = window.innerHeight;
-        let dpr = Math.min(window.devicePixelRatio || 1, policy.maxPixelRatio);
+        const container = targetContainer || (els && els.arContainer ? els.arContainer : document.body);
+        applyBufferBudget(targetRenderer, container, policy);
 
-        // Cap drawing-buffer resolution to maxBufferPixels
-        const testPixels = width * dpr * height * dpr;
-        if (testPixels > policy.maxBufferPixels) {
-          dpr = Math.sqrt(policy.maxBufferPixels / (width * height));
-        }
-        dpr = Math.max(0.5, Math.min(dpr, policy.maxPixelRatio));
-
-        targetRenderer.setPixelRatio(dpr);
-        targetRenderer.setSize(width, height, false);
-
-        if (targetCamera) {
-          const asp = width / height;
-          targetCamera.aspect = asp;
-          targetCamera.updateProjectionMatrix();
+        // Only update camera projection for simulator / preview camera!
+        // MindAR manages AR camera projection and aspect directly.
+        if (targetCamera && isSimulatorMode) {
+          const width = container.clientWidth || window.innerWidth;
+          const height = container.clientHeight || window.innerHeight;
+          if (width && height) {
+            targetCamera.aspect = width / height;
+            targetCamera.updateProjectionMatrix();
+          }
         }
       },
 
@@ -1485,10 +1524,29 @@
         this.consecutiveLowWindows = 0;
         console.log(`⚡ [QualityPolicy] Profile switched to: ${newProfile}`);
 
-        if (typeof renderer !== 'undefined' && renderer) this.applyToRenderer(renderer, typeof camera !== 'undefined' ? camera : null);
-        if (typeof simRenderer !== 'undefined' && simRenderer) this.applyToRenderer(simRenderer, typeof simCamera !== 'undefined' ? simCamera : null);
+        if (newProfile === 'reduced') {
+          document.body.classList.add('reduced-quality');
+        } else {
+          document.body.classList.remove('reduced-quality');
+        }
 
-        const enableLights = this.getPolicy().enableSecondaryLights;
+        const policy = this.getPolicy();
+        if (typeof renderer !== 'undefined' && renderer) {
+          this.applyToRenderer(renderer, null, (els && els.arContainer) ? els.arContainer : null);
+        }
+        if (typeof simRenderer !== 'undefined' && simRenderer) {
+          this.applyToRenderer(simRenderer, simCamera, (els && els.arContainer) ? els.arContainer : null);
+        }
+
+        // Update active particle draw counts dynamically
+        if (typeof particleSystem !== 'undefined' && particleSystem && particleSystem.geometry) {
+          particleSystem.geometry.setDrawRange(0, policy.ambientParticles);
+        }
+        if (typeof simParticleSystem !== 'undefined' && simParticleSystem && simParticleSystem.geometry) {
+          simParticleSystem.geometry.setDrawRange(0, policy.ambientParticles);
+        }
+
+        const enableLights = policy.enableSecondaryLights;
         if (typeof simScene !== 'undefined' && simScene) {
           simScene.traverse(c => {
             if (c.isPointLight) c.visible = enableLights;
@@ -1562,6 +1620,10 @@
         this.lastFrameTime = 0;
         this.currentWindowStart = performance.now();
         this.currentWindowIntervals = [];
+        if (typeof QualityPolicy !== 'undefined') {
+          QualityPolicy.consecutiveHighWindows = 0;
+          QualityPolicy.consecutiveLowWindows = 0;
+        }
       },
       recordMilestone(name, value) {
         this.milestones[name] = value;
@@ -2349,6 +2411,28 @@
     let isSimulatorMode = false;
     let simAnimId = null, simRenderer, simScene, simCamera, simMonster, simMixer;
     let isDragging = false, prevMouseX = 0, prevMouseY = 0;
+    let cachedArRootBone = null;
+    let cachedSimRootBone = null;
+    let cachedVideoEl = null;
+    let simParticleSystem = null;
+    const activeVfxList = new Set();
+
+    function updateEffects(delta) {
+      if (activeVfxList.size === 0) return;
+      activeVfxList.forEach(fx => {
+        try {
+          const alive = fx.update(delta);
+          if (!alive) {
+            fx.dispose();
+            activeVfxList.delete(fx);
+          }
+        } catch (e) {
+          console.warn('[VFX] update error:', e);
+          try { fx.dispose(); } catch (d) {}
+          activeVfxList.delete(fx);
+        }
+      });
+    }
 
     // ---------------------------------------------------------------
     // 0. Capability check & Device Enumeration
@@ -2491,6 +2575,13 @@
       pendingFrame = null;
       isCapturingFrame = false;
       clearPendingGestures();
+      activeVfxList.forEach(fx => {
+        try { fx.dispose(); } catch (e) {}
+      });
+      activeVfxList.clear();
+      cachedArRootBone = null;
+      cachedSimRootBone = null;
+      cachedVideoEl = null;
 
       if (typeof isRightArmCurrentlyUp !== 'undefined') isRightArmCurrentlyUp = false;
       if (typeof isLeftArmCurrentlyUp !== 'undefined') isLeftArmCurrentlyUp = false;
@@ -3120,11 +3211,12 @@
       lightContainer.add(frontLight);
       lightContainer.add(pointLight);
 
-      // 2. Particle field
-      const count = Math.round(CONFIG.maxParticles * (typeof QualityPolicy !== 'undefined' ? QualityPolicy.getPolicy().particleMultiplier : 1.0));
-      const positions = new Float32Array(count * 3);
-      particleVelocities = new Float32Array(count * 3);
-      for (let i = 0; i < count; i++) {
+      // 2. Particle field: Allocate capacity once, use setDrawRange for active ambient particles
+      const MAX_PARTICLES = 220;
+      const policy = (typeof QualityPolicy !== 'undefined') ? QualityPolicy.getPolicy() : { ambientParticles: 80 };
+      const positions = new Float32Array(MAX_PARTICLES * 3);
+      particleVelocities = new Float32Array(MAX_PARTICLES * 3);
+      for (let i = 0; i < MAX_PARTICLES; i++) {
         positions[i * 3 + 0] = (Math.random() - 0.5) * 1.5;
         positions[i * 3 + 1] = (Math.random() - 0.5) * 1.5;
         positions[i * 3 + 2] = Math.random() * 0.8;
@@ -3134,6 +3226,7 @@
       }
       const pGeo = new THREE.BufferGeometry();
       pGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      pGeo.setDrawRange(0, policy.ambientParticles);
       const pMat = new THREE.PointsMaterial({ color: 0xfff2d6, size: 0.015, transparent: true, opacity: 0.85 });
       particleSystem = new THREE.Points(pGeo, pMat);
       group.add(particleSystem);
@@ -3149,6 +3242,7 @@
       const instantiateModel = (gltf) => {
         // Clone scene using SkeletonUtils for full skinned mesh/skeleton integrity
         monsterModel = window.SkeletonUtils ? window.SkeletonUtils.clone(gltf.scene) : gltf.scene.clone(true);
+        cachedArRootBone = monsterModel.getObjectByName('C_root');
 
         monsterModel.traverse((child) => {
           if (child.isMesh) {
@@ -3952,10 +4046,17 @@
       explosionGroup.position.copy(spawnPos);
       parentGroup.add(explosionGroup);
 
-      // 1. Point Light Flash
-      const flashLight = new THREE.PointLight(0xff6611, 7.5, 3.5);
-      flashLight.position.set(0, 0, 0.15);
-      explosionGroup.add(flashLight);
+      // 1. Point Light Flash (Gated by QualityPolicy temporaryEffectLights budget)
+      const policy = (typeof QualityPolicy !== 'undefined') ? QualityPolicy.getPolicy() : { sparksPerEffect: 12, temporaryEffectLights: true };
+      const sparkCount = policy.sparksPerEffect || 12;
+      const enableLight = policy.temporaryEffectLights !== false;
+
+      let flashLight = null;
+      if (enableLight) {
+        flashLight = new THREE.PointLight(0xff6611, 7.5, 3.5);
+        flashLight.position.set(0, 0, 0.15);
+        explosionGroup.add(flashLight);
+      }
 
       // 2. Flipbook Sprite (7 cols x 5 rows = 35 centered frames from explosion_01.png)
       const cols = 7;
@@ -4002,8 +4103,7 @@
       coreSprite.renderOrder = 1000;
       explosionGroup.add(coreSprite);
 
-      // 4. Flying Embers / Spark Particles
-      const sparkCount = 20;
+      // 4. Flying Embers / Spark Particles (Budgeted count)
       const sparkGeo = new THREE.BufferGeometry();
       const sparkPositions = new Float32Array(sparkCount * 3);
       const sparkVelocities = [];
@@ -4038,75 +4138,75 @@
         targetMonster.position.x += recoilX;
       }
 
-      // 6. Flipbook Animation sequence across 35 frames
-      const fps = 32; // ~31ms per frame => 1.09s total blast lifetime
-      const frameIntervalMs = 1000 / fps;
-      let currentFrame = 0;
+      // 6. Flipbook Animation sequence driven by render loop delta (zero timers)
+      let elapsed = 0;
+      const totalDuration = 1.09; // seconds
 
-      const animTimer = setInterval(() => {
-        currentFrame++;
-        if (currentFrame >= totalFrames) {
-          activeEffectTimers.delete(animTimer);
-          clearInterval(animTimer);
-          // Clean up scene-owned Three.js resources (preserve shared spriteTex)
-          parentGroup.remove(explosionGroup);
+      const fx = {
+        update(delta) {
+          elapsed += delta;
+          const progress = Math.min(1.0, elapsed / totalDuration);
+          const currentFrame = Math.min(totalFrames - 1, Math.floor(progress * totalFrames));
+
+          // Advance UV tile: 7 cols x 5 rows
+          const col = currentFrame % cols;
+          const row = Math.floor(currentFrame / cols);
+          spriteTex.offset.x = col / cols;
+          spriteTex.offset.y = (rows - 1 - row) / rows;
+
+          // Rapid fireball expansion followed by slow billowing smoke rise
+          const expansionFactor = 0.55 + Math.sin(progress * Math.PI * 0.55) * 0.40;
+          const currentScale = expansionFactor * baseScale;
+          sprite.scale.set(currentScale, currentScale, 1.0);
+          coreSprite.scale.set(currentScale * 0.75, currentScale * 0.75, 1.0);
+          sprite.position.y += 0.0028 * baseScale * (delta * 32);
+          coreSprite.position.y += 0.0028 * baseScale * (delta * 32);
+
+          if (flashLight) {
+            flashLight.intensity = Math.max(0, 7.5 * (1.0 - progress * 2.2));
+          }
+          if (coreMat) {
+            coreMat.opacity = Math.max(0, 0.85 * (1.0 - progress * 2.5));
+          }
+          if (currentFrame >= 28 && spriteMat) {
+            spriteMat.opacity = Math.max(0, (totalFrames - currentFrame) / (totalFrames - 28));
+          }
+
+          const dtFactor = delta * 30;
+          const pAttr = sparkGeo.attributes.position;
+          for (let i = 0; i < sparkCount; i++) {
+            const v = sparkVelocities[i];
+            pAttr.setX(i, pAttr.getX(i) + v.x * 0.033 * dtFactor);
+            pAttr.setY(i, pAttr.getY(i) + v.y * 0.033 * dtFactor);
+            pAttr.setZ(i, pAttr.getZ(i) + v.z * 0.033 * dtFactor);
+            v.y -= 0.012 * baseScale * dtFactor;
+          }
+          pAttr.needsUpdate = true;
+          if (sparkMat) {
+            sparkMat.opacity = Math.max(0, 1.0 - progress * 1.5);
+          }
+
+          if (targetMonster && recoilX > 0.001) {
+            targetMonster.position.x -= recoilX * 0.35 * dtFactor;
+            recoilX *= Math.pow(0.65, dtFactor);
+          }
+
+          if (progress >= 1.0) {
+            return false;
+          }
+          return true;
+        },
+        dispose() {
+          if (parentGroup) parentGroup.remove(explosionGroup);
           spriteMat.dispose();
           coreMat.dispose();
           sparkMat.dispose();
           sparkGeo.dispose();
-          flashLight.dispose();
-          return;
+          if (flashLight) flashLight.dispose();
         }
+      };
 
-        // Advance UV tile: 7 cols x 5 rows
-        const col = currentFrame % cols;
-        const row = Math.floor(currentFrame / cols);
-        spriteTex.offset.x = col / cols;
-        spriteTex.offset.y = (rows - 1 - row) / rows;
-
-        const progress = currentFrame / totalFrames;
-
-        // Rapid fireball expansion followed by slow billowing smoke rise
-        const expansionFactor = 0.55 + Math.sin(progress * Math.PI * 0.55) * 0.40;
-        const currentScale = expansionFactor * baseScale;
-        sprite.scale.set(currentScale, currentScale, 1.0);
-        coreSprite.scale.set(currentScale * 0.75, currentScale * 0.75, 1.0);
-        sprite.position.y += 0.0028 * baseScale; // rising smoke
-        coreSprite.position.y += 0.0028 * baseScale;
-
-        // Core light & additive flare fade rapidly
-        if (flashLight) {
-          flashLight.intensity = Math.max(0, 7.5 * (1.0 - progress * 2.2));
-        }
-        if (coreMat) {
-          coreMat.opacity = Math.max(0, 0.85 * (1.0 - progress * 2.5));
-        }
-        // Main smoke dissipates on last 7 frames (28-34)
-        if (currentFrame >= 28 && spriteMat) {
-          spriteMat.opacity = Math.max(0, (totalFrames - currentFrame) / (totalFrames - 28));
-        }
-
-        // Update sparks
-        const pAttr = sparkGeo.attributes.position;
-        for (let i = 0; i < sparkCount; i++) {
-          const v = sparkVelocities[i];
-          pAttr.setX(i, pAttr.getX(i) + v.x * 0.033);
-          pAttr.setY(i, pAttr.getY(i) + v.y * 0.033);
-          pAttr.setZ(i, pAttr.getZ(i) + v.z * 0.033);
-          v.y -= 0.012 * baseScale; // gravity pull
-        }
-        pAttr.needsUpdate = true;
-        if (sparkMat) {
-          sparkMat.opacity = Math.max(0, 1.0 - progress * 1.5);
-        }
-
-        // Monster smooth spring-back from recoil
-        if (targetMonster && recoilX > 0.001) {
-          targetMonster.position.x -= recoilX * 0.35;
-          recoilX *= 0.65;
-        }
-      }, frameIntervalMs);
-      activeEffectTimers.add(animTimer);
+      activeVfxList.add(fx);
 
       showToast('💥 3D Explosion Detonated on Top Left!');
       console.log('[VFX] 3D Explosion triggered at top-left', spawnPos);
@@ -4262,10 +4362,17 @@
       stormGroup.renderOrder = 999;
       parentGroup.add(stormGroup);
 
-      // 1. Electric Lightning Strobe Light (Cyan / Electric Violet)
-      const stormLight = new THREE.PointLight(0x00e5ff, 8.5, 4.0);
-      stormLight.position.set(0, 0, 0.18);
-      stormGroup.add(stormLight);
+      // 1. Electric Lightning Strobe Light (Gated by QualityPolicy temporaryEffectLights budget)
+      const policy = (typeof QualityPolicy !== 'undefined') ? QualityPolicy.getPolicy() : { sparksPerEffect: 12, temporaryEffectLights: true };
+      const sparkCount = policy.sparksPerEffect || 12;
+      const enableLight = policy.temporaryEffectLights !== false;
+
+      let stormLight = null;
+      if (enableLight) {
+        stormLight = new THREE.PointLight(0x00e5ff, 8.5, 4.0);
+        stormLight.position.set(0, 0, 0.18);
+        stormGroup.add(stormLight);
+      }
 
       // 2. Flipbook Sprite (6 cols x 5 rows = 30 centered frames from storm_01.png)
       const cols = 6;
@@ -4312,8 +4419,7 @@
       coreSprite.renderOrder = 1000;
       stormGroup.add(coreSprite);
 
-      // 4. Electric Ion Sparks with Swirling Vortex Dynamics
-      const sparkCount = 24;
+      // 4. Electric Ion Sparks with Swirling Vortex Dynamics (Budgeted count)
       const sparkGeo = new THREE.BufferGeometry();
       const sparkPositions = new Float32Array(sparkCount * 3);
       const sparkVelocities = [];
@@ -4351,80 +4457,81 @@
         targetMonster.position.x += recoilX;
       }
 
-      // 6. Flipbook Animation sequence across 30 frames
-      const fps = 28; // ~35ms per frame => ~1.07s total storm lifetime
-      const frameIntervalMs = 1000 / fps;
-      let currentFrame = 0;
+      // 6. Flipbook Animation sequence driven by render loop delta (zero timers)
+      let elapsed = 0;
+      const totalDuration = 1.07; // seconds
 
-      const animTimer = setInterval(() => {
-        currentFrame++;
-        if (currentFrame >= totalFrames) {
-          activeEffectTimers.delete(animTimer);
-          clearInterval(animTimer);
-          // Clean up scene-owned Three.js resources (preserve shared spriteTex)
-          parentGroup.remove(stormGroup);
+      const fx = {
+        update(delta) {
+          elapsed += delta;
+          const progress = Math.min(1.0, elapsed / totalDuration);
+          const currentFrame = Math.min(totalFrames - 1, Math.floor(progress * totalFrames));
+
+          // Advance UV tile: 6 cols x 5 rows
+          const col = currentFrame % cols;
+          const row = Math.floor(currentFrame / cols);
+          spriteTex.offset.x = col / cols;
+          spriteTex.offset.y = (rows - 1 - row) / rows;
+
+          // Swirling storm expansion
+          const expansionFactor = 0.58 + Math.sin(progress * Math.PI * 0.65) * 0.42;
+          const currentScale = expansionFactor * baseScale;
+          sprite.scale.set(currentScale, currentScale, 1.0);
+          coreSprite.scale.set(currentScale * 0.85, currentScale * 0.85, 1.0);
+          sprite.position.y += 0.0020 * baseScale * (delta * 28);
+          coreSprite.position.y += 0.0020 * baseScale * (delta * 28);
+
+          // Lightning strobe flicker
+          if (stormLight) {
+            if (currentFrame < 10) {
+              stormLight.intensity = (Math.random() > 0.3 ? 8.5 : 1.5);
+            } else {
+              stormLight.intensity = Math.max(0, 7.0 * (1.0 - progress * 1.8));
+            }
+          }
+          if (coreMat) {
+            coreMat.opacity = Math.max(0, 0.90 * (1.0 - progress * 2.2));
+          }
+          if (currentFrame >= 24 && spriteMat) {
+            spriteMat.opacity = Math.max(0, (totalFrames - currentFrame) / (totalFrames - 24));
+          }
+
+          const dtFactor = delta * 28;
+          const pAttr = sparkGeo.attributes.position;
+          for (let i = 0; i < sparkCount; i++) {
+            const v = sparkVelocities[i];
+            v.angle += v.angularSpeed * 0.035 * dtFactor;
+            v.radius += v.radialSpeed * 0.035 * dtFactor;
+            pAttr.setX(i, Math.cos(v.angle) * v.radius);
+            pAttr.setY(i, Math.sin(v.angle) * v.radius + progress * 0.10 * baseScale);
+            pAttr.setZ(i, pAttr.getZ(i) + v.zSpeed * 0.035 * dtFactor);
+          }
+          pAttr.needsUpdate = true;
+          if (sparkMat) {
+            sparkMat.opacity = Math.max(0, 1.0 - progress * 1.4);
+          }
+
+          if (targetMonster && recoilX < -0.001) {
+            targetMonster.position.x -= recoilX * 0.35 * dtFactor;
+            recoilX *= Math.pow(0.65, dtFactor);
+          }
+
+          if (progress >= 1.0) {
+            return false;
+          }
+          return true;
+        },
+        dispose() {
+          if (parentGroup) parentGroup.remove(stormGroup);
           spriteMat.dispose();
           coreMat.dispose();
           sparkMat.dispose();
           sparkGeo.dispose();
-          stormLight.dispose();
-          return;
+          if (stormLight) stormLight.dispose();
         }
+      };
 
-        // Advance UV tile: 6 cols x 5 rows
-        const col = currentFrame % cols;
-        const row = Math.floor(currentFrame / cols);
-        spriteTex.offset.x = col / cols;
-        spriteTex.offset.y = (rows - 1 - row) / rows;
-
-        const progress = currentFrame / totalFrames;
-
-        // Swirling storm expansion
-        const expansionFactor = 0.58 + Math.sin(progress * Math.PI * 0.65) * 0.42;
-        const currentScale = expansionFactor * baseScale;
-        sprite.scale.set(currentScale, currentScale, 1.0);
-        coreSprite.scale.set(currentScale * 0.85, currentScale * 0.85, 1.0);
-        sprite.position.y += 0.0020 * baseScale;
-        coreSprite.position.y += 0.0020 * baseScale;
-
-        // Lightning strobe flicker (fast random pulses on initial frames)
-        if (stormLight) {
-          if (currentFrame < 10) {
-            stormLight.intensity = (Math.random() > 0.3 ? 8.5 : 1.5);
-          } else {
-            stormLight.intensity = Math.max(0, 7.0 * (1.0 - progress * 1.8));
-          }
-        }
-        if (coreMat) {
-          coreMat.opacity = Math.max(0, 0.90 * (1.0 - progress * 2.2));
-        }
-        // Fade out last 6 frames (24-29)
-        if (currentFrame >= 24 && spriteMat) {
-          spriteMat.opacity = Math.max(0, (totalFrames - currentFrame) / (totalFrames - 24));
-        }
-
-        // Update vortex sparks
-        const pAttr = sparkGeo.attributes.position;
-        for (let i = 0; i < sparkCount; i++) {
-          const v = sparkVelocities[i];
-          v.angle += v.angularSpeed * 0.035;
-          v.radius += v.radialSpeed * 0.035;
-          pAttr.setX(i, Math.cos(v.angle) * v.radius);
-          pAttr.setY(i, Math.sin(v.angle) * v.radius + progress * 0.10 * baseScale);
-          pAttr.setZ(i, pAttr.getZ(i) + v.zSpeed * 0.035);
-        }
-        pAttr.needsUpdate = true;
-        if (sparkMat) {
-          sparkMat.opacity = Math.max(0, 1.0 - progress * 1.4);
-        }
-
-        // Monster smooth spring-back from recoil
-        if (targetMonster && recoilX < -0.001) {
-          targetMonster.position.x -= recoilX * 0.35;
-          recoilX *= 0.65;
-        }
-      }, frameIntervalMs);
-      activeEffectTimers.add(animTimer);
+      activeVfxList.add(fx);
 
       showToast('⚡ 3D Electric Storm Summoned on Top Right!');
       console.log('[VFX] 3D Storm triggered at top-right', spawnPos);
@@ -6137,7 +6244,7 @@
       }
 
       // Prevent character from jumping through or behind the camera
-      const arRoot = monsterModel ? monsterModel.getObjectByName('C_root') : null;
+      const arRoot = cachedArRootBone || (monsterModel ? (cachedArRootBone = monsterModel.getObjectByName('C_root')) : null);
       if (arRoot && camera && monsterModel) {
         monsterModel.getWorldPosition(_scratchV1);
         camera.getWorldPosition(_scratchV2);
@@ -6181,26 +6288,32 @@
         animMesh.rotation.y = Math.atan2(dx, dz);
       }
 
+      // Update ambient particles based on QualityPolicy drawRange and delta time
       if (particleSystem) {
+        const policy = (typeof QualityPolicy !== 'undefined') ? QualityPolicy.getPolicy() : null;
+        const activeCount = policy ? Math.min(policy.ambientParticles || 80, 220) : 80;
         const pos = particleSystem.geometry.attributes.position;
         const arr = pos.array;
-        const count = pos.count;
-        for (let i = 0; i < count; i++) {
+        const dtFactor = delta * 60;
+        for (let i = 0; i < activeCount; i++) {
           const idxY = i * 3 + 1;
-          let y = arr[idxY] + particleVelocities[idxY];
+          let y = arr[idxY] + particleVelocities[idxY] * dtFactor;
           if (y > 0.6) y = -0.2;
           arr[idxY] = y;
-          arr[i * 3] += particleVelocities[i * 3];
+          arr[i * 3] += particleVelocities[i * 3] * dtFactor;
         }
         pos.needsUpdate = true;
       }
 
+      // Update active 3D explosions and electric storm VFX in the render loop
+      updateEffects(delta);
+
       // 3D Floating Buttons: Micro-float animation & Gesture Opacity Fade
       if (planesModel) {
-        const FADE_RATE = 0.20;
         const opacityDiff = targetPlaneOpacity - currentPlaneOpacity;
         if (Math.abs(opacityDiff) > 0.005) {
-          currentPlaneOpacity += opacityDiff * FADE_RATE;
+          const fadeFactor = 1.0 - Math.exp(-14.0 * delta);
+          currentPlaneOpacity += opacityDiff * fadeFactor;
           if (planesModel.userData && planesModel.userData.buttons) {
             planesModel.userData.buttons.forEach((btn) => {
               if (btn.userData.materials) {
@@ -6222,11 +6335,11 @@
           planesModel.visible = true;
           isPlaneInteractionActive = true;
 
-          // Tactile press recovery & float
+          // Tactile press recovery with elapsed time exponential decay & float
           if (planesModel.userData && planesModel.userData.buttons) {
             planesModel.userData.buttons.forEach((btn, idx) => {
-              if (btn.userData.pressOffset > 0.001) {
-                btn.userData.pressOffset *= 0.82;
+              if (btn.userData.pressOffset > 0.0005) {
+                btn.userData.pressOffset *= Math.exp(-12.0 * delta);
               } else {
                 btn.userData.pressOffset = 0;
               }
@@ -6334,10 +6447,12 @@
       simScene.add(modelGroup);
 
       // Floating particles
-      const count = Math.round(CONFIG.maxParticles * (typeof QualityPolicy !== 'undefined' ? QualityPolicy.getPolicy().particleMultiplier : 1.0));
-      const positions = new Float32Array(count * 3);
-      const vels = new Float32Array(count * 3);
-      for (let i = 0; i < count; i++) {
+      // Floating particles: Allocate capacity once, use setDrawRange for active ambient particles
+      const MAX_SIM_PARTICLES = 220;
+      const simPolicy = (typeof QualityPolicy !== 'undefined') ? QualityPolicy.getPolicy() : { ambientParticles: 80 };
+      const positions = new Float32Array(MAX_SIM_PARTICLES * 3);
+      const vels = new Float32Array(MAX_SIM_PARTICLES * 3);
+      for (let i = 0; i < MAX_SIM_PARTICLES; i++) {
         positions[i * 3 + 0] = (Math.random() - 0.5) * 3;
         positions[i * 3 + 1] = (Math.random() - 0.5) * 3;
         positions[i * 3 + 2] = (Math.random() - 0.5) * 1.5;
@@ -6347,13 +6462,15 @@
       }
       const pGeo = new THREE.BufferGeometry();
       pGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      pGeo.setDrawRange(0, simPolicy.ambientParticles);
       const pMat = new THREE.PointsMaterial({ color: 0xffb020, size: 0.018, transparent: true, opacity: 0.8 });
-      const pSystem = new THREE.Points(pGeo, pMat);
-      simScene.add(pSystem);
+      simParticleSystem = new THREE.Points(pGeo, pMat);
+      simScene.add(simParticleSystem);
 
       // Load Model
       function setupSimModel(gltf) {
         simMonster = window.SkeletonUtils ? window.SkeletonUtils.clone(gltf.scene) : gltf.scene.clone(true);
+        cachedSimRootBone = simMonster.getObjectByName('C_root');
         simMonster.traverse(child => {
           if (child.isMesh) {
             child.frustumCulled = false;
@@ -6546,7 +6663,7 @@
         if (simMixer) simMixer.update(delta);
 
         // Prevent character from jumping through or behind the camera in simulator
-        const simRoot = simMonster ? simMonster.getObjectByName('C_root') : null;
+        const simRoot = cachedSimRootBone || (simMonster ? (cachedSimRootBone = simMonster.getObjectByName('C_root')) : null);
         if (simRoot && simCamera && simMonster) {
           simMonster.getWorldPosition(_scratchV1);
           simCamera.getWorldPosition(_scratchV2);
@@ -6577,23 +6694,29 @@
           modelGroup.rotation.y += 0.004;
         }
 
+        // Update ambient particles based on QualityPolicy drawRange and delta time
+        const simPolicy = (typeof QualityPolicy !== 'undefined') ? QualityPolicy.getPolicy() : null;
+        const simActiveCount = simPolicy ? Math.min(simPolicy.ambientParticles || 80, 220) : 80;
         const pos = pGeo.attributes.position;
         const arr = pos.array;
-        const count = pos.count;
-        for (let i = 0; i < count; i++) {
+        const dtFactor = delta * 60;
+        for (let i = 0; i < simActiveCount; i++) {
           const idxY = i * 3 + 1;
-          let y = arr[idxY] + vels[idxY];
+          let y = arr[idxY] + vels[idxY] * dtFactor;
           if (y > 1.5) y = -1.5;
           arr[idxY] = y;
         }
         pos.needsUpdate = true;
 
+        // Update active VFX in simulator loop
+        updateEffects(delta);
+
         // 3D Floating Buttons: Micro-float animation & Gesture Opacity Fade
         if (planesModel) {
-          const FADE_RATE = 0.20;
           const opacityDiff = targetPlaneOpacity - currentPlaneOpacity;
           if (Math.abs(opacityDiff) > 0.005) {
-            currentPlaneOpacity += opacityDiff * FADE_RATE;
+            const fadeFactor = 1.0 - Math.exp(-14.0 * delta);
+            currentPlaneOpacity += opacityDiff * fadeFactor;
             if (planesModel.userData && planesModel.userData.buttons) {
               planesModel.userData.buttons.forEach((btn) => {
                 if (btn.userData.materials) {
@@ -6617,9 +6740,9 @@
             if (planesModel.userData && planesModel.userData.buttons) {
               const simTime = performance.now() * 0.001;
               planesModel.userData.buttons.forEach((btn, idx) => {
-                // Tactile press recovery
-                if (btn.userData.pressOffset > 0.001) {
-                  btn.userData.pressOffset *= 0.82;
+                // Tactile press recovery with elapsed time exponential decay
+                if (btn.userData.pressOffset > 0.0005) {
+                  btn.userData.pressOffset *= Math.exp(-12.0 * delta);
                 } else {
                   btn.userData.pressOffset = 0;
                 }
