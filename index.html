@@ -3154,6 +3154,16 @@
     }
 
     async function runPreload() {
+      if (urlParams.get('sim') === '1' || urlParams.get('simulator') === '1') {
+        isWelcomeScreenActive = false;
+        modeEntryMark = performance.now();
+        const welcomeEl = document.getElementById('screen-welcome');
+        if (welcomeEl) welcomeEl.style.display = 'none';
+        const arScreen = document.getElementById('screen-ar');
+        if (arScreen) arScreen.classList.add('ar-ready-hud');
+        startSimulatorMode();
+        return;
+      }
       try { performance.mark('overlay-dismissed'); } catch (e) {}
       updateWelcomeBtn('PREPARING');
       checkCameraAndAutoStart();
