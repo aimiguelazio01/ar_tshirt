@@ -3735,7 +3735,7 @@
         emissive: 0x664400,
         logoSrc: 'assets/textures/logos_nuke.png',
         // Compact screen-safe layout: upper-left.
-        x: -0.78,
+        x: -0.68,
         y: 1.08,
         z: 0.70,
         rotY: 0,
@@ -3755,7 +3755,7 @@
         emissive: 0x005577,
         logoSrc: 'assets/textures/logos_maya.png',
         // Compact screen-safe layout: upper-right.
-        x: 0.78,
+        x: 0.68,
         y: 1.08,
         z: 0.70,
         rotY: 0,
@@ -3775,7 +3775,7 @@
         emissive: 0x772200,
         logoSrc: 'assets/textures/logos_houdini.png',
         // Compact screen-safe layout: middle-left.
-        x: -0.80,
+        x: -0.70,
         y: 0.66,
         z: 0.72,
         rotY: 0,
@@ -3795,7 +3795,7 @@
         emissive: 0x665500,
         logoSrc: 'assets/textures/logos_resolve.png',
         // Compact screen-safe layout: middle-right.
-        x: 0.80,
+        x: 0.70,
         y: 0.66,
         z: 0.72,
         rotY: 0,
@@ -3815,7 +3815,7 @@
         emissive: 0x550088,
         logoSrc: 'assets/textures/logos_after.png',
         // Compact screen-safe layout: lower-left.
-        x: -0.78,
+        x: -0.68,
         y: 0.24,
         z: 0.74,
         rotY: 0,
@@ -3835,7 +3835,7 @@
         emissive: 0x004477,
         logoSrc: 'assets/textures/logos_pftrack.png',
         // Compact screen-safe layout: lower-right.
-        x: 0.78,
+        x: 0.68,
         y: 0.24,
         z: 0.74,
         rotY: 0,
@@ -6705,16 +6705,9 @@
         }
       }
 
-      // Always face and align with the camera so that it remains fully visible
-      if (isTargetLocked && monsterModel && camera && anchor && anchor.group && anchor.group.visible) {
-        camera.getWorldQuaternion(_scratchQ1);
-
-        if (monsterModel.parent) {
-          monsterModel.parent.getWorldQuaternion(_scratchQ2).invert();
-          monsterModel.quaternion.copy(_scratchQ2).multiply(_scratchQ1);
-        } else {
-          monsterModel.quaternion.copy(_scratchQ1);
-        }
+      // Character is aligned to the shirt marker, not to the camera
+      if (isTargetLocked && monsterModel && anchor && anchor.group && anchor.group.visible) {
+        monsterModel.rotation.set(0, 0, 0);
 
         // Subtle idle breathing motion along Z
         monsterModel.position.z = basePosZ + Math.sin(t * 2.0) * 0.012;
@@ -6783,6 +6776,15 @@
 
           // Tactile press recovery with elapsed time exponential decay & float
           if (planesModel.userData && planesModel.userData.buttons) {
+            const aspect = window.innerWidth / Math.max(1, window.innerHeight);
+            const isTall = aspect < 1.0;
+            const responsiveScale = isTall ? Math.min(1.0, Math.max(0.65, aspect * 1.25)) : 1.0;
+            const responsiveSpread = isTall ? Math.min(1.0, Math.max(0.56, aspect * 1.15)) : 1.0;
+
+            camera.getWorldQuaternion(_scratchQ1);
+            planesModel.getWorldQuaternion(_scratchQ2).invert();
+            _scratchQ2.multiply(_scratchQ1);
+
             planesModel.userData.buttons.forEach((btn, idx) => {
               if (btn.userData.pressOffset > 0.0005) {
                 btn.userData.pressOffset *= Math.exp(-12.0 * decorativeDelta);
@@ -6790,10 +6792,14 @@
                 btn.userData.pressOffset = 0;
               }
 
-              // Subtle holographic sine-wave float
+              // Subtle holographic sine-wave float with responsive mobile screen-safe bounds
+              btn.position.x = btn.userData.baseX * responsiveSpread;
               btn.position.y = btn.userData.baseY + Math.sin(t * 2.2 + idx * 1.5) * 0.015;
               btn.position.z = btn.userData.baseZ - btn.userData.pressOffset + Math.cos(t * 1.8 + idx * 1.2) * 0.008;
-              btn.rotation.set(0, 0, 0);
+              btn.scale.set(responsiveScale, responsiveScale, responsiveScale);
+
+              // 3D software plates face the camera directly
+              btn.quaternion.copy(_scratchQ2);
             });
           }
         }
@@ -7022,6 +7028,8 @@
 
       const onSimResize = () => {
         if (!simCamera || !simRenderer) return;
+        const curAspect = window.innerWidth / Math.max(1, window.innerHeight);
+        simCamera.position.z = 4.4 / Math.min(1.0, curAspect);
         QualityPolicy.applyToRenderer(simRenderer, simCamera);
       };
 
@@ -7087,15 +7095,9 @@
           }
         }
 
-        // Always face and align with the camera
-        if (simMonster && simCamera) {
-          _scratchQ1.copy(simCamera.quaternion);
-          if (simMonster.parent) {
-            simMonster.parent.getWorldQuaternion(_scratchQ2).invert();
-            simMonster.quaternion.copy(_scratchQ2).multiply(_scratchQ1);
-          } else {
-            simMonster.quaternion.copy(_scratchQ1);
-          }
+        // Character is aligned to the marker / turntable platform
+        if (simMonster) {
+          simMonster.rotation.set(0, 0, 0);
         }
 
         if (!isDragging) {
@@ -7149,6 +7151,15 @@
             isPlaneInteractionActive = true;
             if (planesModel.userData && planesModel.userData.buttons) {
               const simTime = t;
+              const aspect = window.innerWidth / Math.max(1, window.innerHeight);
+              const isTall = aspect < 1.0;
+              const responsiveScale = isTall ? Math.min(1.0, Math.max(0.65, aspect * 1.25)) : 1.0;
+              const responsiveSpread = isTall ? Math.min(1.0, Math.max(0.56, aspect * 1.15)) : 1.0;
+
+              simCamera.getWorldQuaternion(_scratchQ1);
+              planesModel.getWorldQuaternion(_scratchQ2).invert();
+              _scratchQ2.multiply(_scratchQ1);
+
               planesModel.userData.buttons.forEach((btn, idx) => {
                 // Tactile press recovery with elapsed time exponential decay
                 if (btn.userData.pressOffset > 0.0005) {
@@ -7157,9 +7168,13 @@
                   btn.userData.pressOffset = 0;
                 }
 
+                btn.position.x = btn.userData.baseX * responsiveSpread;
                 btn.position.y = btn.userData.baseY + Math.sin(simTime * 2.2 + idx * 1.5) * 0.015;
                 btn.position.z = btn.userData.baseZ - btn.userData.pressOffset + Math.cos(simTime * 1.8 + idx * 1.2) * 0.008;
-                btn.rotation.set(0, 0, 0);
+                btn.scale.set(responsiveScale, responsiveScale, responsiveScale);
+
+                // 3D software plates face the camera directly
+                btn.quaternion.copy(_scratchQ2);
               });
             }
           }
