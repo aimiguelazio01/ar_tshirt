@@ -1030,25 +1030,11 @@
             </span>
           </div>
 
-          <!-- Right Tool Orbs: Reference Artwork & Camera Flip -->
+          <!-- Right Tool Orbs: Reference Artwork -->
           <div class="pointer-events-auto flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
             <button class="ui-hud-orb" id="btn-show-marker" title="Artwork Reference">
               <span class="material-symbols-outlined text-[17px] sm:text-[19px] text-brand">image</span>
             </button>
-            <button class="ui-hud-orb" id="lens-toggle" title="Flip Camera">
-              <span class="material-symbols-outlined text-[17px] sm:text-[19px]">flip_camera_ios</span>
-              <span class="hidden" id="lens-label">MAIN</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- Secondary Sub-Bar: Clean Gesture Indicator -->
-        <div class="flex items-center justify-center pointer-events-auto mt-0.5">
-          <div
-            class="ui-glass-pill h-[28px] sm:h-[30px] px-2.5 sm:px-3 flex items-center gap-1.5 text-dark-muted hover:text-white transition-colors cursor-pointer max-w-[85vw] truncate"
-            id="gesture-chip" title="Use arm gestures to interact with the character">
-            <span class="material-symbols-outlined text-[13px] sm:text-[14px] text-brand flex-shrink-0">pan_tool_alt</span>
-            <span class="text-[9px] sm:text-[10px] font-medium tracking-wider uppercase truncate" id="gesture-text">TOUCH TO INTERACT</span>
           </div>
         </div>
       </div>
@@ -1067,7 +1053,7 @@
         </div>
       </div>
 
-      <!-- BOTTOM CONTROLS DOCK (Speaker, Panic, Simulator + MVirgil Studio Footer) -->
+      <!-- BOTTOM CONTROLS DOCK (Speaker, Panic, Workflow + MVirgil Studio Footer) -->
       <div
         class="ar-hud absolute bottom-0 inset-x-0 pb-safe z-30 flex flex-col items-center px-2 sm:px-6 pt-2 pb-2 bg-gradient-to-t from-dark-base via-dark-base/90 to-transparent pointer-events-none max-w-screen-md mx-auto">
         <!-- Controls Action Row -->
@@ -1088,18 +1074,14 @@
               <span class="hidden sm:inline">DON'T TOUCH</span>
               <span class="inline sm:hidden">PANIC</span>
             </button>
-            <button class="control-action-button flex-shrink-0 bg-dark-card/95 hover:bg-dark-elevated active:scale-95 text-white text-[10px] sm:text-xs font-mono font-bold tracking-wide border border-white/15 transition-all cursor-pointer" id="btn-toggle-plates" title="Hide Software Plates" aria-label="Hide Software Plates" aria-pressed="true">
-              <span>workflow</span>
+            <button class="control-action-button flex-shrink-0 flex flex-col items-center justify-center bg-dark-card/95 hover:bg-dark-elevated active:scale-95 text-white font-mono font-bold tracking-wide border border-white/15 transition-all cursor-pointer leading-tight px-1" id="btn-toggle-plates" title="Hide Software Plates" aria-label="Hide Software Plates" aria-pressed="true">
+              <span class="text-[11px] sm:text-xs leading-tight">workflow</span>
+              <span class="text-[7px] sm:text-[7.5px] font-sans font-medium text-brand/90 uppercase tracking-tight mt-0.5 whitespace-nowrap leading-none">touch to interact</span>
             </button>
           </div>
 
-          <!-- Right side: Simulator Mode Switch -->
-          <div class="flex items-center justify-self-end pointer-events-auto">
-            <!-- Simulator Toggle Button -->
-            <button class="ui-hud-orb flex-shrink-0" id="btn-toggle-sim" title="Switch to 3D Simulator Mode">
-              <span class="material-symbols-outlined text-[18px] sm:text-[20px]">3d_rotation</span>
-            </button>
-          </div>
+          <!-- Right side: Spacer for 3-column symmetry -->
+          <div class="flex items-center justify-self-end pointer-events-none w-10 sm:w-11"></div>
         </div>
 
         <!-- Creator Studio Footer (Based on footer_ref.jpg) -->
@@ -3374,7 +3356,7 @@
         }
 
         currentFacing = mindarThree.shouldFaceUser ? 'user' : 'environment';
-        els.lensLabel.textContent = currentFacing === 'environment' ? 'MAIN LENS' : 'FRONT LENS';
+        if (els.lensLabel) els.lensLabel.textContent = currentFacing === 'environment' ? 'MAIN LENS' : 'FRONT LENS';
         els.statusText.textContent = currentFacing === 'environment' ? 'MAIN LENS ACTIVE' : 'FRONT LENS ACTIVE';
 
         // Ensure video element visibility and active video stream playback
@@ -7195,81 +7177,83 @@
     // ---------------------------------------------------------------
     // 6. Lens selector (§2 step 4, §6 feature list)
     // ---------------------------------------------------------------
-    els.lensToggle.addEventListener('click', async () => {
-      if (isSimulatorMode) {
-        showToast('Lens toggle is for live camera mode.');
-        return;
-      }
-      showToast('Switching camera…');
-      els.statusText.textContent = 'SWITCHING LENS…';
-      els.statusDot.className = 'status-dot searching';
-
-      try {
-        const session = activeSession;
-        if (!session || !isCurrent(session)) {
-          await initAR();
+    if (els.lensToggle) {
+      els.lensToggle.addEventListener('click', async () => {
+        if (isSimulatorMode) {
+          showToast('Lens toggle is for live camera mode.');
           return;
         }
+        showToast('Switching camera…');
+        els.statusText.textContent = 'SWITCHING LENS…';
+        els.statusDot.className = 'status-dot searching';
 
-        // Cancel previous frame scheduler & invalidate old camera results
-        if (currentTrackingSchedulerCleanup) {
-          currentTrackingSchedulerCleanup();
-          currentTrackingSchedulerCleanup = null;
-        }
-        pendingFrame = null;
-        isCapturingFrame = false;
-        clearPendingGestures();
-        onHandLost();
-
-        const targetFacing = currentFacing === 'environment' ? 'user' : 'environment';
-        currentFacing = targetFacing;
-
-        const attemptId = ++currentCameraAttemptId;
-        cleanupCameraAttempt();
-
-        if (mindarThree) {
-          mindarThree.shouldFaceUser = (targetFacing === 'user');
-          await mindarThree.start();
-          if (!isCurrent(session) || attemptId !== currentCameraAttemptId) {
-            cleanupCameraAttempt();
+        try {
+          const session = activeSession;
+          if (!session || !isCurrent(session)) {
+            await initAR();
             return;
           }
 
-          isCameraRunning = true;
-          if (camera) {
-            camera.near = 0.05;
-            camera.updateProjectionMatrix();
+          // Cancel previous frame scheduler & invalidate old camera results
+          if (currentTrackingSchedulerCleanup) {
+            currentTrackingSchedulerCleanup();
+            currentTrackingSchedulerCleanup = null;
           }
+          pendingFrame = null;
+          isCapturingFrame = false;
+          clearPendingGestures();
+          onHandLost();
 
-          // Refresh crop/projection through MindAR & reapply buffer budget
-          QualityPolicy.applyToRenderer(renderer, camera);
+          const targetFacing = currentFacing === 'environment' ? 'user' : 'environment';
+          currentFacing = targetFacing;
 
-          els.lensLabel.textContent = currentFacing === 'environment' ? 'MAIN LENS' : 'FRONT LENS';
-          els.statusText.textContent = currentFacing === 'environment' ? 'MAIN LENS ACTIVE' : 'FRONT LENS ACTIVE';
-          showToast(currentFacing === 'environment' ? 'Switched to MAIN LENS' : 'Switched to FRONT LENS');
+          const attemptId = ++currentCameraAttemptId;
+          cleanupCameraAttempt();
 
-          // Ensure new video stream element is styled and playing, and bind new video to scheduler
-          const video = els.arContainer.querySelector('video');
-          if (video) {
-            video.style.zIndex = '1';
-            video.style.display = 'block';
-            video.style.visibility = 'visible';
-            video.setAttribute('playsinline', '');
-            video.setAttribute('webkit-playsinline', '');
-            video.muted = true;
-            if (video.paused) {
-              try { await video.play(); } catch (e) { }
+          if (mindarThree) {
+            mindarThree.shouldFaceUser = (targetFacing === 'user');
+            await mindarThree.start();
+            if (!isCurrent(session) || attemptId !== currentCameraAttemptId) {
+              cleanupCameraAttempt();
+              return;
             }
-            startVideoTrackingScheduler(video, session);
+
+            isCameraRunning = true;
+            if (camera) {
+              camera.near = 0.05;
+              camera.updateProjectionMatrix();
+            }
+
+            // Refresh crop/projection through MindAR & reapply buffer budget
+            QualityPolicy.applyToRenderer(renderer, camera);
+
+            if (els.lensLabel) els.lensLabel.textContent = currentFacing === 'environment' ? 'MAIN LENS' : 'FRONT LENS';
+            els.statusText.textContent = currentFacing === 'environment' ? 'MAIN LENS ACTIVE' : 'FRONT LENS ACTIVE';
+            showToast(currentFacing === 'environment' ? 'Switched to MAIN LENS' : 'Switched to FRONT LENS');
+
+            // Ensure new video stream element is styled and playing, and bind new video to scheduler
+            const video = els.arContainer.querySelector('video');
+            if (video) {
+              video.style.zIndex = '1';
+              video.style.display = 'block';
+              video.style.visibility = 'visible';
+              video.setAttribute('playsinline', '');
+              video.setAttribute('webkit-playsinline', '');
+              video.muted = true;
+              if (video.paused) {
+                try { await video.play(); } catch (e) { }
+              }
+              startVideoTrackingScheduler(video, session);
+            }
+          } else {
+            await initAR();
           }
-        } else {
-          await initAR();
+        } catch (e) {
+          console.error("Error switching camera:", e);
+          showToast('Could not switch camera on this device.');
         }
-      } catch (e) {
-        console.error("Error switching camera:", e);
-        showToast('Could not switch camera on this device.');
-      }
-    });
+      });
+    }
 
     // ---------------------------------------------------------------
     // 7. Exit
