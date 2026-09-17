@@ -4065,6 +4065,11 @@
         const canvasTex = new THREE.CanvasTexture(canvas);
         canvasTex.minFilter = THREE.LinearFilter;
         canvasTex.magFilter = THREE.LinearFilter;
+        if (THREE.SRGBColorSpace) {
+          canvasTex.colorSpace = THREE.SRGBColorSpace;
+        } else if (THREE.sRGBEncoding) {
+          canvasTex.encoding = THREE.sRGBEncoding;
+        }
 
         const redrawCanvas = () => {
           drawButtonCanvas(ctx, cfg, 512, 512);
@@ -4079,10 +4084,11 @@
         redrawCanvas();
 
         const frontMat = new THREE.MeshStandardMaterial({
+          color: 0x000000,
           map: canvasTex,
           emissiveMap: canvasTex,
           emissive: new THREE.Color(0xffffff),
-          emissiveIntensity: 0.55,
+          emissiveIntensity: 1.0,
           roughness: 1,
           metalness: 0,
           transparent: true,
