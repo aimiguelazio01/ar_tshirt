@@ -1041,7 +1041,7 @@
         </div>
 
         <!-- Pose AI Status Pill -->
-        <div id="gesture-chip" role="button" tabindex="0" title="MediaPipe AI: Raise Left Arm full up to play animation frames 73-80 (or tap here)"
+        <div id="gesture-chip" role="button" tabindex="0" title="MediaPipe AI: Raise Left Arm (frames 73-80, hold 80) or Right Arm (frames 117-125, hold 125)"
           class="pointer-events-auto self-center px-3 py-1 rounded-full bg-black/80 backdrop-blur-md border border-brand/50 text-[10px] sm:text-[11px] font-mono text-white flex items-center gap-2 cursor-pointer shadow-[0_2px_12px_rgba(0,0,0,0.6)] select-none hover:border-brand transition-all">
           <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
           <span id="gesture-text">🦾 POSE AI LOADING...</span>
@@ -2362,7 +2362,7 @@
             await ensureWorkerTrackingReady();
             workerStarted = true;
             if (els.gestureText) {
-              els.gestureText.textContent = '🦾 LOWER ARM TO TRIGGER: RIGHT (BLAST) / LEFT (STORM)';
+              els.gestureText.textContent = '🦾 RAISE ARM: LEFT (73-80) / RIGHT (117-125)';
             }
             return;
           }
@@ -3515,7 +3515,7 @@
       }
 
       if (isTargetLocked) {
-        if (actionIdle && !actionIdle.isRunning() && (!actionReact || !actionReact.isRunning()) && (!actionLoop42 || !actionLoop42.isRunning()) && (!actionCalm || !actionCalm.isRunning()) && (!actionArmUp || !actionArmUp.isRunning()) && (!actionArmDown || !actionArmDown.isRunning())) {
+        if (actionIdle && !actionIdle.isRunning() && (!actionReact || !actionReact.isRunning()) && (!actionLoop42 || !actionLoop42.isRunning()) && (!actionCalm || !actionCalm.isRunning()) && (!actionArmUp || !actionArmUp.isRunning()) && (!actionRightArmUp || !actionRightArmUp.isRunning()) && (!actionArmDown || !actionArmDown.isRunning())) {
           actionIdle.reset();
           actionIdle.play();
         }
@@ -3530,9 +3530,9 @@
     // ---------------------------------------------------------------
     let animMesh, monsterModel, mixer, clock = new THREE.Clock();
     let actionIdle = null, actionReact = null, actionLoop42 = null, actionCalm = null;
-    let actionArmUp = null, actionArmDown = null;
+    let actionArmUp = null, actionRightArmUp = null, actionArmDown = null;
     let simActionIdle = null, simActionReact = null, simActionLoop42 = null, simActionCalm = null;
-    let simActionArmUp = null, simActionArmDown = null;
+    let simActionArmUp = null, simActionRightArmUp = null, simActionArmDown = null;
     let particleSystem, particleVelocities;
 
     function buildSceneContent(group) {
@@ -3703,18 +3703,25 @@
             actionCalm.setLoop(THREE.LoopOnce, 1);
             actionCalm.clampWhenFinished = true;
 
-            // 5. Left Arm Raised (Full Up): frames 73 to 80
+            // 5. Left Arm Raised (Full Up): frames 73 to 80 (clamp at frame 80, do not loop)
             const clipArmUp = THREE.AnimationUtils.subclip(defaultClip, 'arm_up_73_80', 73, 80, 24);
             actionArmUp = mixer.clipAction(clipArmUp);
-            actionArmUp.setLoop(THREE.LoopRepeat);
+            actionArmUp.setLoop(THREE.LoopOnce, 1);
+            actionArmUp.clampWhenFinished = true;
 
-            // 6. Left Arm Down: frames 97 to 104 (one-shot)
+            // 6. Right Arm Raised: frames 117 to 125 (clamp at frame 125, do not loop)
+            const clipRightArmUp = THREE.AnimationUtils.subclip(defaultClip, 'right_arm_up_117_125', 117, 125, 24);
+            actionRightArmUp = mixer.clipAction(clipRightArmUp);
+            actionRightArmUp.setLoop(THREE.LoopOnce, 1);
+            actionRightArmUp.clampWhenFinished = true;
+
+            // 7. Left Arm Down: frames 97 to 104 (one-shot)
             const clipArmDown = THREE.AnimationUtils.subclip(defaultClip, 'arm_down_97_104', 97, 104, 24);
             actionArmDown = mixer.clipAction(clipArmDown);
             actionArmDown.setLoop(THREE.LoopOnce, 1);
             actionArmDown.clampWhenFinished = true;
 
-            console.log('[AR] Animation sequence initialized: Idle [1-24] (' + clipIdle.duration.toFixed(2) + 's), React [24-42] (' + clipReact.duration.toFixed(2) + 's), Loop [42-60] (' + clipLoop42.duration.toFixed(2) + 's), Calm [61-85] (' + clipCalm.duration.toFixed(2) + 's), ArmUp [73-80] (' + clipArmUp.duration.toFixed(2) + 's), ArmDown [97-104] (' + clipArmDown.duration.toFixed(2) + 's)');
+            console.log('[AR] Animation sequence initialized: Idle [1-24] (' + clipIdle.duration.toFixed(2) + 's), React [24-42] (' + clipReact.duration.toFixed(2) + 's), Loop [42-60] (' + clipLoop42.duration.toFixed(2) + 's), Calm [61-85] (' + clipCalm.duration.toFixed(2) + 's), LeftArmUp [73-80], RightArmUp [117-125], ArmDown [97-104]');
           }
         }
 
@@ -5003,7 +5010,7 @@
     let rightArmDownTimer = null;
     let leftArmDownTimer = null;
 
-    // Trigger Right Arm Up -> Charges explosion (detonates when lowered)
+    // Trigger Right Arm Up -> Plays frames 117 to 125 and stays clamped at frame 125 (no loop)
     function triggerRightArmUp() {
       if (isSequenceRunning) return; // Panic / countdown sequence takes priority
       if (isRightArmCurrentlyUp) return; // Already raised and holding
@@ -5020,12 +5027,20 @@
 
       const isSim = isSimulatorMode;
       const currIdle = isSim ? simActionIdle : actionIdle;
-      const currArmUp = isSim ? simActionArmUp : actionArmUp;
-      const currArmDown = isSim ? simActionArmDown : actionArmDown;
+      const currRightArmUp = isSim ? simActionRightArmUp : actionRightArmUp;
 
-      showToast('🔥 Right Arm Raised — Lower to Detonate 💥');
+      if (currRightArmUp) {
+        if (currIdle && currIdle.isRunning()) currIdle.fadeOut(0.12);
+        currRightArmUp.reset();
+        currRightArmUp.setLoop(THREE.LoopOnce, 1);
+        currRightArmUp.clampWhenFinished = true;
+        currRightArmUp.fadeIn(0.08);
+        currRightArmUp.play();
+      }
+
+      showToast('🔥 Right Arm Raised — Frames 117-125 (Hold 125) 👹');
       updateGestureHUD('right', true);
-      console.log('[Gesture] Right Arm Raised (Charged)');
+      console.log('[Gesture] Right Arm Raised -> Frames 117 to 125 (holding at 125)');
     }
 
     function triggerRightArmDown(triggerEffect = true) {
@@ -5042,6 +5057,20 @@
         rightArmDownTimer = null;
       }
 
+      const isSim = isSimulatorMode;
+      const currIdle = isSim ? simActionIdle : actionIdle;
+      const currRightArmUp = isSim ? simActionRightArmUp : actionRightArmUp;
+
+      if (currRightArmUp && currRightArmUp.isRunning()) {
+        currRightArmUp.fadeOut(0.15);
+      }
+      if (currIdle && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) {
+        currIdle.reset();
+        currIdle.setLoop(THREE.LoopRepeat);
+        currIdle.fadeIn(0.15);
+        currIdle.play();
+      }
+
       // TRIGGER 3D EXPLOSION EFFECT ONLY WHEN RIGHT ARM GOES DOWN
       if (triggerEffect) {
         trigger3DExplosion();
@@ -5051,7 +5080,7 @@
       updateGestureHUD();
     }
 
-    // Trigger Left Arm Up -> Plays frames 73 to 80 when left arm is full up
+    // Trigger Left Arm Up -> Plays frames 73 to 80 and stays clamped at frame 80 (no loop)
     function triggerLeftArmUp() {
       if (isSequenceRunning) return; // Panic / countdown sequence takes priority
       if (isLeftArmCurrentlyUp) return; // Already raised and holding
@@ -5069,20 +5098,19 @@
       const isSim = isSimulatorMode;
       const currIdle = isSim ? simActionIdle : actionIdle;
       const currArmUp = isSim ? simActionArmUp : actionArmUp;
-      const currArmDown = isSim ? simActionArmDown : actionArmDown;
 
       if (currArmUp) {
         if (currIdle && currIdle.isRunning()) currIdle.fadeOut(0.12);
-        if (currArmDown && currArmDown.isRunning()) currArmDown.fadeOut(0.08);
         currArmUp.reset();
-        currArmUp.setLoop(THREE.LoopRepeat);
+        currArmUp.setLoop(THREE.LoopOnce, 1);
+        currArmUp.clampWhenFinished = true;
         currArmUp.fadeIn(0.08);
         currArmUp.play();
       }
 
-      showToast('⚡ Left Arm Full Up — Playing Frames 73-80 Animation 👹');
+      showToast('⚡ Left Arm Up — Frames 73-80 (Hold 80) 👹');
       updateGestureHUD('left', true);
-      console.log('[Gesture] Left Arm Full Up -> Playing 3D animation frames 73 to 80');
+      console.log('[Gesture] Left Arm Full Up -> Frames 73 to 80 (holding at 80)');
     }
 
     function triggerLeftArmDown(triggerEffect = true) {
@@ -5102,32 +5130,17 @@
       const isSim = isSimulatorMode;
       const currIdle = isSim ? simActionIdle : actionIdle;
       const currArmUp = isSim ? simActionArmUp : actionArmUp;
-      const currArmDown = isSim ? simActionArmDown : actionArmDown;
 
-      if (currArmDown) {
-        const currentMixer = isSim ? simMixer : mixer;
-        leftArmActionCleanup = onActionFinished(currentMixer, currArmDown, activeSession, () => {
-          leftArmActionCleanup = null;
-          if (currArmDown) currArmDown.fadeOut(0.15);
-          if (currIdle && !isSequenceRunning && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) {
-            currIdle.reset();
-            currIdle.setLoop(THREE.LoopRepeat);
-            currIdle.fadeIn(0.15);
-            currIdle.play();
-          }
-          updateGestureHUD();
-        });
-
-        if (currArmUp && currArmUp.isRunning()) currArmUp.fadeOut(0.08);
-        currArmDown.reset();
-        currArmDown.setLoop(THREE.LoopOnce, 1);
-        currArmDown.clampWhenFinished = true;
-        currArmDown.fadeIn(0.08);
-        currArmDown.play();
-      } else {
-        if (currIdle && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) currIdle.reset().play();
-        updateGestureHUD();
+      if (currArmUp && currArmUp.isRunning()) {
+        currArmUp.fadeOut(0.15);
       }
+      if (currIdle && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) {
+        currIdle.reset();
+        currIdle.setLoop(THREE.LoopRepeat);
+        currIdle.fadeIn(0.15);
+        currIdle.play();
+      }
+      updateGestureHUD();
 
       // TRIGGER 3D ELECTRIC STORM EFFECT ONLY WHEN LEFT ARM GOES DOWN
       if (triggerEffect) {
@@ -5162,6 +5175,11 @@
         clearTimeout(leftArmDownTimer);
         leftArmDownTimer = null;
       }
+
+      if (actionArmUp && actionArmUp.isRunning()) actionArmUp.stop();
+      if (actionRightArmUp && actionRightArmUp.isRunning()) actionRightArmUp.stop();
+      if (simActionArmUp && simActionArmUp.isRunning()) simActionArmUp.stop();
+      if (simActionRightArmUp && simActionRightArmUp.isRunning()) simActionRightArmUp.stop();
 
       playPanicMusic();
       showToast("⚠️ I SAID DON'T TOUCH! (Frames 25-72 x5) 👹");
@@ -5428,21 +5446,6 @@
       return false;
     }
 
-    // Check if Right Arm is RAISED / UP (Landmarks: 12=right_shoulder, 14=right_elbow, 16=right_wrist, 8=right_ear)
-    function isRightArmRaisedCheck(landmarks) {
-      if (!landmarks || landmarks.length < 17) return false;
-      const nose = landmarks[0];
-      const rightEar = landmarks[8];
-      const rightShoulder = landmarks[12];
-      const rightElbow = landmarks[14];
-      const rightWrist = landmarks[16];
-
-      // If user's raised arm is on the left side of frame/body, leave it for Left Arm gesture
-      if (rightWrist && nose && rightWrist.x < nose.x) return false;
-
-      return isArmFullUp(rightShoulder, rightElbow, rightWrist, rightEar, nose);
-    }
-
     // Check if Left Arm is RAISED / FULL UP (Landmarks: 11=left_shoulder, 13=left_elbow, 15=left_wrist, 7=left_ear)
     function isLeftArmRaisedCheck(landmarks) {
       if (!landmarks || landmarks.length < 17) return false;
@@ -5456,6 +5459,27 @@
       const isScreenLeftUp = isRightArmOnScreenLeft && isArmFullUp(landmarks[12], landmarks[14], landmarks[16], landmarks[8], nose);
 
       return isAnatomicalLeftUp || isScreenLeftUp;
+    }
+
+    // Check if Right Arm is RAISED / FULL UP (Landmarks: 12=right_shoulder, 14=right_elbow, 16=right_wrist, 8=right_ear)
+    function isRightArmRaisedCheck(landmarks) {
+      if (!landmarks || landmarks.length < 17) return false;
+      const nose = landmarks[0];
+      const rightEar = landmarks[8];
+      const rightShoulder = landmarks[12];
+      const rightElbow = landmarks[14];
+      const rightWrist = landmarks[16];
+
+      // If user's raised arm is on the left side of frame/body, leave it for Left Arm gesture
+      if (rightWrist && nose && rightWrist.x < nose.x) return false;
+
+      const isAnatomicalRightUp = isArmFullUp(rightShoulder, rightElbow, rightWrist, rightEar, nose);
+
+      // Support screen-right when left arm appears on screen-right in mirrored feed
+      const isLeftArmOnScreenRight = landmarks[15] && nose && (landmarks[15].x >= nose.x);
+      const isScreenRightUp = isLeftArmOnScreenRight && isArmFullUp(landmarks[11], landmarks[13], landmarks[15], landmarks[7], nose);
+
+      return (isAnatomicalRightUp || isScreenRightUp) && !isLeftArmRaisedCheck(landmarks);
     }
 
     let rightArmUpDebounce = 0;
@@ -5499,18 +5523,18 @@
       }
       if (isRaised) {
         if (armSide === 'right') {
-          els.gestureText.textContent = '🔥 RIGHT ARM CHARGED — LOWER TO DETONATE 💥';
+          els.gestureText.textContent = '🔥 RIGHT ARM UP — FRAMES 117-125 (HOLD 125) 👹';
           els.gestureChip.style.background = 'rgba(241, 107, 37, 0.45)';
           els.gestureChip.style.color = '#FFFFFF';
           els.gestureChip.style.fontWeight = 'bold';
         } else {
-          els.gestureText.textContent = '⚡ LEFT ARM FULL UP — PLAYING FRAMES 73-80 👹';
+          els.gestureText.textContent = '⚡ LEFT ARM UP — FRAMES 73-80 (HOLD 80) 👹';
           els.gestureChip.style.background = 'rgba(6, 182, 212, 0.45)';
           els.gestureChip.style.color = '#FFFFFF';
           els.gestureChip.style.fontWeight = 'bold';
         }
       } else {
-        els.gestureText.textContent = '🦾 RAISE LEFT ARM FULL UP TO PLAY (FRAMES 73-80)';
+        els.gestureText.textContent = '🦾 RAISE ARM: LEFT (73-80) / RIGHT (117-125)';
         els.gestureChip.style.background = '';
         els.gestureChip.style.color = '';
         els.gestureChip.style.fontWeight = 'normal';
@@ -6214,7 +6238,7 @@
           isPoseTrackerReady = true;
           console.log(`🤖 [Tracking] Web Worker ${data.workerId} MediaPipe vision ready off-thread`);
           if (els.gestureText) {
-            els.gestureText.textContent = '🦾 RAISE LEFT ARM FULL UP TO PLAY (FRAMES 73-80)';
+            els.gestureText.textContent = '🦾 RAISE ARM: LEFT (73-80) / RIGHT (117-125)';
           }
           performance.mark('tracking-worker-ready');
         }
@@ -6944,14 +6968,20 @@
 
             const clipArmUp = THREE.AnimationUtils.subclip(defaultClip, 'sim_arm_up_73_80', 73, 80, 24);
             simActionArmUp = simMixer.clipAction(clipArmUp);
-            simActionArmUp.setLoop(THREE.LoopRepeat);
+            simActionArmUp.setLoop(THREE.LoopOnce, 1);
+            simActionArmUp.clampWhenFinished = true;
+
+            const clipRightArmUp = THREE.AnimationUtils.subclip(defaultClip, 'sim_right_arm_up_117_125', 117, 125, 24);
+            simActionRightArmUp = simMixer.clipAction(clipRightArmUp);
+            simActionRightArmUp.setLoop(THREE.LoopOnce, 1);
+            simActionRightArmUp.clampWhenFinished = true;
 
             const clipArmDown = THREE.AnimationUtils.subclip(defaultClip, 'sim_arm_down_97_104', 97, 104, 24);
             simActionArmDown = simMixer.clipAction(clipArmDown);
             simActionArmDown.setLoop(THREE.LoopOnce, 1);
             simActionArmDown.clampWhenFinished = true;
 
-            console.log('[Simulator] Animation sequence initialized: Idle [1-24], React [24-42], Loop [42-60], Calm [61-85], ArmUp [73-80], ArmDown [97-104]');
+            console.log('[Simulator] Animation sequence initialized: Idle [1-24], React [24-42], Loop [42-60], Calm [61-85], LeftArmUp [73-80], RightArmUp [117-125], ArmDown [97-104]');
           }
         }
         modelGroup.add(simMonster);
