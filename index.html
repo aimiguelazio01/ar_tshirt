@@ -3699,11 +3699,10 @@
             actionCalm.setLoop(THREE.LoopOnce, 1);
             actionCalm.clampWhenFinished = true;
 
-            // 5. Left Arm Raised: frames 86 to 96 (one-shot, hold at frame 96)
-            const clipArmUp = THREE.AnimationUtils.subclip(defaultClip, 'arm_up_86_96', 86, 96, 24);
+            // 5. Left Arm Raised (Full Up): frames 73 to 80
+            const clipArmUp = THREE.AnimationUtils.subclip(defaultClip, 'arm_up_73_80', 73, 80, 24);
             actionArmUp = mixer.clipAction(clipArmUp);
-            actionArmUp.setLoop(THREE.LoopOnce, 1);
-            actionArmUp.clampWhenFinished = true;
+            actionArmUp.setLoop(THREE.LoopRepeat);
 
             // 6. Left Arm Down: frames 97 to 104 (one-shot)
             const clipArmDown = THREE.AnimationUtils.subclip(defaultClip, 'arm_down_97_104', 97, 104, 24);
@@ -3711,7 +3710,7 @@
             actionArmDown.setLoop(THREE.LoopOnce, 1);
             actionArmDown.clampWhenFinished = true;
 
-            console.log('[AR] Animation sequence initialized: Idle [1-24] (' + clipIdle.duration.toFixed(2) + 's), React [24-42] (' + clipReact.duration.toFixed(2) + 's), Loop [42-60] (' + clipLoop42.duration.toFixed(2) + 's), Calm [61-85] (' + clipCalm.duration.toFixed(2) + 's), ArmUp [86-96] (' + clipArmUp.duration.toFixed(2) + 's), ArmDown [97-104] (' + clipArmDown.duration.toFixed(2) + 's)');
+            console.log('[AR] Animation sequence initialized: Idle [1-24] (' + clipIdle.duration.toFixed(2) + 's), React [24-42] (' + clipReact.duration.toFixed(2) + 's), Loop [42-60] (' + clipLoop42.duration.toFixed(2) + 's), Calm [61-85] (' + clipCalm.duration.toFixed(2) + 's), ArmUp [73-80] (' + clipArmUp.duration.toFixed(2) + 's), ArmDown [97-104] (' + clipArmDown.duration.toFixed(2) + 's)');
           }
         }
 
@@ -5087,7 +5086,7 @@
       }
     }
 
-    // Trigger Left Arm Up -> Charges storm (unleashes when lowered)
+    // Trigger Left Arm Up -> Plays frames 73 to 80 when left arm is full up
     function triggerLeftArmUp() {
       if (isSequenceRunning) return; // Panic / countdown sequence takes priority
       if (isLeftArmCurrentlyUp) return; // Already raised and holding
@@ -5111,15 +5110,14 @@
         if (currIdle && currIdle.isRunning()) currIdle.fadeOut(0.12);
         if (currArmDown && currArmDown.isRunning()) currArmDown.fadeOut(0.08);
         currArmUp.reset();
-        currArmUp.setLoop(THREE.LoopOnce, 1);
-        currArmUp.clampWhenFinished = true;
+        currArmUp.setLoop(THREE.LoopRepeat);
         currArmUp.fadeIn(0.08);
         currArmUp.play();
       }
 
-      showToast('⚡ Left Arm Raised — Lower to Unleash Storm 🌩️');
+      showToast('⚡ Left Arm Full Up — Playing Frames 73-80 Animation 👹');
       updateGestureHUD('left', true);
-      console.log('[Gesture] Left Arm Raised (Charged)');
+      console.log('[Gesture] Left Arm Full Up -> Playing 3D animation frames 73 to 80');
     }
 
     function triggerLeftArmDown(triggerEffect = true) {
@@ -5464,7 +5462,7 @@
       return (isWristAboveHead || isWristAboveShoulder) && isWristAboveElbow && isElbowElevated;
     }
 
-    // Check if Left Arm is RAISED / UP (Landmarks: 11=left_shoulder, 13=left_elbow, 15=left_wrist, 7=left_ear)
+    // Check if Left Arm is RAISED / FULL UP (Landmarks: 11=left_shoulder, 13=left_elbow, 15=left_wrist, 7=left_ear)
     function isLeftArmRaisedCheck(landmarks) {
       if (!landmarks || landmarks.length < 17) return false;
       const nose = landmarks[0];
@@ -5477,12 +5475,13 @@
 
       const leftHeadY = leftEar ? leftEar.y : (nose ? nose.y : leftShoulder.y - 0.16);
 
+      // "Full Up": wrist is above head/ear height, well above shoulder, above elbow, and elbow elevated
       const isWristAboveHead = leftWrist.y < (leftHeadY + 0.04);
-      const isWristAboveShoulder = leftWrist.y < (leftShoulder.y - 0.08);
-      const isWristAboveElbow = leftWrist.y < (leftElbow.y - 0.01);
-      const isElbowElevated = leftElbow.y < (leftShoulder.y + 0.08);
+      const isWristWellAboveShoulder = leftWrist.y < (leftShoulder.y - 0.12);
+      const isWristAboveElbow = leftWrist.y < (leftElbow.y - 0.02);
+      const isElbowElevated = leftElbow.y < (leftShoulder.y + 0.06);
 
-      return (isWristAboveHead || isWristAboveShoulder) && isWristAboveElbow && isElbowElevated;
+      return (isWristAboveHead || isWristWellAboveShoulder) && isWristAboveElbow && isElbowElevated;
     }
 
     let rightArmUpDebounce = 0;
@@ -5531,7 +5530,7 @@
           els.gestureChip.style.color = '#FFFFFF';
           els.gestureChip.style.fontWeight = 'bold';
         } else {
-          els.gestureText.textContent = '⚡ LEFT ARM CHARGED — LOWER TO UNLEASH STORM 🌩️';
+          els.gestureText.textContent = '⚡ LEFT ARM FULL UP — PLAYING FRAMES 73-80 👹';
           els.gestureChip.style.background = 'rgba(6, 182, 212, 0.45)';
           els.gestureChip.style.color = '#FFFFFF';
           els.gestureChip.style.fontWeight = 'bold';
@@ -6933,17 +6932,16 @@
             simActionCalm.setLoop(THREE.LoopOnce, 1);
             simActionCalm.clampWhenFinished = true;
 
-            const clipArmUp = THREE.AnimationUtils.subclip(defaultClip, 'sim_arm_up_86_96', 86, 96, 24);
+            const clipArmUp = THREE.AnimationUtils.subclip(defaultClip, 'sim_arm_up_73_80', 73, 80, 24);
             simActionArmUp = simMixer.clipAction(clipArmUp);
-            simActionArmUp.setLoop(THREE.LoopOnce, 1);
-            simActionArmUp.clampWhenFinished = true;
+            simActionArmUp.setLoop(THREE.LoopRepeat);
 
             const clipArmDown = THREE.AnimationUtils.subclip(defaultClip, 'sim_arm_down_97_104', 97, 104, 24);
             simActionArmDown = simMixer.clipAction(clipArmDown);
             simActionArmDown.setLoop(THREE.LoopOnce, 1);
             simActionArmDown.clampWhenFinished = true;
 
-            console.log('[Simulator] Animation sequence initialized: Idle [1-24], React [24-42], Loop [42-60], Calm [61-85], ArmUp [86-96], ArmDown [97-104]');
+            console.log('[Simulator] Animation sequence initialized: Idle [1-24], React [24-42], Loop [42-60], Calm [61-85], ArmUp [73-80], ArmDown [97-104]');
           }
         }
         modelGroup.add(simMonster);
