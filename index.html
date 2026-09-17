@@ -3953,20 +3953,22 @@
       ctx.restore();
 
       // 2. Software Logo
-      const logoSize = 196;
+      const logoSize = 230;
       const logoX = cx - logoSize / 2;
-      const logoY = cy - logoSize / 2 - 38;
+      const logoY = cy - logoSize / 2 - 30;
 
       const logoImg = logoImageCache[cfg.logoSrc];
       if (logoImg && logoImg.complete && logoImg.naturalWidth > 0) {
         ctx.save();
         if (cfg.isActive) {
-          const glowGrad = ctx.createRadialGradient(cx, logoY + logoSize / 2, 20, cx, logoY + logoSize / 2, logoSize * 0.7);
-          glowGrad.addColorStop(0, `${cfg.color}33`);
+          // Vibrant glow behind the logo for better visibility
+          const glowGrad = ctx.createRadialGradient(cx, logoY + logoSize / 2, 30, cx, logoY + logoSize / 2, logoSize * 0.75);
+          glowGrad.addColorStop(0, `${cfg.color}55`);
+          glowGrad.addColorStop(0.6, `${cfg.color}22`);
           glowGrad.addColorStop(1, 'transparent');
           ctx.fillStyle = glowGrad;
           ctx.beginPath();
-          ctx.arc(cx, logoY + logoSize / 2, logoSize * 0.7, 0, Math.PI * 2);
+          ctx.arc(cx, logoY + logoSize / 2, logoSize * 0.75, 0, Math.PI * 2);
           ctx.fill();
         }
         ctx.drawImage(logoImg, logoX, logoY, logoSize, logoSize);
@@ -4093,7 +4095,7 @@
           map: canvasTex,
           emissiveMap: canvasTex,
           emissive: new THREE.Color(0xffffff),
-          emissiveIntensity: 0.85,
+          emissiveIntensity: 0.55,
           roughness: 1,
           metalness: 0,
           transparent: true,
