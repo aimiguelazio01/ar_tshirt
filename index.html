@@ -3738,9 +3738,9 @@
         x: -0.78,
         y: 1.08,
         z: 0.70,
-        rotY: 0.16,
-        rotX: -0.02,
-        rotZ: 0.02,
+        rotY: 0,
+        rotX: 0,
+        rotZ: 0,
         isActive: true
       },
       {
@@ -3758,9 +3758,9 @@
         x: 0.78,
         y: 1.08,
         z: 0.70,
-        rotY: -0.16,
-        rotX: -0.02,
-        rotZ: -0.02,
+        rotY: 0,
+        rotX: 0,
+        rotZ: 0,
         isActive: true
       },
       {
@@ -3778,9 +3778,9 @@
         x: -0.80,
         y: 0.66,
         z: 0.72,
-        rotY: 0.16,
-        rotX: 0.01,
-        rotZ: 0.01,
+        rotY: 0,
+        rotX: 0,
+        rotZ: 0,
         isActive: true
       },
       {
@@ -3798,9 +3798,9 @@
         x: 0.80,
         y: 0.66,
         z: 0.72,
-        rotY: -0.16,
-        rotX: 0.01,
-        rotZ: -0.01,
+        rotY: 0,
+        rotX: 0,
+        rotZ: 0,
         isActive: true
       },
       {
@@ -3818,9 +3818,9 @@
         x: -0.78,
         y: 0.24,
         z: 0.74,
-        rotY: 0.16,
-        rotX: 0.05,
-        rotZ: 0.02,
+        rotY: 0,
+        rotX: 0,
+        rotZ: 0,
         isActive: true
       },
       {
@@ -3838,9 +3838,9 @@
         x: 0.78,
         y: 0.24,
         z: 0.74,
-        rotY: -0.16,
-        rotX: 0.05,
-        rotZ: -0.02,
+        rotY: 0,
+        rotX: 0,
+        rotZ: 0,
         isActive: true
       }
     ];
@@ -6793,7 +6793,7 @@
               // Subtle holographic sine-wave float
               btn.position.y = btn.userData.baseY + Math.sin(t * 2.2 + idx * 1.5) * 0.015;
               btn.position.z = btn.userData.baseZ - btn.userData.pressOffset + Math.cos(t * 1.8 + idx * 1.2) * 0.008;
-              btn.rotation.z = btn.userData.rotZ + Math.sin(t * 1.5 + idx) * 0.012;
+              btn.rotation.set(0, 0, 0);
             });
           }
         }
@@ -6949,6 +6949,7 @@
         simMonster.scale.set(simScale, simScale, simScale);
         simOffsetY = 0.15;
         simMonster.position.set(-center.x * simScale, -center.y * simScale + simOffsetY, -center.z * simScale);
+        simMonster.rotation.set(0, 0, 0);
 
 
 
@@ -7158,7 +7159,7 @@
 
                 btn.position.y = btn.userData.baseY + Math.sin(simTime * 2.2 + idx * 1.5) * 0.015;
                 btn.position.z = btn.userData.baseZ - btn.userData.pressOffset + Math.cos(simTime * 1.8 + idx * 1.2) * 0.008;
-                btn.rotation.z = btn.userData.rotZ + Math.sin(simTime * 1.5 + idx) * 0.012;
+                btn.rotation.set(0, 0, 0);
               });
             }
           }
