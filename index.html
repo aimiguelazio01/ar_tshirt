@@ -3680,8 +3680,8 @@
           const defaultClip = gltf.animations.find(c => c && c.name && c.name.toLowerCase().includes('default')) ||
             gltf.animations[0];
           if (defaultClip) {
-            // 1. Idle Loop: frames 1 to 24 (loopable)
-            const clipIdle = THREE.AnimationUtils.subclip(defaultClip, 'idle_1_24', 1, 24, 24);
+            // 1. Idle Loop: frames 0 to 24 (loopable, starts at frame 0)
+            const clipIdle = THREE.AnimationUtils.subclip(defaultClip, 'idle_0_24', 0, 24, 24);
             actionIdle = mixer.clipAction(clipIdle);
             actionIdle.setLoop(THREE.LoopRepeat);
             actionIdle.play();
@@ -5080,13 +5080,18 @@
       const currRightArmUp = isSim ? simActionRightArmUp : actionRightArmUp;
 
       if (currRightArmUp && currRightArmUp.isRunning()) {
-        currRightArmUp.fadeOut(0.15);
+        currRightArmUp.fadeOut(0.12);
+        setTimeout(() => {
+          if (!isRightArmCurrentlyUp && currRightArmUp) currRightArmUp.stop();
+        }, 130);
       }
       if (currIdle && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) {
         currIdle.reset();
+        currIdle.time = 0; // Go directly back to frame 0
         currIdle.setLoop(THREE.LoopRepeat);
-        currIdle.fadeIn(0.15);
+        currIdle.fadeIn(0.12);
         currIdle.play();
+        console.log('[Gesture] Right Arm Down -> returned to frame 0 (resuming idle loop)');
       }
 
       // TRIGGER 3D EXPLOSION EFFECT ONLY WHEN RIGHT ARM GOES DOWN
@@ -5168,13 +5173,18 @@
       const currArmUp = isSim ? simActionArmUp : actionArmUp;
 
       if (currArmUp && currArmUp.isRunning()) {
-        currArmUp.fadeOut(0.15);
+        currArmUp.fadeOut(0.12);
+        setTimeout(() => {
+          if (!isLeftArmCurrentlyUp && currArmUp) currArmUp.stop();
+        }, 130);
       }
       if (currIdle && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) {
         currIdle.reset();
+        currIdle.time = 0; // Go directly back to frame 0
         currIdle.setLoop(THREE.LoopRepeat);
-        currIdle.fadeIn(0.15);
+        currIdle.fadeIn(0.12);
         currIdle.play();
+        console.log('[Gesture] Left Arm Down -> returned to frame 0 (resuming idle loop)');
       }
       updateGestureHUD();
 
@@ -6987,7 +6997,7 @@
           const defaultClip = gltf.animations.find(c => c && c.name && c.name.toLowerCase().includes('default')) ||
             gltf.animations[0];
           if (defaultClip) {
-            const clipIdle = THREE.AnimationUtils.subclip(defaultClip, 'sim_idle_1_24', 1, 24, 24);
+            const clipIdle = THREE.AnimationUtils.subclip(defaultClip, 'sim_idle_0_24', 0, 24, 24);
             simActionIdle = simMixer.clipAction(clipIdle);
             simActionIdle.setLoop(THREE.LoopRepeat);
             simActionIdle.play();
