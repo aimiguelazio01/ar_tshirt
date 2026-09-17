@@ -1403,8 +1403,8 @@
     const isDebugPerformance = urlParams.get('debugPerformance') === '1';
     window.DEBUG_PERFORMANCE = isDebugPerformance;
 
-    // Independent bottleneck isolation switches (MediaPipe disabled by default for maximum mobile speed)
-    window.DISABLE_MEDIAPIPE = urlParams.get('enableMediaPipe') === '1' ? false : true;
+    // Independent bottleneck isolation switches (MediaPipe enabled by default for interactive gestures)
+    window.DISABLE_MEDIAPIPE = urlParams.get('noMediaPipe') === '1' || urlParams.get('disableMediaPipe') === '1';
     window.DISABLE_POSE = window.DISABLE_MEDIAPIPE || urlParams.get('noPose') === '1';
     window.DISABLE_HANDS = window.DISABLE_MEDIAPIPE || urlParams.get('noHands') === '1';
     window.DISABLE_VFX = urlParams.get('noVfx') === '1';
@@ -5462,26 +5462,33 @@
       return (isWristAboveHead || isWristAboveShoulder) && isWristAboveElbow && isElbowElevated;
     }
 
+    function isArmFullUp(shoulder, elbow, wrist, ear, nose) {
+      if (!shoulder || !elbow || !wrist) return false;
+      const headY = ear ? ear.y : (nose ? nose.y : shoulder.y - 0.16);
+
+      // In normalized image space: Y=0 is TOP of frame, Y=1 is BOTTOM.
+      // Arm is full up when wrist is above shoulder level and elevated near/above head.
+      const isWristAboveHead = wrist.y < (headY + 0.06);
+      const isWristAboveShoulder = wrist.y < (shoulder.y - 0.06);
+      const isWristAboveElbow = wrist.y < (elbow.y + 0.03);
+      const isElbowElevated = elbow.y < (shoulder.y + 0.08);
+
+      return (isWristAboveHead || isWristAboveShoulder) && isWristAboveElbow && isElbowElevated;
+    }
+
     // Check if Left Arm is RAISED / FULL UP (Landmarks: 11=left_shoulder, 13=left_elbow, 15=left_wrist, 7=left_ear)
     function isLeftArmRaisedCheck(landmarks) {
       if (!landmarks || landmarks.length < 17) return false;
       const nose = landmarks[0];
-      const leftEar = landmarks[7];
-      const leftShoulder = landmarks[11];
-      const leftElbow = landmarks[13];
-      const leftWrist = landmarks[15];
 
-      if (!leftWrist || !leftShoulder || !leftElbow) return false;
+      // 1. Anatomical Left Arm (landmarks 11, 13, 15)
+      const isAnatomicalLeftUp = isArmFullUp(landmarks[11], landmarks[13], landmarks[15], landmarks[7], nose);
 
-      const leftHeadY = leftEar ? leftEar.y : (nose ? nose.y : leftShoulder.y - 0.16);
+      // 2. Screen-Left Arm (mirrored selfie camera support where the user raises the arm visible on the left)
+      const isRightArmOnScreenLeft = landmarks[16] && nose && (landmarks[16].x < nose.x);
+      const isScreenLeftUp = isRightArmOnScreenLeft && isArmFullUp(landmarks[12], landmarks[14], landmarks[16], landmarks[8], nose);
 
-      // "Full Up": wrist is above head/ear height, well above shoulder, above elbow, and elbow elevated
-      const isWristAboveHead = leftWrist.y < (leftHeadY + 0.04);
-      const isWristWellAboveShoulder = leftWrist.y < (leftShoulder.y - 0.12);
-      const isWristAboveElbow = leftWrist.y < (leftElbow.y - 0.02);
-      const isElbowElevated = leftElbow.y < (leftShoulder.y + 0.06);
-
-      return (isWristAboveHead || isWristWellAboveShoulder) && isWristAboveElbow && isElbowElevated;
+      return isAnatomicalLeftUp || isScreenLeftUp;
     }
 
     let rightArmUpDebounce = 0;
@@ -6237,9 +6244,10 @@
             workerInitTimeout = null;
           }
           isWorkerTrackingReady = true;
+          isPoseTrackerReady = true;
           console.log(`🤖 [Tracking] Web Worker ${data.workerId} MediaPipe vision ready off-thread`);
           if (els.gestureText) {
-            els.gestureText.textContent = '🦾 LOWER ARM TO TRIGGER: RIGHT (BLAST) / LEFT (STORM)';
+            els.gestureText.textContent = '🦾 RAISE LEFT ARM FULL UP TO PLAY (FRAMES 73-80)';
           }
           performance.mark('tracking-worker-ready');
         }
@@ -6283,7 +6291,6 @@
 
         if (document.hidden ||
             !activeSession ||
-            activeSession.mode !== 'ar' ||
             age > 350) {
           clearPendingGestures();
           return;
@@ -6295,7 +6302,7 @@
           PerformanceDiagnostics.recordInference(data.task, data.durationMs, age);
         }
 
-        const activeVideo = els.arContainer ? els.arContainer.querySelector('video') : null;
+        const activeVideo = (els.arContainer ? els.arContainer.querySelector('video') : null) || document.querySelector('video');
         if (data.task === 'pose') {
           if (data.landmarks && activeVideo) {
             processPoseLandmarks(data.landmarks[0], activeVideo);
@@ -6324,18 +6331,18 @@
       let lastVideoTime = -1;
 
       const onFrame = () => {
-        if (!isCurrent(session) || session.mode !== 'ar') return;
+        if (!isCurrent(session)) return;
         dispatchTrackingFrame(video, session);
         scheduleNext();
       };
 
       const scheduleNext = () => {
-        if (!isCurrent(session) || session.mode !== 'ar') return;
+        if (!isCurrent(session)) return;
         if ('requestVideoFrameCallback' in video) {
           rVFCId = video.requestVideoFrameCallback(onFrame);
         } else {
           timerId = setTimeout(() => {
-            if (!isCurrent(session) || session.mode !== 'ar') return;
+            if (!isCurrent(session)) return;
             if (video.currentTime !== lastVideoTime) {
               lastVideoTime = video.currentTime;
               onFrame();
@@ -6393,13 +6400,13 @@
 
     function dispatchTrackingFrame(video, session) {
       const currentSession = session || activeSession;
-      if (!video || video.paused || video.ended || video.readyState < 2 || isDocumentHidden || isSimulatorMode) {
+      if (!video || video.paused || video.ended || video.readyState < 2 || isDocumentHidden) {
         return;
       }
       if (window.DISABLE_POSE && window.DISABLE_HANDS) {
         return;
       }
-      if (!isCurrent(currentSession) || currentSession.mode !== 'ar') {
+      if (!isCurrent(currentSession)) {
         return;
       }
 
@@ -6841,6 +6848,34 @@
       const pointLight = new THREE.PointLight(0x4fe3d0, 2.5, 10);
       pointLight.position.set(-1, 1, 2);
       simScene.add(pointLight);
+
+      // Start background webcam for MediaPipe gesture tracking in simulator mode if accessible
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && !window.DISABLE_MEDIAPIPE) {
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } })
+          .then((stream) => {
+            if (!isCurrent(session) || !isSimulatorMode) {
+              stream.getTracks().forEach(t => t.stop());
+              return;
+            }
+            const simVideo = document.createElement('video');
+            simVideo.setAttribute('playsinline', '');
+            simVideo.setAttribute('muted', '');
+            simVideo.muted = true;
+            simVideo.srcObject = stream;
+            simVideo.style.display = 'none';
+            document.body.appendChild(simVideo);
+            session.cleanups.add(() => {
+              stream.getTracks().forEach(t => t.stop());
+              if (simVideo.parentNode) simVideo.parentNode.removeChild(simVideo);
+            });
+            simVideo.play().then(() => {
+              startVideoTrackingScheduler(simVideo, session);
+              console.log('[Simulator] Webcam gesture tracking active');
+            }).catch(() => {});
+          }).catch((err) => {
+            console.log('[Simulator] Webcam gesture tracking optional:', err.message);
+          });
+      }
 
       const modelGroup = new THREE.Group();
       modelGroup.rotation.set(0, 0, 0);
@@ -7619,14 +7654,11 @@
 
     if (els.gestureChip) {
       els.gestureChip.addEventListener('click', () => {
-        // Cycle gestures: Right Arm Up (Explosion) -> Left Arm Up (Storm) -> All Down
-        if (isRightArmCurrentlyUp) {
-          triggerRightArmDown();
-          triggerLeftArmUp();
-        } else if (isLeftArmCurrentlyUp) {
+        // Toggle Left Arm Full Up gesture (frames 73-80):
+        if (isLeftArmCurrentlyUp) {
           triggerLeftArmDown();
         } else {
-          triggerRightArmUp();
+          triggerLeftArmUp();
         }
       });
     }
