@@ -778,7 +778,7 @@
   <div id="app">
 
     <!-- ===================== SCREEN 01: WELCOME & PRODUCT SHOWCASE (ss3 Inspired) ===================== -->
-    <section id="screen-welcome" class="select-none">
+    <section id="screen-welcome" class="hidden select-none" style="display: none !important;" aria-hidden="true">
       <!-- Clean Minimalist Top Header (Expands smoothly on md/lg) -->
       <header class="relative z-10 w-full flex items-center justify-between max-w-sm md:max-w-3xl lg:max-w-4xl mx-auto pt-2 pb-1">
         <div class="flex items-center gap-2">
@@ -1010,7 +1010,7 @@
 
 
     <!-- ===================== SCREEN 03: LIVE AR VIEWPORT (ss3 Left Screen Inspired) ===================== -->
-    <section id="screen-ar" class="absolute inset-0 bg-black z-10 overflow-hidden">
+    <section id="screen-ar" class="absolute inset-0 bg-black z-10 overflow-hidden ar-ready-hud">
       <!-- Three.js + MindAR Camera Feed -->
       <div id="ar-container"></div>
 
@@ -2113,7 +2113,7 @@
     let interactivePlanes = [];
     let isPlaneInteractionActive = false;
     let isCameraRunning = false;
-    let isWelcomeScreenActive = true;
+    let isWelcomeScreenActive = false;
     let isAssetsLoaded = false;
 
     // ---------------------------------------------------------------
@@ -3079,35 +3079,13 @@
         return;
       }
 
-      let permissionState = null;
-      if (navigator.permissions && navigator.permissions.query) {
-        try {
-          const res = await navigator.permissions.query({ name: 'camera' });
-          permissionState = res.state;
-        } catch (e) { }
-      }
-
-      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-
-      // Desktop or granted permission: auto-start camera stream in background with heavy blur
-      if (permissionState === 'granted' || (!isMobile && permissionState !== 'denied')) {
-        try {
-          await initAR();
-          const video = els.arContainer.querySelector('video');
-          if (video && isWelcomeScreenActive) {
-            video.classList.add('camera-welcome-blur');
-          }
-          if (isAssetsLoaded) {
-            updateWelcomeBtn('READY');
-          }
-        } catch (e) {
-          console.warn("[CameraAutoStart] Could not auto-start camera:", e);
-          if (isAssetsLoaded) {
-            updateWelcomeBtn('ENABLE_CAMERA');
-          }
+      try {
+        await initAR();
+        if (isAssetsLoaded) {
+          updateWelcomeBtn('READY');
         }
-      } else {
-        // Requires user gesture on mobile
+      } catch (e) {
+        console.warn("[CameraAutoStart] Direct camera start attempt:", e);
         if (isAssetsLoaded) {
           updateWelcomeBtn('ENABLE_CAMERA');
         }
@@ -3129,10 +3107,6 @@
         updateWelcomeBtn('STARTING_CAMERA');
         try {
           await initAR();
-          const video = els.arContainer.querySelector('video');
-          if (video && isWelcomeScreenActive) {
-            video.classList.add('camera-welcome-blur');
-          }
           updateWelcomeBtn('READY');
           executeEnterTransition();
         } catch (err) {
@@ -3148,19 +3122,19 @@
     }
 
     function executeEnterTransition() {
-      if (!isWelcomeScreenActive) return;
       isWelcomeScreenActive = false;
-      performance.mark('overlay-dismissed');
+      try { performance.mark('overlay-dismissed'); } catch (e) {}
 
       const welcomeEl = document.getElementById('screen-welcome');
       if (welcomeEl) {
-        welcomeEl.classList.add('fade-out');
+        welcomeEl.style.display = 'none';
       }
 
       const video = els.arContainer.querySelector('video');
       if (video) {
         video.classList.remove('camera-welcome-blur');
-        video.classList.add('camera-unblurring');
+        video.style.filter = 'none';
+        video.style.transform = 'none';
       }
 
       const arScreen = document.getElementById('screen-ar');
@@ -3168,20 +3142,11 @@
         arScreen.classList.add('ar-ready-hud');
       }
 
-      setTimeout(() => {
-        if (welcomeEl) {
-          welcomeEl.style.display = 'none';
-        }
-        if (video) {
-          video.classList.remove('camera-unblurring');
-          video.style.filter = 'none';
-          video.style.transform = 'none';
-        }
-        showToast('Point camera at T-shirt mark 🎯');
-      }, 550);
+      showToast('Point camera at T-shirt mark 🎯');
     }
 
     async function runPreload() {
+      try { performance.mark('overlay-dismissed'); } catch (e) {}
       updateWelcomeBtn('PREPARING');
       checkCameraAndAutoStart();
 
@@ -3208,6 +3173,7 @@
         }
         if (isCameraRunning) {
           updateWelcomeBtn('READY');
+          showToast('Point camera at T-shirt mark 🎯');
         } else {
           checkCameraAndAutoStart();
         }
