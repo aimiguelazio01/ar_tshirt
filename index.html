@@ -1055,6 +1055,14 @@
         </div>
       </div>
 
+      <!-- 3D CHARACTER LOADING INDICATOR -->
+      <div id="character-loading" class="ar-hud absolute inset-0 pointer-events-none z-25 flex flex-col items-center justify-center transition-opacity duration-300">
+        <div class="flex items-center gap-2.5 px-4 py-2 rounded-full bg-dark-card/90 backdrop-blur-md border border-white/15 shadow-2xl">
+          <span class="inline-block w-2 h-2 rounded-full bg-brand animate-ping"></span>
+          <span class="text-xs sm:text-sm font-mono font-bold tracking-widest text-white lowercase" id="character-loading-text">loading...</span>
+        </div>
+      </div>
+
       <!-- BOTTOM CONTROLS DOCK (Speaker, Panic, Workflow + MVirgil Studio Footer) -->
       <div
         class="ar-hud absolute bottom-0 inset-x-0 pb-safe z-30 flex flex-col items-center px-2 sm:px-6 pt-2 pb-2 bg-gradient-to-t from-dark-base via-dark-base/90 to-transparent pointer-events-none max-w-screen-md mx-auto">
@@ -2065,6 +2073,8 @@
       statusDot: document.getElementById('status-dot'),
       statusText: document.getElementById('status-text'),
       reticleHint: document.getElementById('reticle-hint'),
+      characterLoading: document.getElementById('character-loading'),
+      characterLoadingText: document.getElementById('character-loading-text'),
       lensToggle: document.getElementById('lens-toggle'),
       lensLabel: document.getElementById('lens-label'),
       btnClose: document.getElementById('btn-close'),
@@ -2184,11 +2194,13 @@
         }
 
         if (els.progressText) els.progressText.textContent = 'DOWNLOADING 3D ASSETS…';
+        if (els.characterLoadingText) els.characterLoadingText.textContent = 'loading...';
         const arrayBuffer = await readResponseArrayBuffer(res, ({ loadedBytes, totalBytes }) => {
           const pct = Math.min(88, Math.round((loadedBytes / totalBytes) * 88));
           if (els.progressFill) els.progressFill.style.width = pct + '%';
           if (els.progressPct) els.progressPct.textContent = pct + '%';
           if (els.progressText) els.progressText.textContent = `DOWNLOADING 3D ASSETS (${pct}%)`;
+          if (els.characterLoadingText) els.characterLoadingText.textContent = pct > 0 ? `loading... ${pct}%` : 'loading...';
         });
         clearTimeout(timeoutId);
 
@@ -2199,6 +2211,7 @@
 
         performance.mark('model-parse-start');
         if (els.progressText) els.progressText.textContent = 'PARSING 3D CHARACTER…';
+        if (els.characterLoadingText) els.characterLoadingText.textContent = 'loading...';
 
         const loader = getSharedGLTFLoader();
         const gltf = await new Promise((resolve, reject) => {
@@ -2227,9 +2240,26 @@
       }
     }
 
+    function updateCharacterLoadingUI(show, text = 'loading...') {
+      if (!els.characterLoading) return;
+      if (show) {
+        els.characterLoading.style.display = 'flex';
+        els.characterLoading.style.opacity = '1';
+        if (els.characterLoadingText) els.characterLoadingText.textContent = text;
+      } else {
+        els.characterLoading.style.opacity = '0';
+        setTimeout(() => {
+          if (els.characterLoading && els.characterLoading.style.opacity === '0') {
+            els.characterLoading.style.display = 'none';
+          }
+        }, 300);
+      }
+    }
+
     function loadMonsterAsset() {
       if (sharedGltf) return Promise.resolve(sharedGltf);
       if (!modelPromise) {
+        updateCharacterLoadingUI(true, 'loading...');
         modelPromise = fetchAndParseMonster().catch(err => {
           modelPromise = null;
           throw err;
@@ -3447,7 +3477,9 @@
       isTargetLocked = !!locked;
       els.statusDot.classList.toggle('locked', isTargetLocked);
       els.statusDot.classList.toggle('searching', !isTargetLocked);
-      els.statusText.textContent = isTargetLocked ? 'ARTWORK IDENTIFIED' : (currentFacing === 'environment' ? 'SCANNING FOR ARTWORK…' : 'FRONT LENS ACTIVE');
+      els.statusText.textContent = isTargetLocked
+        ? (monsterModel ? 'ARTWORK IDENTIFIED' : 'LOADING...')
+        : (currentFacing === 'environment' ? 'SCANNING FOR ARTWORK…' : 'FRONT LENS ACTIVE');
       els.reticleHint.classList.toggle('hide', isTargetLocked);
 
       const cardStatus = document.getElementById('card-status-label');
@@ -3685,20 +3717,26 @@
 
         console.log('[AR] 3D Monster attached. Garment Pos:', monsterGarmentPos, 'Scale:', modelScale);
         showToast('3D Monster Model Active ✨');
+        updateCharacterLoadingUI(false);
       };
 
       const session = activeSession;
+      if (!monsterModel) {
+        updateCharacterLoadingUI(true, 'loading...');
+      }
       loadMonsterAsset().then((gltf) => {
         if (!isCurrent(session)) {
           console.log('[AR] Discarding model attachment: session changed or aborted');
           return;
         }
         instantiateModel(gltf);
+        updateCharacterLoadingUI(false);
       }).catch((err) => {
         console.warn('GLB load error, using fallback geometry:', err);
         if (isCurrent(session)) {
           createPlaceholderMesh(group);
         }
+        updateCharacterLoadingUI(false);
       });
     }
 
@@ -6998,16 +7036,22 @@
 
         setupSimPlanes();
         showToast('3D Monster Active — Drag to rotate!');
+        updateCharacterLoadingUI(false);
       }
 
+      if (!simMonster) {
+        updateCharacterLoadingUI(true, 'loading...');
+      }
       loadMonsterAsset().then((gltf) => {
         if (!isCurrent(session)) return;
         setupSimModel(gltf);
+        updateCharacterLoadingUI(false);
       }).catch((err) => {
         console.warn('Simulator model load error:', err);
         if (isCurrent(session)) {
           createPlaceholderMesh(modelGroup);
         }
+        updateCharacterLoadingUI(false);
       });
 
       const onSimResize = () => {
