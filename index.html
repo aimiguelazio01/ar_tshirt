@@ -5016,6 +5016,19 @@
       if (isRightArmCurrentlyUp) return; // Already raised and holding
       isRightArmCurrentlyUp = true;
 
+      // Safely clear left arm state if switching directly
+      if (isLeftArmCurrentlyUp) {
+        isLeftArmCurrentlyUp = false;
+        if (leftArmActionCleanup) {
+          leftArmActionCleanup();
+          leftArmActionCleanup = null;
+        }
+        if (leftArmDownTimer) {
+          clearTimeout(leftArmDownTimer);
+          leftArmDownTimer = null;
+        }
+      }
+
       if (rightArmActionCleanup) {
         rightArmActionCleanup();
         rightArmActionCleanup = null;
@@ -5027,7 +5040,12 @@
 
       const isSim = isSimulatorMode;
       const currIdle = isSim ? simActionIdle : actionIdle;
+      const currArmUp = isSim ? simActionArmUp : actionArmUp;
       const currRightArmUp = isSim ? simActionRightArmUp : actionRightArmUp;
+
+      if (currArmUp && currArmUp.isRunning()) {
+        currArmUp.fadeOut(0.08);
+      }
 
       if (currRightArmUp) {
         if (currIdle && currIdle.isRunning()) currIdle.fadeOut(0.12);
@@ -5086,6 +5104,19 @@
       if (isLeftArmCurrentlyUp) return; // Already raised and holding
       isLeftArmCurrentlyUp = true;
 
+      // Safely clear right arm state if switching directly
+      if (isRightArmCurrentlyUp) {
+        isRightArmCurrentlyUp = false;
+        if (rightArmActionCleanup) {
+          rightArmActionCleanup();
+          rightArmActionCleanup = null;
+        }
+        if (rightArmDownTimer) {
+          clearTimeout(rightArmDownTimer);
+          rightArmDownTimer = null;
+        }
+      }
+
       if (leftArmActionCleanup) {
         leftArmActionCleanup();
         leftArmActionCleanup = null;
@@ -5098,6 +5129,11 @@
       const isSim = isSimulatorMode;
       const currIdle = isSim ? simActionIdle : actionIdle;
       const currArmUp = isSim ? simActionArmUp : actionArmUp;
+      const currRightArmUp = isSim ? simActionRightArmUp : actionRightArmUp;
+
+      if (currRightArmUp && currRightArmUp.isRunning()) {
+        currRightArmUp.fadeOut(0.08);
+      }
 
       if (currArmUp) {
         if (currIdle && currIdle.isRunning()) currIdle.fadeOut(0.12);
@@ -5424,25 +5460,26 @@
       if (cursor) cursor.style.display = 'none';
     }
 
-    // Check if Right Arm is RAISED / UP (Landmarks: 12=right_shoulder, 14=right_elbow, 16=right_wrist, 8=right_ear)
+    // Check if Arm is RAISED / UP (normalized image space: Y=0 is TOP of frame, Y=1 is BOTTOM)
     function isArmFullUp(shoulder, elbow, wrist, ear, nose) {
       if (!shoulder) return false;
-      const headY = ear ? ear.y : (nose ? nose.y : shoulder.y - 0.16);
+      const headY = ear ? ear.y : (nose ? nose.y : shoulder.y - 0.15);
 
-      // In normalized image space: Y=0 is TOP of frame, Y=1 is BOTTOM.
-      // Arm is full up when wrist is above shoulder level or near/above head.
+      // 1. Wrist elevated: above or near shoulder level, or near/above head
       if (wrist) {
-        const isWristAboveHead = wrist.y < (headY + 0.08);
-        const isWristAboveShoulder = wrist.y < (shoulder.y - 0.04);
-        const isWristAboveElbow = !elbow || (wrist.y < elbow.y + 0.08);
-        if ((isWristAboveHead || isWristAboveShoulder) && isWristAboveElbow) {
+        const isWristAboveShoulder = wrist.y < (shoulder.y + 0.04);
+        const isWristNearHead = wrist.y < (headY + 0.10);
+        const isForearmUp = !elbow || (wrist.y < elbow.y + 0.10);
+        if ((isWristAboveShoulder || isWristNearHead) && isForearmUp) {
           return true;
         }
       }
-      // If wrist is near/above top edge (y < 0.05 or missing) but elbow is elevated:
-      if (elbow && elbow.y < (shoulder.y - 0.02)) {
+
+      // 2. Elbow elevated (e.g. wrist off-screen above camera frame or bent arm held up)
+      if (elbow && elbow.y < (shoulder.y + 0.04)) {
         return true;
       }
+
       return false;
     }
 
@@ -5450,15 +5487,12 @@
     function isLeftArmRaisedCheck(landmarks) {
       if (!landmarks || landmarks.length < 17) return false;
       const nose = landmarks[0];
+      const leftEar = landmarks[7];
+      const leftShoulder = landmarks[11];
+      const leftElbow = landmarks[13];
+      const leftWrist = landmarks[15];
 
-      // 1. Anatomical Left Arm (landmarks 11, 13, 15)
-      const isAnatomicalLeftUp = isArmFullUp(landmarks[11], landmarks[13], landmarks[15], landmarks[7], nose);
-
-      // 2. Screen-Left Arm (mirrored selfie camera support where the user raises the arm visible on the left)
-      const isRightArmOnScreenLeft = landmarks[16] && nose && (landmarks[16].x < nose.x);
-      const isScreenLeftUp = isRightArmOnScreenLeft && isArmFullUp(landmarks[12], landmarks[14], landmarks[16], landmarks[8], nose);
-
-      return isAnatomicalLeftUp || isScreenLeftUp;
+      return isArmFullUp(leftShoulder, leftElbow, leftWrist, leftEar, nose);
     }
 
     // Check if Right Arm is RAISED / FULL UP (Landmarks: 12=right_shoulder, 14=right_elbow, 16=right_wrist, 8=right_ear)
@@ -5470,16 +5504,7 @@
       const rightElbow = landmarks[14];
       const rightWrist = landmarks[16];
 
-      // If user's raised arm is on the left side of frame/body, leave it for Left Arm gesture
-      if (rightWrist && nose && rightWrist.x < nose.x) return false;
-
-      const isAnatomicalRightUp = isArmFullUp(rightShoulder, rightElbow, rightWrist, rightEar, nose);
-
-      // Support screen-right when left arm appears on screen-right in mirrored feed
-      const isLeftArmOnScreenRight = landmarks[15] && nose && (landmarks[15].x >= nose.x);
-      const isScreenRightUp = isLeftArmOnScreenRight && isArmFullUp(landmarks[11], landmarks[13], landmarks[15], landmarks[7], nose);
-
-      return (isAnatomicalRightUp || isScreenRightUp) && !isLeftArmRaisedCheck(landmarks);
+      return isArmFullUp(rightShoulder, rightElbow, rightWrist, rightEar, nose);
     }
 
     let rightArmUpDebounce = 0;
@@ -5561,8 +5586,24 @@
       const now = performance.now();
       const isPoseSatisfied = areElbowsAndWristsAboveShoulders(landmarks);
 
-      // 1. Right Arm Raise -> Triggers 3D Explosion!
-      const isRightUp = isRightArmRaisedCheck(landmarks);
+      // Evaluate left and right arms independently
+      const isRightUpRaw = isRightArmRaisedCheck(landmarks);
+      const isLeftUpRaw = isLeftArmRaisedCheck(landmarks);
+
+      let isRightUp = false;
+      let isLeftUp = false;
+
+      if (isRightUpRaw && !isLeftUpRaw) {
+        isRightUp = true;
+      } else if (isLeftUpRaw && !isRightUpRaw) {
+        isLeftUp = true;
+      } else if (isRightUpRaw && isLeftUpRaw) {
+        if (isRightArmCurrentlyUp) isRightUp = true;
+        else if (isLeftArmCurrentlyUp) isLeftUp = true;
+        else isRightUp = true;
+      }
+
+      // 1. Right Arm Raise -> Plays frames 117 to 125, stays at frame 125
       if (isRightUp) {
         if (!rightArmUpStartTime) rightArmUpStartTime = now;
         rightArmDownStartTime = 0;
@@ -5577,8 +5618,7 @@
         }
       }
 
-      // 2. Left Arm Raise -> Triggers 3D Electric Storm!
-      const isLeftUp = isLeftArmRaisedCheck(landmarks);
+      // 2. Left Arm Raise -> Plays frames 73 to 80, stays at frame 80
       if (isLeftUp) {
         if (!leftArmUpStartTime) leftArmUpStartTime = now;
         leftArmDownStartTime = 0;
