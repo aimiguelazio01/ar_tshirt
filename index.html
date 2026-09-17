@@ -1039,6 +1039,13 @@
             </button>
           </div>
         </div>
+
+        <!-- Pose AI Status Pill -->
+        <div id="gesture-chip" role="button" tabindex="0" title="MediaPipe AI: Raise Left Arm full up to play animation frames 73-80 (or tap here)"
+          class="pointer-events-auto self-center px-3 py-1 rounded-full bg-black/80 backdrop-blur-md border border-brand/50 text-[10px] sm:text-[11px] font-mono text-white flex items-center gap-2 cursor-pointer shadow-[0_2px_12px_rgba(0,0,0,0.6)] select-none hover:border-brand transition-all">
+          <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+          <span id="gesture-text">🦾 POSE AI LOADING...</span>
+        </div>
       </div>
 
       <!-- CENTER RETICLE HINT (Minimal Rounded Frame Guide) -->
@@ -2438,19 +2445,6 @@
       requestAnimationFrame(() => {
         requestAnimationFrame(async () => {
           if (!isCurrent(session)) return;
-
-          if (mode === 'simulator') {
-            if (!window.DISABLE_VFX) {
-              try {
-                await ensureExplosionTexture();
-                if (!isCurrent(session)) return;
-                await ensureStormTexture();
-                if (!isCurrent(session)) return;
-                performance.mark('effects-ready');
-              } catch (e) {}
-            }
-            return;
-          }
 
           const enabledTasks = [
             ...(!window.DISABLE_POSE ? ['pose'] : []),
@@ -5019,16 +5013,6 @@
       const currArmUp = isSim ? simActionArmUp : actionArmUp;
       const currArmDown = isSim ? simActionArmDown : actionArmDown;
 
-      if (currArmUp) {
-        if (currIdle && currIdle.isRunning()) currIdle.fadeOut(0.12);
-        if (currArmDown && currArmDown.isRunning()) currArmDown.fadeOut(0.08);
-        currArmUp.reset();
-        currArmUp.setLoop(THREE.LoopOnce, 1);
-        currArmUp.clampWhenFinished = true;
-        currArmUp.fadeIn(0.08);
-        currArmUp.play();
-      }
-
       showToast('🔥 Right Arm Raised — Lower to Detonate 💥');
       updateGestureHUD('right', true);
       console.log('[Gesture] Right Arm Raised (Charged)');
@@ -5048,42 +5032,13 @@
         rightArmDownTimer = null;
       }
 
-      const isSim = isSimulatorMode;
-      const currIdle = isSim ? simActionIdle : actionIdle;
-      const currArmUp = isSim ? simActionArmUp : actionArmUp;
-      const currArmDown = isSim ? simActionArmDown : actionArmDown;
-
-      if (currArmDown) {
-        const currentMixer = isSim ? simMixer : mixer;
-        rightArmActionCleanup = onActionFinished(currentMixer, currArmDown, activeSession, () => {
-          rightArmActionCleanup = null;
-          if (currArmDown) currArmDown.fadeOut(0.15);
-          if (currIdle && !isSequenceRunning && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) {
-            currIdle.reset();
-            currIdle.setLoop(THREE.LoopRepeat);
-            currIdle.fadeIn(0.15);
-            currIdle.play();
-          }
-          updateGestureHUD();
-        });
-
-        if (currArmUp && currArmUp.isRunning()) currArmUp.fadeOut(0.08);
-        currArmDown.reset();
-        currArmDown.setLoop(THREE.LoopOnce, 1);
-        currArmDown.clampWhenFinished = true;
-        currArmDown.fadeIn(0.08);
-        currArmDown.play();
-      } else {
-        if (currIdle && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) currIdle.reset().play();
-        updateGestureHUD();
-      }
-
       // TRIGGER 3D EXPLOSION EFFECT ONLY WHEN RIGHT ARM GOES DOWN
       if (triggerEffect) {
         trigger3DExplosion();
         showToast('💥 Right Arm Down — 3D Explosion Triggered!');
         console.log('[Gesture] Right Arm Down -> 3D Explosion triggered');
       }
+      updateGestureHUD();
     }
 
     // Trigger Left Arm Up -> Plays frames 73 to 80 when left arm is full up
@@ -5442,6 +5397,28 @@
     }
 
     // Check if Right Arm is RAISED / UP (Landmarks: 12=right_shoulder, 14=right_elbow, 16=right_wrist, 8=right_ear)
+    function isArmFullUp(shoulder, elbow, wrist, ear, nose) {
+      if (!shoulder) return false;
+      const headY = ear ? ear.y : (nose ? nose.y : shoulder.y - 0.16);
+
+      // In normalized image space: Y=0 is TOP of frame, Y=1 is BOTTOM.
+      // Arm is full up when wrist is above shoulder level or near/above head.
+      if (wrist) {
+        const isWristAboveHead = wrist.y < (headY + 0.08);
+        const isWristAboveShoulder = wrist.y < (shoulder.y - 0.04);
+        const isWristAboveElbow = !elbow || (wrist.y < elbow.y + 0.08);
+        if ((isWristAboveHead || isWristAboveShoulder) && isWristAboveElbow) {
+          return true;
+        }
+      }
+      // If wrist is near/above top edge (y < 0.05 or missing) but elbow is elevated:
+      if (elbow && elbow.y < (shoulder.y - 0.02)) {
+        return true;
+      }
+      return false;
+    }
+
+    // Check if Right Arm is RAISED / UP (Landmarks: 12=right_shoulder, 14=right_elbow, 16=right_wrist, 8=right_ear)
     function isRightArmRaisedCheck(landmarks) {
       if (!landmarks || landmarks.length < 17) return false;
       const nose = landmarks[0];
@@ -5450,30 +5427,10 @@
       const rightElbow = landmarks[14];
       const rightWrist = landmarks[16];
 
-      if (!rightWrist || !rightShoulder || !rightElbow) return false;
+      // If user's raised arm is on the left side of frame/body, leave it for Left Arm gesture
+      if (rightWrist && nose && rightWrist.x < nose.x) return false;
 
-      const rightHeadY = rightEar ? rightEar.y : (nose ? nose.y : rightShoulder.y - 0.16);
-
-      const isWristAboveHead = rightWrist.y < (rightHeadY + 0.04);
-      const isWristAboveShoulder = rightWrist.y < (rightShoulder.y - 0.08);
-      const isWristAboveElbow = rightWrist.y < (rightElbow.y - 0.01);
-      const isElbowElevated = rightElbow.y < (rightShoulder.y + 0.08);
-
-      return (isWristAboveHead || isWristAboveShoulder) && isWristAboveElbow && isElbowElevated;
-    }
-
-    function isArmFullUp(shoulder, elbow, wrist, ear, nose) {
-      if (!shoulder || !elbow || !wrist) return false;
-      const headY = ear ? ear.y : (nose ? nose.y : shoulder.y - 0.16);
-
-      // In normalized image space: Y=0 is TOP of frame, Y=1 is BOTTOM.
-      // Arm is full up when wrist is above shoulder level and elevated near/above head.
-      const isWristAboveHead = wrist.y < (headY + 0.06);
-      const isWristAboveShoulder = wrist.y < (shoulder.y - 0.06);
-      const isWristAboveElbow = wrist.y < (elbow.y + 0.03);
-      const isElbowElevated = elbow.y < (shoulder.y + 0.08);
-
-      return (isWristAboveHead || isWristAboveShoulder) && isWristAboveElbow && isElbowElevated;
+      return isArmFullUp(rightShoulder, rightElbow, rightWrist, rightEar, nose);
     }
 
     // Check if Left Arm is RAISED / FULL UP (Landmarks: 11=left_shoulder, 13=left_elbow, 15=left_wrist, 7=left_ear)
@@ -5543,7 +5500,7 @@
           els.gestureChip.style.fontWeight = 'bold';
         }
       } else {
-        els.gestureText.textContent = '🦾 LOWER ARM TO TRIGGER: RIGHT (BLAST) / LEFT (STORM)';
+        els.gestureText.textContent = '🦾 RAISE LEFT ARM FULL UP TO PLAY (FRAMES 73-80)';
         els.gestureChip.style.background = '';
         els.gestureChip.style.color = '';
         els.gestureChip.style.fontWeight = 'normal';
@@ -6862,13 +6819,21 @@
             simVideo.setAttribute('muted', '');
             simVideo.muted = true;
             simVideo.srcObject = stream;
-            simVideo.style.display = 'none';
+            simVideo.style.position = 'fixed';
+            simVideo.style.top = '0';
+            simVideo.style.left = '0';
+            simVideo.style.width = '1px';
+            simVideo.style.height = '1px';
+            simVideo.style.opacity = '0.001';
+            simVideo.style.pointerEvents = 'none';
+            simVideo.style.zIndex = '-100';
             document.body.appendChild(simVideo);
             session.cleanups.add(() => {
               stream.getTracks().forEach(t => t.stop());
               if (simVideo.parentNode) simVideo.parentNode.removeChild(simVideo);
             });
             simVideo.play().then(() => {
+              ensureTrackingReady({ session, enabledTasks: ['pose'] }).catch(() => {});
               startVideoTrackingScheduler(simVideo, session);
               console.log('[Simulator] Webcam gesture tracking active');
             }).catch(() => {});
