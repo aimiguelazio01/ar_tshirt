@@ -3959,20 +3959,7 @@
 
       const logoImg = logoImageCache[cfg.logoSrc];
       if (logoImg && logoImg.complete && logoImg.naturalWidth > 0) {
-        ctx.save();
-        if (cfg.isActive) {
-          // Vibrant glow behind the logo for better visibility
-          const glowGrad = ctx.createRadialGradient(cx, logoY + logoSize / 2, 30, cx, logoY + logoSize / 2, logoSize * 0.75);
-          glowGrad.addColorStop(0, `${cfg.color}55`);
-          glowGrad.addColorStop(0.6, `${cfg.color}22`);
-          glowGrad.addColorStop(1, 'transparent');
-          ctx.fillStyle = glowGrad;
-          ctx.beginPath();
-          ctx.arc(cx, logoY + logoSize / 2, logoSize * 0.75, 0, Math.PI * 2);
-          ctx.fill();
-        }
         ctx.drawImage(logoImg, logoX, logoY, logoSize, logoSize);
-        ctx.restore();
       } else {
         ctx.save();
         ctx.font = 'bold 54px "JetBrains Mono", monospace';
