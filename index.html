@@ -290,21 +290,7 @@
 
     /* Minimal Subtle Reticle Box (No sci-fi lines) */
     .reticle-hint {
-      position: absolute;
-      left: 50%;
-      top: 44%;
-      transform: translate(-50%, -50%);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 12px;
-      pointer-events: none;
-      z-index: 4;
-      transition: opacity 0.3s;
-    }
-
-    .reticle-hint.hide {
-      opacity: 0;
+      display: none !important;
     }
 
     /* Camera Blur for Welcome Screen */
@@ -1042,19 +1028,8 @@
 
       </div>
 
-      <!-- CENTER RETICLE HINT (Minimal Rounded Frame Guide) -->
-      <div class="ar-hud absolute inset-0 pointer-events-none z-20 flex items-center justify-center">
-        <div id="reticle-hint" class="reticle-hint">
-          <div
-            class="w-44 h-44 sm:w-56 sm:h-56 rounded-[28px] sm:rounded-[32px] border-2 border-dashed border-white/30 flex items-center justify-center">
-            <div class="w-2 h-2 rounded-full bg-brand/80"></div>
-          </div>
-          <span
-            class="text-[10px] sm:text-[11px] font-medium tracking-wider text-white/90 bg-dark-card/90 backdrop-blur-md px-3 sm:px-3.5 py-1 rounded-full border border-white/10 uppercase">
-            Frame Chest Print
-          </span>
-        </div>
-      </div>
+      <!-- CENTER RETICLE HINT (Removed) -->
+      <div id="reticle-hint" class="reticle-hint hidden" style="display: none !important;"></div>
 
       <!-- 3D CHARACTER LOADING INDICATOR -->
       <div id="character-loading" class="absolute inset-0 pointer-events-none z-40 flex flex-col items-center justify-center transition-opacity duration-300" style="opacity: 1;">
@@ -3523,7 +3498,7 @@
       els.statusText.textContent = isTargetLocked
         ? (monsterModel ? 'ARTWORK IDENTIFIED' : 'LOADING...')
         : (currentFacing === 'environment' ? 'SCANNING FOR ARTWORK…' : 'FRONT LENS ACTIVE');
-      els.reticleHint.classList.toggle('hide', isTargetLocked);
+      if (els.reticleHint) els.reticleHint.classList.toggle('hide', isTargetLocked);
 
       const cardStatus = document.getElementById('card-status-label');
       if (cardStatus) {
@@ -6659,7 +6634,7 @@
 
       els.statusDot.className = 'status-dot locked';
       els.statusText.textContent = 'SIMULATOR MODE';
-      els.reticleHint.classList.add('hide');
+      if (els.reticleHint) els.reticleHint.classList.add('hide');
 
       arePlanesDisappeared = false;
       targetPlaneOpacity = areSoftwarePlatesVisible() ? 0.88 : 0;
