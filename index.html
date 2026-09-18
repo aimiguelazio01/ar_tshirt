@@ -248,8 +248,9 @@
       }
     }
 
-    /* Clean Toast notification with safe-area offset */
+    /* Clean Toast notification with safe-area offset (Silenced) */
     #toast {
+      display: none !important;
       position: absolute;
       left: 50%;
       bottom: calc(env(safe-area-inset-bottom, 0px) + 115px);
@@ -262,7 +263,6 @@
       font-size: 11px;
       font-weight: 500;
       letter-spacing: 0.02em;
-      display: flex;
       align-items: center;
       gap: 8px;
       opacity: 0;
@@ -284,8 +284,8 @@
     }
 
     #toast.show {
-      opacity: 1;
-      transform: translateX(-50%) translateY(0);
+      display: none !important;
+      opacity: 0 !important;
     }
 
     /* Minimal Subtle Reticle Box (No sci-fi lines) */
@@ -1055,14 +1055,12 @@
           <div class="justify-self-center flex items-center gap-1.5 sm:gap-2 pointer-events-auto">
             <button
               class="control-action-button bg-red-600/95 hover:bg-red-500 active:scale-95 gap-1.5 text-white font-bold text-[11px] sm:text-xs tracking-wider shadow-[0_0_20px_rgba(239,68,68,0.55)] border border-red-400/40 transition-all cursor-pointer btn-panic-pulse whitespace-nowrap"
-              id="btn-panic" title="DON'T TOUCH!">
+              id="btn-panic" title="PANIC">
               <span class="material-symbols-outlined text-[17px] sm:text-[19px]">warning</span>
-              <span class="hidden sm:inline">DON'T TOUCH</span>
-              <span class="inline sm:hidden">PANIC</span>
+              <span>PANIC</span>
             </button>
-            <button class="control-action-button flex-shrink-0 flex flex-col items-center justify-center bg-dark-card/95 hover:bg-dark-elevated active:scale-95 text-white font-mono font-bold tracking-wide border border-white/15 transition-all cursor-pointer leading-tight px-1.5" id="btn-toggle-plates" title="Hide Software Plates" aria-label="Hide Software Plates" aria-pressed="true">
+            <button class="control-action-button flex-shrink-0 flex items-center justify-center bg-dark-card/95 hover:bg-dark-elevated active:scale-95 text-white font-mono font-bold tracking-wide border border-white/15 transition-all cursor-pointer leading-tight px-1.5" id="btn-toggle-plates" aria-label="Workflow Plates" aria-pressed="true">
               <span class="text-[12px] sm:text-[13px] leading-tight">workflow</span>
-              <span class="text-[7.5px] sm:text-[8px] font-sans font-medium text-brand/90 uppercase tracking-tight mt-0.5 whitespace-nowrap leading-none">touch to interact</span>
             </button>
           </div>
 
@@ -4908,7 +4906,7 @@
           panicBtn.style.pointerEvents = 'auto';
           panicBtn.style.cursor = 'pointer';
           panicBtn.style.opacity = '1';
-          panicBtn.title = "DON'T TOUCH!";
+          panicBtn.title = "PANIC";
         } else {
           panicBtn.setAttribute('disabled', 'true');
           panicBtn.classList.add('btn-inactive', 'opacity-40', 'pointer-events-none', 'cursor-not-allowed');
@@ -4916,7 +4914,7 @@
           panicBtn.style.pointerEvents = 'none';
           panicBtn.style.cursor = 'not-allowed';
           panicBtn.style.opacity = '0.45';
-          panicBtn.title = "Countdown in progress...";
+          panicBtn.title = "";
         }
       }
     }
@@ -4966,8 +4964,7 @@
       setPanicButtonActive(false);
       updatePanicButtonText("AGITATED!");
       updatePanicButtonIcon("electric_bolt");
-      showToast(`⚠️ I SAID DON'T TOUCH! (Frames 25-72 x${loopCount}) 👹`);
-      console.log(`[Animation] DON'T TOUCH triggered: playing frames 25 to 72 (${loopCount} cycles)`);
+      console.log(`[Animation] PANIC triggered: playing frames 25 to 72 (${loopCount} cycles)`);
     }
 
     function playIdleSequence() {
@@ -4980,7 +4977,7 @@
       isRightArmCurrentlyUp = false;
       isLeftArmCurrentlyUp = false;
       setPanicButtonActive(true);
-      updatePanicButtonText("DON'T TOUCH");
+      updatePanicButtonText("PANIC");
       updatePanicButtonIcon("warning");
       console.log('[Animation] Calmed down -> returned to idle loop frames 1 to 24');
     }
@@ -5093,7 +5090,7 @@
         isPanicActive = false;
         isSequenceRunning = false;
         setPanicButtonActive(true);
-        updatePanicButtonText("DON'T TOUCH");
+        updatePanicButtonText("PANIC");
         updatePanicButtonIcon("warning");
       }
 
@@ -7069,26 +7066,8 @@
     // ---------------------------------------------------------------
     let toastTimer;
     function showToast(msg, duration = 2400, actionCallback = null) {
-      if (!els.toast) return;
-      els.toast.textContent = msg;
-      els.toast.classList.add('show');
-      if (typeof actionCallback === 'function') {
-        els.toast.style.cursor = 'pointer';
-        els.toast.onclick = (e) => {
-          e.stopPropagation();
-          els.toast.classList.remove('show');
-          els.toast.onclick = null;
-          actionCallback();
-        };
-      } else {
-        els.toast.style.cursor = 'default';
-        els.toast.onclick = null;
-      }
-      clearTimeout(toastTimer);
-      toastTimer = setTimeout(() => {
-        els.toast.classList.remove('show');
-        els.toast.onclick = null;
-      }, duration);
+      // Intentionally silenced: all toast captions, hints, and popups removed
+      return;
     }
 
     // ---------------------------------------------------------------
