@@ -772,6 +772,36 @@
       backdrop-filter: blur(28px);
       -webkit-backdrop-filter: blur(28px);
     }
+
+    /* 3D Character Large Animation Frame Debug Display */
+    #anim-frame-debug {
+      background: rgba(8, 12, 18, 0.88);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 2px solid rgba(0, 240, 255, 0.85);
+      box-shadow: 0 0 35px rgba(0, 240, 255, 0.35), inset 0 0 15px rgba(0, 240, 255, 0.12);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    #anim-frame-debug:hover {
+      border-color: #00F0FF;
+      box-shadow: 0 0 45px rgba(0, 240, 255, 0.55), inset 0 0 20px rgba(0, 240, 255, 0.2);
+      transform: scale(1.02);
+    }
+
+    #debug-frame-num {
+      font-size: 3.5rem;
+      line-height: 1;
+      color: #00F0FF;
+      text-shadow: 0 0 16px rgba(0, 240, 255, 0.85), 0 0 32px rgba(0, 240, 255, 0.45);
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 900;
+      letter-spacing: -0.04em;
+    }
+
+    #anim-frame-debug.giant-mode #debug-frame-num {
+      font-size: 5.5rem;
+    }
   </style>
 </head>
 
@@ -1045,6 +1075,24 @@
           class="pointer-events-auto self-center px-3 py-1 rounded-full bg-black/80 backdrop-blur-md border border-brand/50 text-[10px] sm:text-[11px] font-mono text-white flex items-center gap-2 cursor-pointer shadow-[0_2px_12px_rgba(0,0,0,0.6)] select-none hover:border-brand transition-all">
           <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
           <span id="gesture-text">🦾 POSE AI LOADING...</span>
+        </div>
+
+        <!-- 3D Character Large Animation Frame Debug HUD -->
+        <div id="anim-frame-debug"
+          class="pointer-events-auto self-center flex flex-col items-center justify-center px-4 sm:px-6 py-1.5 sm:py-2 rounded-2xl select-none cursor-pointer mt-0.5"
+          title="Click to toggle between Extra-Large and Standard size">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+            <span class="text-[9px] sm:text-[11px] font-mono font-bold tracking-widest text-cyan-300 uppercase">3D ANIMATION FRAME</span>
+            <span id="debug-frame-clip" class="text-[9px] sm:text-[11px] font-mono font-bold text-amber-400 tracking-wider">IDLE [1-24]</span>
+          </div>
+          <div class="flex items-baseline gap-1.5 my-0.5">
+            <span class="text-xs sm:text-sm font-mono font-bold text-cyan-300/70">FRAME</span>
+            <span id="debug-frame-num">1</span>
+          </div>
+          <div class="w-full h-1.5 bg-cyan-950/80 rounded-full overflow-hidden border border-cyan-500/30 mt-0.5">
+            <div id="debug-frame-progress" class="h-full bg-gradient-to-r from-cyan-400 to-amber-400 transition-all duration-75" style="width: 4%;"></div>
+          </div>
         </div>
       </div>
 
@@ -5265,6 +5313,144 @@
       playDontTouchSequence(5);
     }
 
+    // ---------------------------------------------------------------
+    // 3D Character Animation Frame Debug HUD
+    // ---------------------------------------------------------------
+    const CLIP_FRAME_RANGES = {
+      'idle_1_24': { start: 1, end: 24, name: 'IDLE' },
+      'sim_idle_1_24': { start: 1, end: 24, name: 'IDLE' },
+      'react_25_72': { start: 25, end: 72, name: "DON'T TOUCH" },
+      'sim_react_25_72': { start: 25, end: 72, name: "DON'T TOUCH" },
+      'loop_42_60': { start: 42, end: 60, name: 'LOOP' },
+      'sim_loop_42_60': { start: 42, end: 60, name: 'LOOP' },
+      'calm_61_85': { start: 61, end: 85, name: 'CALM' },
+      'sim_calm_61_85': { start: 61, end: 85, name: 'CALM' },
+      'left_arm_up_73_80': { start: 73, end: 80, name: 'LEFT ARM UP' },
+      'sim_left_arm_up_73_80': { start: 73, end: 80, name: 'LEFT ARM UP' },
+      'left_arm_down_81_116': { start: 81, end: 116, name: 'LEFT ARM DOWN (STORM)' },
+      'sim_left_arm_down_81_116': { start: 81, end: 116, name: 'LEFT ARM DOWN (STORM)' },
+      'right_arm_up_117_125': { start: 117, end: 125, name: 'RIGHT ARM UP' },
+      'sim_right_arm_up_117_125': { start: 117, end: 125, name: 'RIGHT ARM UP' },
+      'right_arm_down_126_160': { start: 126, end: 160, name: 'RIGHT ARM DOWN (BLAST)' },
+      'sim_right_arm_down_126_160': { start: 126, end: 160, name: 'RIGHT ARM DOWN (BLAST)' }
+    };
+
+    function getCharacterAnimationFrame(activeMixer) {
+      if (!activeMixer || !activeMixer._actions || activeMixer._actions.length === 0) {
+        return null;
+      }
+
+      let dominantAction = null;
+      let maxWeight = -1;
+      for (const act of activeMixer._actions) {
+        if (act && act.isRunning() && act.weight > maxWeight) {
+          maxWeight = act.weight;
+          dominantAction = act;
+        }
+      }
+
+      if (!dominantAction) {
+        for (const act of activeMixer._actions) {
+          if (act && (act.isRunning() || act.weight > 0)) {
+            dominantAction = act;
+            break;
+          }
+        }
+      }
+
+      if (!dominantAction) return null;
+
+      const clip = dominantAction.getClip();
+      const clipName = (clip && clip.name) || '';
+      const range = CLIP_FRAME_RANGES[clipName];
+      const dur = (clip && clip.duration > 0) ? clip.duration : 1.0;
+      const rawTime = dominantAction.time;
+
+      if (range) {
+        const totalFrames = range.end - range.start;
+        let localOffset = 0;
+        if (dominantAction.clampWhenFinished && rawTime >= dur) {
+          localOffset = totalFrames;
+        } else {
+          const modTime = (rawTime >= 0) ? (rawTime % dur) : 0;
+          localOffset = Math.min(totalFrames, Math.floor(modTime * 24 + 0.001));
+        }
+        const currentFrame = range.start + localOffset;
+        const progress = Math.min(1.0, Math.max(0, (currentFrame - range.start) / Math.max(1, totalFrames)));
+        return {
+          frame: currentFrame,
+          clipName: range.name,
+          rangeText: `[${range.start}–${range.end}]`,
+          progress,
+          rawTime: Number(rawTime.toFixed(2))
+        };
+      }
+
+      const fallbackFrame = Math.floor(rawTime * 24);
+      return {
+        frame: fallbackFrame,
+        clipName: clipName.toUpperCase() || 'ANIMATION',
+        rangeText: '',
+        progress: (dur > 0) ? Math.min(1.0, (rawTime % dur) / dur) : 0,
+        rawTime: Number(rawTime.toFixed(2))
+      };
+    }
+
+    let debugFrameNumEl = null;
+    let debugFrameClipEl = null;
+    let debugFrameProgEl = null;
+    let lastRenderedDebugFrame = -1;
+    let lastRenderedDebugClip = '';
+
+    function updateAnimationFrameDebugUI(activeMixer) {
+      if (!debugFrameNumEl) {
+        debugFrameNumEl = document.getElementById('debug-frame-num');
+        debugFrameClipEl = document.getElementById('debug-frame-clip');
+        debugFrameProgEl = document.getElementById('debug-frame-progress');
+      }
+      if (!debugFrameNumEl) return;
+
+      const info = getCharacterAnimationFrame(activeMixer);
+      if (!info) {
+        if (lastRenderedDebugFrame !== 0) {
+          lastRenderedDebugFrame = 0;
+          debugFrameNumEl.textContent = '--';
+          if (debugFrameClipEl) debugFrameClipEl.textContent = 'WAITING FOR 3D MODEL';
+          if (debugFrameProgEl) debugFrameProgEl.style.width = '0%';
+        }
+        return;
+      }
+
+      if (info.frame !== lastRenderedDebugFrame) {
+        lastRenderedDebugFrame = info.frame;
+        debugFrameNumEl.textContent = String(info.frame);
+      }
+
+      const clipLabel = `${info.clipName} ${info.rangeText}`.trim();
+      if (clipLabel !== lastRenderedDebugClip) {
+        lastRenderedDebugClip = clipLabel;
+        if (debugFrameClipEl) debugFrameClipEl.textContent = clipLabel;
+      }
+
+      if (debugFrameProgEl) {
+        debugFrameProgEl.style.width = `${Math.round(info.progress * 100)}%`;
+      }
+    }
+
+    window.getCurrentAnimationFrame = function () {
+      const activeM = isSimulatorMode ? simMixer : mixer;
+      return getCharacterAnimationFrame(activeM);
+    };
+
+    (function wireAnimFrameDebugToggle() {
+      const box = document.getElementById('anim-frame-debug');
+      if (!box) return;
+      box.addEventListener('click', () => {
+        const isGiant = box.classList.toggle('giant-mode');
+        showToast(isGiant ? '🔍 Frame Display: EXTRA LARGE (88px)' : '🔍 Frame Display: STANDARD LARGE (56px)');
+      });
+    })();
+
     function toggleButtonState(targetMesh) {
       if (!targetMesh) return false;
       const btnGroup = targetMesh.userData ? (targetMesh.userData.btnGroup || targetMesh.parent) : targetMesh.parent;
@@ -6683,6 +6869,7 @@
 
       if (mixer) {
         mixer.update(elapsed);
+        updateAnimationFrameDebugUI(mixer);
       }
 
       // Prevent character from jumping through or behind the camera
@@ -7126,7 +7313,10 @@
         const elapsed = animTime ? animTime.tick(nowMs) : (simClock ? simClock.getDelta() : 0.016);
         const t = nowMs * 0.001;
 
-        if (simMixer) simMixer.update(elapsed);
+        if (simMixer) {
+          simMixer.update(elapsed);
+          updateAnimationFrameDebugUI(simMixer);
+        }
 
         // Prevent character from jumping through or behind the camera in simulator
         const simRoot = cachedSimRootBone || (simMonster ? (cachedSimRootBone = simMonster.getObjectByName('C_root')) : null);
