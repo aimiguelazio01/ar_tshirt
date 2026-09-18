@@ -1430,6 +1430,8 @@
     import { createTrackingScheduler } from './src/runtime/tracking-scheduler.mjs';
     import { createQualityPolicy } from './src/runtime/quality-policy.mjs';
     import { readResponseArrayBuffer } from './src/runtime/response-body.mjs';
+    import { createAllSampledClips, CLIP_DEFINITIONS_MAP } from './src/runtime/clip-sampler.mjs';
+    import { createAnimationController, AnimationState, arbitrateArms, FADE_DURATIONS } from './src/runtime/animation-controller.mjs';
 
     window.THREE = THREE;
     window.GLTFLoader = GLTFLoader;
@@ -1440,6 +1442,10 @@
     window.createSessionManager = createSessionManager;
     window.createTrackingScheduler = createTrackingScheduler;
     window.createQualityPolicy = createQualityPolicy;
+    window.createAllSampledClips = createAllSampledClips;
+    window.createAnimationController = createAnimationController;
+    window.AnimationState = AnimationState;
+    window.arbitrateArms = arbitrateArms;
     performance.mark('core-libraries-ready');
 
     /* =====================================================================
@@ -2022,7 +2028,7 @@
       // read from the NFC URL, e.g. tapwear.app/ar?drop=001
       contentUrl: null,
 
-      animationSpeed: isMobileDevice ? 1.35 : 1.25, // Calibrated playback speed for responsive mobile interaction
+      animationSpeed: 1.0, // Default 1x playback speed on all devices (authored 24 FPS)
       maxParticles: 220,          // §5.1 performance budget
       smoothing: 0.35,             // one-euro-ish lerp factor, tune for jitter vs. lag
     };
@@ -2219,11 +2225,15 @@
       return activeSession === session && session !== null && !session.abort.signal.aborted;
     }
 
-    function getSharedGLTFLoader() {
+    async function getSharedGLTFLoader() {
       if (!sharedLoader) {
         sharedLoader = new (window.GLTFLoader || GLTFLoader)();
-        if (window.MeshoptDecoder) {
-          sharedLoader.setMeshoptDecoder(window.MeshoptDecoder);
+        const decoder = window.MeshoptDecoder || (typeof MeshoptDecoder !== 'undefined' ? MeshoptDecoder : null);
+        if (decoder) {
+          if (decoder.ready) {
+            await decoder.ready;
+          }
+          sharedLoader.setMeshoptDecoder(decoder);
         }
       }
       return sharedLoader;
@@ -2268,7 +2278,7 @@
         if (els.progressText) els.progressText.textContent = 'PARSING 3D CHARACTER…';
         if (els.characterLoadingText) els.characterLoadingText.textContent = 'loading...';
 
-        const loader = getSharedGLTFLoader();
+        const loader = await getSharedGLTFLoader();
         const gltf = await new Promise((resolve, reject) => {
           loader.parse(
             arrayBuffer,
@@ -2741,6 +2751,12 @@
     let detectedCameras = [];
     let isSimulatorMode = false;
     let simAnimId = null, simRenderer, simScene, simCamera, simMonster, simMixer;
+    let arAnimationController = null;
+    let simAnimationController = null;
+    function getActiveAnimationController() {
+      return isSimulatorMode ? simAnimationController : arAnimationController;
+    }
+    window.getActiveAnimationController = getActiveAnimationController;
     let isDragging = false;
     let simInteractionRoot = null;
     let cachedArRootBone = null;
@@ -2944,6 +2960,11 @@
         cancelAnimationFrame(simAnimId);
         simAnimId = null;
       }
+      if (simAnimationController) {
+        try { simAnimationController.dispose(); } catch (e) { }
+        simAnimationController = null;
+        window.simAnimationController = null;
+      }
       if (simMixer) {
         try { simMixer.stopAllAction(); } catch (e) { }
         simMixer = null;
@@ -2989,6 +3010,11 @@
         try { mindarThree.stop(); } catch (e) { }
       }
 
+      if (arAnimationController) {
+        try { arAnimationController.dispose(); } catch (e) { }
+        arAnimationController = null;
+        window.arAnimationController = null;
+      }
       if (mixer) {
         try { mixer.stopAllAction(); } catch (e) { }
         mixer = null;
@@ -3189,7 +3215,7 @@
     }
 
     async function runPreload() {
-      if (urlParams.get('sim') === '1' || urlParams.get('simulator') === '1') {
+      if (urlParams.get('sim') === '1' || urlParams.get('simulator') === '1' || urlParams.get('mode') === 'simulator') {
         isWelcomeScreenActive = false;
         modeEntryMark = performance.now();
         const welcomeEl = document.getElementById('screen-welcome');
@@ -3639,8 +3665,10 @@
 
     function attachMonsterModel(group) {
       const instantiateModel = (gltf) => {
-        // Clone scene using SkeletonUtils for full skinned mesh/skeleton integrity
-        monsterModel = window.SkeletonUtils ? window.SkeletonUtils.clone(gltf.scene) : gltf.scene.clone(true);
+        if (!window.SkeletonUtils || typeof window.SkeletonUtils.clone !== 'function') {
+          throw new Error('[AR] SkeletonUtils.clone is required for skinned character instantiation');
+        }
+        monsterModel = window.SkeletonUtils.clone(gltf.scene);
         cachedArRootBone = monsterModel.getObjectByName('C_root');
 
         monsterModel.traverse((child) => {
@@ -3708,63 +3736,37 @@
           monsterModel.add(planesModel);
         }
 
-
-
         if (gltf.animations && gltf.animations.length > 0) {
           mixer = new THREE.AnimationMixer(monsterModel);
-          const defaultSpeed = CONFIG.animationSpeed || (isMobileDevice ? 1.35 : 1.25);
+          const defaultSpeed = CONFIG.animationSpeed || 1.0;
           mixer.timeScale = defaultSpeed;
           const defaultClip = gltf.animations.find(c => c && c.name && c.name.toLowerCase().includes('default')) ||
             gltf.animations[0];
           if (defaultClip) {
-            // 1. Idle Loop: frames 1 to 24 (loopable)
-            const clipIdle = THREE.AnimationUtils.subclip(defaultClip, 'idle_1_24', 1, 24, 24);
-            actionIdle = mixer.clipAction(clipIdle);
-            actionIdle.setLoop(THREE.LoopRepeat);
-            actionIdle.play();
+            const clips = createAllSampledClips(defaultClip);
+            arAnimationController = createAnimationController({
+              model: monsterModel,
+              clips,
+              mixer,
+              speed: defaultSpeed,
+              onEffect: (type) => {
+                if (type === 'storm') trigger3DStorm();
+                else if (type === 'explosion') trigger3DExplosion();
+              }
+            });
+            window.arAnimationController = arAnimationController;
 
-            // 2. Reaction (DON'T TOUCH): frames 25 to 72 (loop one more time = 2 repetitions)
-            const clipReact = THREE.AnimationUtils.subclip(defaultClip, 'react_25_72', 25, 72, 24);
-            actionReact = mixer.clipAction(clipReact);
-            actionReact.setLoop(THREE.LoopRepeat, 2);
-            actionReact.clampWhenFinished = true;
+            // Retain action references for diagnostic compatibility
+            actionIdle = arAnimationController.actions.get('idle');
+            actionReact = arAnimationController.actions.get('reaction');
+            actionLoop42 = arAnimationController.actions.get('secondary');
+            actionCalm = arAnimationController.actions.get('recovery');
+            actionLeftArmUp = arAnimationController.actions.get('left_raise');
+            actionLeftArmDown = arAnimationController.actions.get('left_lower');
+            actionRightArmUp = arAnimationController.actions.get('right_raise');
+            actionRightArmDown = arAnimationController.actions.get('right_lower');
 
-            // 3. Secondary Loop: frames 42 to 60 (loopable)
-            const clipLoop42 = THREE.AnimationUtils.subclip(defaultClip, 'loop_42_60', 42, 60, 24);
-            actionLoop42 = mixer.clipAction(clipLoop42);
-            actionLoop42.setLoop(THREE.LoopRepeat);
-
-            // 4. Recovery / Calming: frames 61 to 85 (one-shot)
-            const clipCalm = THREE.AnimationUtils.subclip(defaultClip, 'calm_61_85', 61, 85, 24);
-            actionCalm = mixer.clipAction(clipCalm);
-            actionCalm.setLoop(THREE.LoopOnce, 1);
-            actionCalm.clampWhenFinished = true;
-
-            // 5. Left Arm Up: frames 73 to 80 (one-shot, clamp at 80)
-            const clipLeftArmUp = THREE.AnimationUtils.subclip(defaultClip, 'left_arm_up_73_80', 73, 80, 24);
-            actionLeftArmUp = mixer.clipAction(clipLeftArmUp);
-            actionLeftArmUp.setLoop(THREE.LoopOnce, 1);
-            actionLeftArmUp.clampWhenFinished = true;
-
-            // 6. Left Arm Down: frames 81 to 116 (one-shot)
-            const clipLeftArmDown = THREE.AnimationUtils.subclip(defaultClip, 'left_arm_down_81_116', 81, 116, 24);
-            actionLeftArmDown = mixer.clipAction(clipLeftArmDown);
-            actionLeftArmDown.setLoop(THREE.LoopOnce, 1);
-            actionLeftArmDown.clampWhenFinished = true;
-
-            // 7. Right Arm Up: frames 117 to 125 (one-shot, clamp at 125)
-            const clipRightArmUp = THREE.AnimationUtils.subclip(defaultClip, 'right_arm_up_117_125', 117, 125, 24);
-            actionRightArmUp = mixer.clipAction(clipRightArmUp);
-            actionRightArmUp.setLoop(THREE.LoopOnce, 1);
-            actionRightArmUp.clampWhenFinished = true;
-
-            // 8. Right Arm Down: frames 126 to 160 (one-shot)
-            const clipRightArmDown = THREE.AnimationUtils.subclip(defaultClip, 'right_arm_down_126_160', 126, 160, 24);
-            actionRightArmDown = mixer.clipAction(clipRightArmDown);
-            actionRightArmDown.setLoop(THREE.LoopOnce, 1);
-            actionRightArmDown.clampWhenFinished = true;
-
-            console.log('[AR] Animation sequence initialized: Idle [1-24], React [24-42], Loop [42-60], Calm [61-85], LeftArmUp [73-80], LeftArmDown [81-116], RightArmUp [117-125], RightArmDown [126-160]');
+            console.log('[AR] Animation sequence initialized: Idle [1-24], React [25-72], LeftArmUp [73-80], LeftArmDown [81-116], RightArmUp [117-125], RightArmDown [126-160]');
           }
         }
 
@@ -4933,11 +4935,8 @@
 
     function playDontTouchSequence(repetitions = 2) {
       const loopCount = Math.max(1, repetitions);
-      const isSim = isSimulatorMode;
-      const currIdle = isSim ? simActionIdle : actionIdle;
-      const currReact = isSim ? simActionReact : actionReact;
-
-      if (!currReact) {
+      const ctrl = getActiveAnimationController();
+      if (!ctrl) {
         console.warn('[Animation] Reaction action (25-72) not ready');
         isSequenceRunning = false;
         setPanicButtonActive(true);
@@ -4945,115 +4944,33 @@
       }
 
       isSequenceRunning = true;
-      console.log('[Animation] DON\'T TOUCH triggered: playing frames 25 to 72');
+      isPanicActive = true;
+      isRightArmCurrentlyUp = false;
+      isLeftArmCurrentlyUp = false;
 
-      // Cancel any pending timers and listeners
-      if (activeReactionCleanup) {
-        activeReactionCleanup();
-        activeReactionCleanup = null;
-      }
-      if (reactTimer) {
-        clearTimeout(reactTimer);
-        reactTimer = null;
-      }
-      if (countdownTimer) {
-        clearInterval(countdownTimer);
-        countdownTimer = null;
-      }
-
-      // Stop idle, calm, or other active gestures if running
-      const currLoop42 = isSim ? simActionLoop42 : actionLoop42;
-      const currCalm = isSim ? simActionCalm : actionCalm;
-      const currLeftArmUp = isSim ? simActionLeftArmUp : actionLeftArmUp;
-      const currLeftArmDown = isSim ? simActionLeftArmDown : actionLeftArmDown;
-      const currRightArmUp = isSim ? simActionRightArmUp : actionRightArmUp;
-      const currRightArmDown = isSim ? simActionRightArmDown : actionRightArmDown;
-      if (currIdle && currIdle.isRunning()) currIdle.fadeOut(0.12);
-      if (currLoop42 && currLoop42.isRunning()) currLoop42.fadeOut(0.12);
-      if (currCalm && currCalm.isRunning()) currCalm.fadeOut(0.12);
-      if (currLeftArmUp && currLeftArmUp.isRunning()) currLeftArmUp.fadeOut(0.12);
-      if (currLeftArmDown && currLeftArmDown.isRunning()) currLeftArmDown.fadeOut(0.12);
-      if (currRightArmUp && currRightArmUp.isRunning()) currRightArmUp.fadeOut(0.12);
-      if (currRightArmDown && currRightArmDown.isRunning()) currRightArmDown.fadeOut(0.12);
-
-      const currentMixer = isSim ? simMixer : mixer;
-      activeReactionCleanup = onActionFinished(currentMixer, currReact, activeSession, () => {
-        activeReactionCleanup = null;
-        if (currReact && currReact.isRunning()) {
-          currReact.fadeOut(0.2);
-        }
-        if (currIdle) {
-          currIdle.reset();
-          currIdle.setLoop(THREE.LoopRepeat);
-          currIdle.fadeIn(0.2);
-          currIdle.play();
-        }
-
-        isSequenceRunning = false;
-        isPanicActive = false;
-        setPanicButtonActive(true);
-        updatePanicButtonText("DON'T TOUCH");
-        updatePanicButtonIcon("warning");
-        console.log(`[Animation] Frames 25-72 (${loopCount} cycles) completed -> restored idle loop (frames 1-24)`);
-      });
-
-      // Play reaction animation from frame 25 to 72 for the requested number of cycles.
-      currReact.reset();
-      currReact.setLoop(THREE.LoopRepeat, loopCount);
-      currReact.repetitions = loopCount;
-      currReact.clampWhenFinished = true;
-      currReact.fadeIn(0.08);
-      currReact.play();
+      // Reaction animation: setLoop(THREE.LoopRepeat, loopCount) handled by controller
+      ctrl.playReaction(loopCount);
 
       setPanicButtonActive(false);
       updatePanicButtonText("AGITATED!");
       updatePanicButtonIcon("electric_bolt");
       showToast(`⚠️ I SAID DON'T TOUCH! (Frames 25-72 x${loopCount}) 👹`);
+      console.log(`[Animation] DON'T TOUCH triggered: playing frames 25 to 72 (${loopCount} cycles)`);
     }
 
     function playIdleSequence() {
-      const isSim = isSimulatorMode;
-      const currIdle = isSim ? simActionIdle : actionIdle;
-      const currReact = isSim ? simActionReact : actionReact;
-      const currLoop42 = isSim ? simActionLoop42 : actionLoop42;
-      const currCalm = isSim ? simActionCalm : actionCalm;
-
-      if (activeReactionCleanup) {
-        activeReactionCleanup();
-        activeReactionCleanup = null;
-      }
-      if (reactTimer) {
-        clearTimeout(reactTimer);
-        reactTimer = null;
-      }
-      if (countdownTimer) {
-        clearInterval(countdownTimer);
-        countdownTimer = null;
-      }
-
-      const currLeftArmUp = isSim ? simActionLeftArmUp : actionLeftArmUp;
-      const currLeftArmDown = isSim ? simActionLeftArmDown : actionLeftArmDown;
-      const currRightArmUp = isSim ? simActionRightArmUp : actionRightArmUp;
-      const currRightArmDown = isSim ? simActionRightArmDown : actionRightArmDown;
-      if (currReact && currReact.isRunning()) currReact.fadeOut(0.2);
-      if (currLoop42 && currLoop42.isRunning()) currLoop42.fadeOut(0.2);
-      if (currCalm && currCalm.isRunning()) currCalm.fadeOut(0.2);
-      if (currLeftArmUp && currLeftArmUp.isRunning()) currLeftArmUp.fadeOut(0.2);
-      if (currLeftArmDown && currLeftArmDown.isRunning()) currLeftArmDown.fadeOut(0.2);
-      if (currRightArmUp && currRightArmUp.isRunning()) currRightArmUp.fadeOut(0.2);
-      if (currRightArmDown && currRightArmDown.isRunning()) currRightArmDown.fadeOut(0.2);
-
-      if (currIdle) {
-        currIdle.reset();
-        currIdle.setLoop(THREE.LoopRepeat);
-        currIdle.fadeIn(0.2);
-        currIdle.play();
-        console.log('[Animation] Calmed down -> returned to idle loop frames 1 to 24');
+      const ctrl = getActiveAnimationController();
+      if (ctrl) {
+        ctrl.playIdle();
       }
       isSequenceRunning = false;
+      isPanicActive = false;
+      isRightArmCurrentlyUp = false;
+      isLeftArmCurrentlyUp = false;
       setPanicButtonActive(true);
       updatePanicButtonText("DON'T TOUCH");
       updatePanicButtonIcon("warning");
+      console.log('[Animation] Calmed down -> returned to idle loop frames 1 to 24');
     }
 
     let isRightArmCurrentlyUp = false;
@@ -5063,337 +4980,89 @@
 
     // Trigger Right Arm Up -> Plays frames 117 to 125 and stays clamped at frame 125 (no loop)
     function triggerRightArmUp() {
-      if (isSequenceRunning) return; // Panic / countdown sequence takes priority
-      if (isRightArmCurrentlyUp) return; // Already raised and holding
+      const ctrl = getActiveAnimationController();
+      if (!ctrl) return;
+      if (ctrl.state === AnimationState.REACTION) return;
+      if (isRightArmCurrentlyUp) return;
+
       isRightArmCurrentlyUp = true;
+      isLeftArmCurrentlyUp = false;
 
-      // Safely clear left arm state if switching directly
-      if (isLeftArmCurrentlyUp) {
-        isLeftArmCurrentlyUp = false;
-        if (leftArmActionCleanup) {
-          leftArmActionCleanup();
-          leftArmActionCleanup = null;
-        }
-        if (leftArmDownTimer) {
-          clearTimeout(leftArmDownTimer);
-          leftArmDownTimer = null;
-        }
+      const started = ctrl.raiseArm('right');
+      if (started) {
+        showToast('🔥 Right Arm Raised — Frames 117-125 (Hold 125) 💥');
+        updateGestureHUD('right', true);
+        console.log('[Gesture] Right Arm Raised -> Frames 117 to 125 (holding at 125)');
       }
-
-      if (rightArmActionCleanup) {
-        rightArmActionCleanup();
-        rightArmActionCleanup = null;
-      }
-      if (rightArmDownTimer) {
-        clearTimeout(rightArmDownTimer);
-        rightArmDownTimer = null;
-      }
-
-      const isSim = isSimulatorMode;
-      const currIdle = isSim ? simActionIdle : actionIdle;
-      const currRightArmUp = isSim ? simActionRightArmUp : actionRightArmUp;
-      const currRightArmDown = isSim ? simActionRightArmDown : actionRightArmDown;
-      const currLeftArmUp = isSim ? simActionLeftArmUp : actionLeftArmUp;
-      const currLeftArmDown = isSim ? simActionLeftArmDown : actionLeftArmDown;
-
-      if (currLeftArmUp && currLeftArmUp.isRunning()) currLeftArmUp.fadeOut(0.08);
-      if (currLeftArmDown && currLeftArmDown.isRunning()) currLeftArmDown.fadeOut(0.08);
-
-      if (currRightArmUp) {
-        if (currIdle && currIdle.isRunning()) currIdle.fadeOut(0.12);
-        if (currRightArmDown && currRightArmDown.isRunning()) currRightArmDown.fadeOut(0.08);
-        currRightArmUp.reset();
-        currRightArmUp.setLoop(THREE.LoopOnce, 1);
-        currRightArmUp.clampWhenFinished = true;
-        currRightArmUp.fadeIn(0.08);
-        currRightArmUp.play();
-      }
-
-      showToast('🔥 Right Arm Raised — Frames 117-125 (Hold 125) 💥');
-      updateGestureHUD('right', true);
-      console.log('[Gesture] Right Arm Raised -> Frames 117 to 125 (holding at 125)');
     }
 
     function triggerRightArmDown(triggerEffect = true) {
-      if (isSequenceRunning) return;
+      const ctrl = getActiveAnimationController();
+      if (!ctrl) return;
       if (!isRightArmCurrentlyUp) return;
       isRightArmCurrentlyUp = false;
 
-      if (rightArmActionCleanup) {
-        rightArmActionCleanup();
-        rightArmActionCleanup = null;
+      const lowered = ctrl.lowerArm('right', { triggerEffect });
+      if (lowered) {
+        if (triggerEffect) {
+          showToast('💥 Right Arm Down — Frames 126-160 & 3D Explosion Triggered!');
+          console.log('[Gesture] Right Arm Down -> Frames 126 to 160 played, 3D Explosion triggered');
+        }
       }
-      if (rightArmDownTimer) {
-        clearTimeout(rightArmDownTimer);
-        rightArmDownTimer = null;
-      }
-
-      const isSim = isSimulatorMode;
-      const currIdle = isSim ? simActionIdle : actionIdle;
-      const currRightArmUp = isSim ? simActionRightArmUp : actionRightArmUp;
-      const currRightArmDown = isSim ? simActionRightArmDown : actionRightArmDown;
-
-      if (currRightArmDown) {
-        const currentMixer = isSim ? simMixer : mixer;
-        rightArmActionCleanup = onActionFinished(currentMixer, currRightArmDown, activeSession, () => {
-          rightArmActionCleanup = null;
-          if (currRightArmDown) currRightArmDown.fadeOut(0.15);
-          if (currIdle && !isSequenceRunning && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) {
-            currIdle.reset();
-            currIdle.setLoop(THREE.LoopRepeat);
-            currIdle.fadeIn(0.15);
-            currIdle.play();
-          }
-          updateGestureHUD();
-        });
-
-        if (currRightArmUp && currRightArmUp.isRunning()) currRightArmUp.fadeOut(0.08);
-        currRightArmDown.reset();
-        currRightArmDown.setLoop(THREE.LoopOnce, 1);
-        currRightArmDown.clampWhenFinished = true;
-        currRightArmDown.fadeIn(0.08);
-        currRightArmDown.play();
-      } else {
-        if (currIdle && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) currIdle.reset().play();
-        updateGestureHUD();
-      }
-
-      // TRIGGER 3D EXPLOSION EFFECT ONLY WHEN RIGHT ARM GOES DOWN
-      if (triggerEffect) {
-        trigger3DExplosion();
-        showToast('💥 Right Arm Down — Frames 126-160 & 3D Explosion Triggered!');
-        console.log('[Gesture] Right Arm Down -> Frames 126 to 160 played, 3D Explosion triggered');
-      }
+      updateGestureHUD();
     }
 
     // Trigger Left Arm Up -> Plays frames 73 to 80 and stays clamped at frame 80 (no loop)
     function triggerLeftArmUp() {
-      if (isSequenceRunning) return; // Panic / countdown sequence takes priority
-      if (isLeftArmCurrentlyUp) return; // Already raised and holding
+      const ctrl = getActiveAnimationController();
+      if (!ctrl) return;
+      if (ctrl.state === AnimationState.REACTION) return;
+      if (isLeftArmCurrentlyUp) return;
+
       isLeftArmCurrentlyUp = true;
+      isRightArmCurrentlyUp = false;
 
-      // Safely clear right arm state if switching directly
-      if (isRightArmCurrentlyUp) {
-        isRightArmCurrentlyUp = false;
-        if (rightArmActionCleanup) {
-          rightArmActionCleanup();
-          rightArmActionCleanup = null;
-        }
-        if (rightArmDownTimer) {
-          clearTimeout(rightArmDownTimer);
-          rightArmDownTimer = null;
-        }
+      const started = ctrl.raiseArm('left');
+      if (started) {
+        showToast('⚡ Left Arm Raised — Frames 73-80 (Hold 80) 🌩️');
+        updateGestureHUD('left', true);
+        console.log('[Gesture] Left Arm Raised -> Frames 73 to 80 (holding at 80)');
       }
-
-      if (leftArmActionCleanup) {
-        leftArmActionCleanup();
-        leftArmActionCleanup = null;
-      }
-      if (leftArmDownTimer) {
-        clearTimeout(leftArmDownTimer);
-        leftArmDownTimer = null;
-      }
-
-      const isSim = isSimulatorMode;
-      const currIdle = isSim ? simActionIdle : actionIdle;
-      const currLeftArmUp = isSim ? simActionLeftArmUp : actionLeftArmUp;
-      const currLeftArmDown = isSim ? simActionLeftArmDown : actionLeftArmDown;
-      const currRightArmUp = isSim ? simActionRightArmUp : actionRightArmUp;
-      const currRightArmDown = isSim ? simActionRightArmDown : actionRightArmDown;
-
-      if (currRightArmUp && currRightArmUp.isRunning()) currRightArmUp.fadeOut(0.08);
-      if (currRightArmDown && currRightArmDown.isRunning()) currRightArmDown.fadeOut(0.08);
-
-      if (currLeftArmUp) {
-        if (currIdle && currIdle.isRunning()) currIdle.fadeOut(0.12);
-        if (currLeftArmDown && currLeftArmDown.isRunning()) currLeftArmDown.fadeOut(0.08);
-        currLeftArmUp.reset();
-        currLeftArmUp.setLoop(THREE.LoopOnce, 1);
-        currLeftArmUp.clampWhenFinished = true;
-        currLeftArmUp.fadeIn(0.08);
-        currLeftArmUp.play();
-      }
-
-      showToast('⚡ Left Arm Raised — Frames 73-80 (Hold 80) 🌩️');
-      updateGestureHUD('left', true);
-      console.log('[Gesture] Left Arm Raised -> Frames 73 to 80 (holding at 80)');
     }
 
     function triggerLeftArmDown(triggerEffect = true) {
-      if (isSequenceRunning) return;
+      const ctrl = getActiveAnimationController();
+      if (!ctrl) return;
       if (!isLeftArmCurrentlyUp) return;
       isLeftArmCurrentlyUp = false;
 
-      if (leftArmActionCleanup) {
-        leftArmActionCleanup();
-        leftArmActionCleanup = null;
+      const lowered = ctrl.lowerArm('left', { triggerEffect });
+      if (lowered) {
+        if (triggerEffect) {
+          showToast('🌩️ Left Arm Down — Frames 81-116 & 3D Storm Triggered!');
+          console.log('[Gesture] Left Arm Down -> Frames 81 to 116 played, 3D Electric Storm triggered');
+        }
       }
-      if (leftArmDownTimer) {
-        clearTimeout(leftArmDownTimer);
-        leftArmDownTimer = null;
-      }
-
-      const isSim = isSimulatorMode;
-      const currIdle = isSim ? simActionIdle : actionIdle;
-      const currLeftArmUp = isSim ? simActionLeftArmUp : actionLeftArmUp;
-      const currLeftArmDown = isSim ? simActionLeftArmDown : actionLeftArmDown;
-
-      if (currLeftArmDown) {
-        const currentMixer = isSim ? simMixer : mixer;
-        leftArmActionCleanup = onActionFinished(currentMixer, currLeftArmDown, activeSession, () => {
-          leftArmActionCleanup = null;
-          if (currLeftArmDown) currLeftArmDown.fadeOut(0.15);
-          if (currIdle && !isSequenceRunning && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) {
-            currIdle.reset();
-            currIdle.setLoop(THREE.LoopRepeat);
-            currIdle.fadeIn(0.15);
-            currIdle.play();
-          }
-          updateGestureHUD();
-        });
-
-        if (currLeftArmUp && currLeftArmUp.isRunning()) currLeftArmUp.fadeOut(0.08);
-        currLeftArmDown.reset();
-        currLeftArmDown.setLoop(THREE.LoopOnce, 1);
-        currLeftArmDown.clampWhenFinished = true;
-        currLeftArmDown.fadeIn(0.08);
-        currLeftArmDown.play();
-      } else {
-        if (currIdle && !isRightArmCurrentlyUp && !isLeftArmCurrentlyUp) currIdle.reset().play();
-        updateGestureHUD();
-      }
-
-      // TRIGGER 3D ELECTRIC STORM EFFECT ONLY WHEN LEFT ARM GOES DOWN
-      if (triggerEffect) {
-        trigger3DStorm();
-        showToast('🌩️ Left Arm Down — Frames 81-116 & 3D Storm Triggered!');
-        console.log('[Gesture] Left Arm Down -> Frames 81 to 116 played, 3D Electric Storm triggered');
-      }
+      updateGestureHUD();
     }
 
     function triggerPanicMode() {
       if (isSequenceRunning) return;
-      isSequenceRunning = true;
-      setPanicButtonActive(false);
-
-      if (rightArmActionCleanup) {
-        rightArmActionCleanup();
-        rightArmActionCleanup = null;
-      }
-      if (leftArmActionCleanup) {
-        leftArmActionCleanup();
-        leftArmActionCleanup = null;
-      }
-
-      // Cancel any active arm raise state while in panic mode
       isRightArmCurrentlyUp = false;
       isLeftArmCurrentlyUp = false;
-      if (rightArmDownTimer) {
-        clearTimeout(rightArmDownTimer);
-        rightArmDownTimer = null;
-      }
-      if (leftArmDownTimer) {
-        clearTimeout(leftArmDownTimer);
-        leftArmDownTimer = null;
-      }
-
-      if (actionLeftArmUp && actionLeftArmUp.isRunning()) actionLeftArmUp.stop();
-      if (actionLeftArmDown && actionLeftArmDown.isRunning()) actionLeftArmDown.stop();
-      if (actionRightArmUp && actionRightArmUp.isRunning()) actionRightArmUp.stop();
-      if (actionRightArmDown && actionRightArmDown.isRunning()) actionRightArmDown.stop();
-      if (simActionLeftArmUp && simActionLeftArmUp.isRunning()) simActionLeftArmUp.stop();
-      if (simActionLeftArmDown && simActionLeftArmDown.isRunning()) simActionLeftArmDown.stop();
-      if (simActionRightArmUp && simActionRightArmUp.isRunning()) simActionRightArmUp.stop();
-      if (simActionRightArmDown && simActionRightArmDown.isRunning()) simActionRightArmDown.stop();
-
       playPanicMusic();
-      showToast("⚠️ I SAID DON'T TOUCH! (Frames 25-72 x5) 👹");
-
-      // Play animation from frame 25 to 72 (smooth, no flickering)
       playDontTouchSequence(5);
     }
 
     // ---------------------------------------------------------------
     // 3D Character Animation Frame Debug HUD
     // ---------------------------------------------------------------
-    const CLIP_FRAME_RANGES = {
-      'idle_1_24': { start: 1, end: 24, name: 'IDLE' },
-      'sim_idle_1_24': { start: 1, end: 24, name: 'IDLE' },
-      'react_25_72': { start: 25, end: 72, name: "DON'T TOUCH" },
-      'sim_react_25_72': { start: 25, end: 72, name: "DON'T TOUCH" },
-      'loop_42_60': { start: 42, end: 60, name: 'LOOP' },
-      'sim_loop_42_60': { start: 42, end: 60, name: 'LOOP' },
-      'calm_61_85': { start: 61, end: 85, name: 'CALM' },
-      'sim_calm_61_85': { start: 61, end: 85, name: 'CALM' },
-      'left_arm_up_73_80': { start: 73, end: 80, name: 'LEFT ARM UP' },
-      'sim_left_arm_up_73_80': { start: 73, end: 80, name: 'LEFT ARM UP' },
-      'left_arm_down_81_116': { start: 81, end: 116, name: 'LEFT ARM DOWN (STORM)' },
-      'sim_left_arm_down_81_116': { start: 81, end: 116, name: 'LEFT ARM DOWN (STORM)' },
-      'right_arm_up_117_125': { start: 117, end: 125, name: 'RIGHT ARM UP' },
-      'sim_right_arm_up_117_125': { start: 117, end: 125, name: 'RIGHT ARM UP' },
-      'right_arm_down_126_160': { start: 126, end: 160, name: 'RIGHT ARM DOWN (BLAST)' },
-      'sim_right_arm_down_126_160': { start: 126, end: 160, name: 'RIGHT ARM DOWN (BLAST)' }
-    };
-
     function getCharacterAnimationFrame(activeMixer) {
-      if (!activeMixer || !activeMixer._actions || activeMixer._actions.length === 0) {
-        return null;
+      const ctrl = getActiveAnimationController();
+      if (ctrl) {
+        return ctrl.getDebugState();
       }
-
-      let dominantAction = null;
-      let maxWeight = -1;
-      for (const act of activeMixer._actions) {
-        if (act && act.isRunning() && act.weight > maxWeight) {
-          maxWeight = act.weight;
-          dominantAction = act;
-        }
-      }
-
-      if (!dominantAction) {
-        for (const act of activeMixer._actions) {
-          if (act && (act.isRunning() || act.weight > 0)) {
-            dominantAction = act;
-            break;
-          }
-        }
-      }
-
-      if (!dominantAction) return null;
-
-      const clip = dominantAction.getClip();
-      const clipName = (clip && clip.name) || '';
-      const range = CLIP_FRAME_RANGES[clipName];
-      const dur = (clip && clip.duration > 0) ? clip.duration : 1.0;
-      const rawTime = dominantAction.time;
-
-      if (range) {
-        const totalFrames = range.end - range.start;
-        let localOffset = 0;
-        if (dominantAction.clampWhenFinished && rawTime >= dur) {
-          localOffset = totalFrames;
-        } else {
-          const modTime = (rawTime >= 0) ? (rawTime % dur) : 0;
-          localOffset = Math.min(totalFrames, Math.floor(modTime * 24 + 0.001));
-        }
-        const currentFrame = range.start + localOffset;
-        const progress = Math.min(1.0, Math.max(0, (currentFrame - range.start) / Math.max(1, totalFrames)));
-        return {
-          frame: currentFrame,
-          clipName: range.name,
-          rangeText: `[${range.start}–${range.end}]`,
-          progress,
-          rawTime: Number(rawTime.toFixed(2))
-        };
-      }
-
-      const fallbackFrame = Math.floor(rawTime * 24);
-      return {
-        frame: fallbackFrame,
-        clipName: clipName.toUpperCase() || 'ANIMATION',
-        rangeText: '',
-        progress: (dur > 0) ? Math.min(1.0, (rawTime % dur) / dur) : 0,
-        rawTime: Number(rawTime.toFixed(2))
-      };
+      return null;
     }
 
     let debugFrameNumEl = null;
@@ -5402,7 +5071,7 @@
     let lastRenderedDebugFrame = -1;
     let lastRenderedDebugClip = '';
 
-    function updateAnimationFrameDebugUI(activeMixer) {
+    function updateAnimationFrameDebugUI(ctrlOrMixer) {
       if (!debugFrameNumEl) {
         debugFrameNumEl = document.getElementById('debug-frame-num');
         debugFrameClipEl = document.getElementById('debug-frame-clip');
@@ -5410,7 +5079,11 @@
       }
       if (!debugFrameNumEl) return;
 
-      const info = getCharacterAnimationFrame(activeMixer);
+      const ctrl = (ctrlOrMixer && typeof ctrlOrMixer.getDebugState === 'function')
+        ? ctrlOrMixer
+        : getActiveAnimationController();
+
+      const info = ctrl ? ctrl.getDebugState() : null;
       if (!info) {
         if (lastRenderedDebugFrame !== 0) {
           lastRenderedDebugFrame = 0;
@@ -5419,6 +5092,33 @@
           if (debugFrameProgEl) debugFrameProgEl.style.width = '0%';
         }
         return;
+      }
+
+      // Sync UI state reactively with controller state
+      if (info.state === 'reaction') {
+        if (!isPanicActive) {
+          isPanicActive = true;
+          setPanicButtonActive(false);
+          updatePanicButtonText("AGITATED!");
+          updatePanicButtonIcon("electric_bolt");
+        }
+      } else if (isPanicActive || isSequenceRunning) {
+        isPanicActive = false;
+        isSequenceRunning = false;
+        setPanicButtonActive(true);
+        updatePanicButtonText("DON'T TOUCH");
+        updatePanicButtonIcon("warning");
+      }
+
+      if (info.state === 'idle') {
+        isRightArmCurrentlyUp = false;
+        isLeftArmCurrentlyUp = false;
+      } else if (info.state === 'left_holding' || info.state === 'left_raising') {
+        isLeftArmCurrentlyUp = true;
+        isRightArmCurrentlyUp = false;
+      } else if (info.state === 'right_holding' || info.state === 'right_raising') {
+        isRightArmCurrentlyUp = true;
+        isLeftArmCurrentlyUp = false;
       }
 
       if (info.frame !== lastRenderedDebugFrame) {
@@ -5438,8 +5138,7 @@
     }
 
     window.getCurrentAnimationFrame = function () {
-      const activeM = isSimulatorMode ? simMixer : mixer;
-      return getCharacterAnimationFrame(activeM);
+      return getCharacterAnimationFrame();
     };
 
     (function wireAnimFrameDebugToggle() {
@@ -5817,18 +5516,9 @@
       const isRightUpRaw = isRightArmRaisedCheck(landmarks);
       const isLeftUpRaw = isLeftArmRaisedCheck(landmarks);
 
-      let isRightUp = false;
-      let isLeftUp = false;
-
-      if (isRightUpRaw && !isLeftUpRaw) {
-        isRightUp = true;
-      } else if (isLeftUpRaw && !isRightUpRaw) {
-        isLeftUp = true;
-      } else if (isRightUpRaw && isLeftUpRaw) {
-        if (isRightArmCurrentlyUp) isRightUp = true;
-        else if (isLeftArmCurrentlyUp) isLeftUp = true;
-        else isRightUp = true;
-      }
+      const activeArm = arbitrateArms(isLeftUpRaw, isRightUpRaw, isRightArmCurrentlyUp ? 'right' : (isLeftArmCurrentlyUp ? 'left' : null));
+      const isRightUp = (activeArm === 'right');
+      const isLeftUp = (activeArm === 'left');
 
       // 1. Right Arm Raise -> Plays frames 117 to 125, stays at frame 125
       if (isRightUp) {
@@ -5845,7 +5535,7 @@
         }
       }
 
-      // 2. Left Arm Raise -> Plays frames 86 to 96 (clamped), then frames 97 to 104 on lowering
+      // 2. Left Arm Raise -> Plays frames 73 to 80 (clamped), then frames 81 to 116 on lowering
       if (isLeftUp) {
         if (!leftArmUpStartTime) leftArmUpStartTime = now;
         leftArmDownStartTime = 0;
@@ -6867,35 +6557,18 @@
       const elapsed = animTime ? animTime.tick(nowMs) : (clock ? clock.getDelta() : 0.016);
       const t = nowMs * 0.001;
 
-      if (mixer) {
+      if (arAnimationController) {
+        arAnimationController.update(elapsed);
+        updateAnimationFrameDebugUI(arAnimationController);
+      } else if (mixer) {
         mixer.update(elapsed);
         updateAnimationFrameDebugUI(mixer);
-      }
-
-      // Prevent character from jumping through or behind the camera
-      const arRoot = cachedArRootBone || (monsterModel ? (cachedArRootBone = monsterModel.getObjectByName('C_root')) : null);
-      if (arRoot && camera && monsterModel) {
-        monsterModel.getWorldPosition(_scratchV1);
-        camera.getWorldPosition(_scratchV2);
-        const distToCam = _scratchV1.distanceTo(_scratchV2);
-        const currScale = modelScale || 1.0;
-        // Leave safe buffer so monster fills viewport without penetrating near plane
-        const safeMaxDist = Math.max(0.25, distToCam - 0.40);
-        const maxAllowedBoneZ = safeMaxDist / Math.max(0.01, currScale);
-        const maxForward = 3.798;
-        if (arRoot.position.z > 0.05 && maxForward * currScale > safeMaxDist) {
-          const scaleFactor = Math.min(1.0, maxAllowedBoneZ / maxForward);
-          arRoot.position.z *= scaleFactor;
-          arRoot.position.y *= (0.4 + 0.6 * scaleFactor);
-        }
       }
 
       // Character is aligned to the shirt marker, not to the camera
       if (isTargetLocked && monsterModel && anchor && anchor.group && anchor.group.visible) {
         monsterModel.rotation.set(0, 0, 0);
-
-        // Subtle idle breathing motion along Z
-        monsterModel.position.z = basePosZ + Math.sin(t * 2.0) * 0.012;
+        monsterModel.position.z = basePosZ;
         if (monsterGarmentPos) {
           monsterModel.position.x = monsterGarmentPos.x;
           monsterModel.position.y = monsterGarmentPos.y;
@@ -7144,7 +6817,10 @@
 
       // Load Model
       function setupSimModel(gltf) {
-        simMonster = window.SkeletonUtils ? window.SkeletonUtils.clone(gltf.scene) : gltf.scene.clone(true);
+        if (!window.SkeletonUtils || typeof window.SkeletonUtils.clone !== 'function') {
+          throw new Error('[Simulator] SkeletonUtils.clone is required for skinned character instantiation');
+        }
+        simMonster = window.SkeletonUtils.clone(gltf.scene);
         cachedSimRootBone = simMonster.getObjectByName('C_root');
         simMonster.traverse(child => {
           if (child.isMesh) {
@@ -7178,55 +6854,36 @@
         simMonster.position.set(-center.x * simScale, -center.y * simScale + simOffsetY, -center.z * simScale);
         simMonster.rotation.set(0, 0, 0);
 
-
-
         if (gltf.animations && gltf.animations.length > 0) {
           simMixer = new THREE.AnimationMixer(simMonster);
-          const defaultSpeed = CONFIG.animationSpeed || (isMobileDevice ? 1.35 : 1.25);
+          const defaultSpeed = CONFIG.animationSpeed || 1.0;
           simMixer.timeScale = defaultSpeed;
           const defaultClip = gltf.animations.find(c => c && c.name && c.name.toLowerCase().includes('default')) ||
             gltf.animations[0];
           if (defaultClip) {
-            const clipIdle = THREE.AnimationUtils.subclip(defaultClip, 'sim_idle_1_24', 1, 24, 24);
-            simActionIdle = simMixer.clipAction(clipIdle);
-            simActionIdle.setLoop(THREE.LoopRepeat);
-            simActionIdle.play();
+            const clips = createAllSampledClips(defaultClip);
+            simAnimationController = createAnimationController({
+              model: simMonster,
+              clips,
+              mixer: simMixer,
+              speed: defaultSpeed,
+              onEffect: (type) => {
+                if (type === 'storm') trigger3DStorm();
+                else if (type === 'explosion') trigger3DExplosion();
+              }
+            });
+            window.simAnimationController = simAnimationController;
 
-            const clipReact = THREE.AnimationUtils.subclip(defaultClip, 'sim_react_25_72', 25, 72, 24);
-            simActionReact = simMixer.clipAction(clipReact);
-            simActionReact.setLoop(THREE.LoopRepeat, 2);
-            simActionReact.clampWhenFinished = true;
+            simActionIdle = simAnimationController.actions.get('idle');
+            simActionReact = simAnimationController.actions.get('reaction');
+            simActionLoop42 = simAnimationController.actions.get('secondary');
+            simActionCalm = simAnimationController.actions.get('recovery');
+            simActionLeftArmUp = simAnimationController.actions.get('left_raise');
+            simActionLeftArmDown = simAnimationController.actions.get('left_lower');
+            simActionRightArmUp = simAnimationController.actions.get('right_raise');
+            simActionRightArmDown = simAnimationController.actions.get('right_lower');
 
-            const clipLoop42 = THREE.AnimationUtils.subclip(defaultClip, 'sim_loop_42_60', 42, 60, 24);
-            simActionLoop42 = simMixer.clipAction(clipLoop42);
-            simActionLoop42.setLoop(THREE.LoopRepeat);
-
-            const clipCalm = THREE.AnimationUtils.subclip(defaultClip, 'sim_calm_61_85', 61, 85, 24);
-            simActionCalm = simMixer.clipAction(clipCalm);
-            simActionCalm.setLoop(THREE.LoopOnce, 1);
-            simActionCalm.clampWhenFinished = true;
-
-            const clipLeftArmUp = THREE.AnimationUtils.subclip(defaultClip, 'sim_left_arm_up_73_80', 73, 80, 24);
-            simActionLeftArmUp = simMixer.clipAction(clipLeftArmUp);
-            simActionLeftArmUp.setLoop(THREE.LoopOnce, 1);
-            simActionLeftArmUp.clampWhenFinished = true;
-
-            const clipLeftArmDown = THREE.AnimationUtils.subclip(defaultClip, 'sim_left_arm_down_81_116', 81, 116, 24);
-            simActionLeftArmDown = simMixer.clipAction(clipLeftArmDown);
-            simActionLeftArmDown.setLoop(THREE.LoopOnce, 1);
-            simActionLeftArmDown.clampWhenFinished = true;
-
-            const clipRightArmUp = THREE.AnimationUtils.subclip(defaultClip, 'sim_right_arm_up_117_125', 117, 125, 24);
-            simActionRightArmUp = simMixer.clipAction(clipRightArmUp);
-            simActionRightArmUp.setLoop(THREE.LoopOnce, 1);
-            simActionRightArmUp.clampWhenFinished = true;
-
-            const clipRightArmDown = THREE.AnimationUtils.subclip(defaultClip, 'sim_right_arm_down_126_160', 126, 160, 24);
-            simActionRightArmDown = simMixer.clipAction(clipRightArmDown);
-            simActionRightArmDown.setLoop(THREE.LoopOnce, 1);
-            simActionRightArmDown.clampWhenFinished = true;
-
-            console.log('[Simulator] Animation sequence initialized: Idle [1-24], React [24-42], Loop [42-60], Calm [61-85], LeftArmUp [73-80], LeftArmDown [81-116], RightArmUp [117-125], RightArmDown [126-160]');
+            console.log('[Simulator] Animation sequence initialized: Idle [1-24], React [25-72], LeftArmUp [73-80], LeftArmDown [81-116], RightArmUp [117-125], RightArmDown [126-160]');
           }
         }
         modelGroup.add(simMonster);
@@ -7313,26 +6970,12 @@
         const elapsed = animTime ? animTime.tick(nowMs) : (simClock ? simClock.getDelta() : 0.016);
         const t = nowMs * 0.001;
 
-        if (simMixer) {
+        if (simAnimationController) {
+          simAnimationController.update(elapsed);
+          updateAnimationFrameDebugUI(simAnimationController);
+        } else if (simMixer) {
           simMixer.update(elapsed);
           updateAnimationFrameDebugUI(simMixer);
-        }
-
-        // Prevent character from jumping through or behind the camera in simulator
-        const simRoot = cachedSimRootBone || (simMonster ? (cachedSimRootBone = simMonster.getObjectByName('C_root')) : null);
-        if (simRoot && simCamera && simMonster) {
-          simMonster.getWorldPosition(_scratchV1);
-          simCamera.getWorldPosition(_scratchV2);
-          const distToCam = _scratchV1.distanceTo(_scratchV2);
-          const currScale = (simMonster.scale && simMonster.scale.y) || 1.0;
-          const safeMaxDist = Math.max(0.3, distToCam - 0.50);
-          const maxAllowedBoneZ = safeMaxDist / Math.max(0.01, currScale);
-          const maxForward = 3.798;
-          if (simRoot.position.z > 0.05 && maxForward * currScale > safeMaxDist) {
-            const scaleFactor = Math.min(1.0, maxAllowedBoneZ / maxForward);
-            simRoot.position.z *= scaleFactor;
-            simRoot.position.y *= (0.4 + 0.6 * scaleFactor);
-          }
         }
 
         // Character is aligned to the marker / turntable platform
@@ -7657,18 +7300,14 @@
         }
       }
 
-      // 2. Check if tapped the monster character itself to trigger Jump animation
+      // 2. Check if tapped the monster character itself to trigger Jump / Reaction (2 cycles)
       const currentMonster = isSimulatorMode ? simMonster : monsterModel;
       const currentMixer = isSimulatorMode ? simMixer : mixer;
-      if (currentMonster && currentMixer) {
+      if (currentMonster && (currentMixer || getActiveAnimationController())) {
         const monsterHits = raycaster.intersectObject(currentMonster, true);
         if (monsterHits.length > 0) {
-          if (isSimulatorMode) {
-            playDontTouchSequence();
-          } else {
-            triggerPanicMode();
-          }
-          showToast('💥 Monster Jump Triggered!');
+          playDontTouchSequence(2);
+          showToast('💥 Monster Reaction Triggered!');
           return true;
         }
       }
@@ -8213,15 +7852,220 @@
 
     function setAnimationSpeed(speed) {
       const val = parseFloat(speed);
-      if (!isNaN(val) && val > 0) {
+      if (!isNaN(val) && val >= 0) {
         CONFIG.animationSpeed = val;
+        if (arAnimationController) arAnimationController.setSpeed(val);
+        if (simAnimationController) simAnimationController.setSpeed(val);
         if (mixer) mixer.timeScale = val;
         if (simMixer) simMixer.timeScale = val;
         console.log(`[Animation] Playback speed updated to ${val}x`);
       }
-      return (mixer ? mixer.timeScale : (simMixer ? simMixer.timeScale : CONFIG.animationSpeed));
+      const ctrl = getActiveAnimationController();
+      return (ctrl ? ctrl.speed : (mixer ? mixer.timeScale : (simMixer ? simMixer.timeScale : CONFIG.animationSpeed)));
     }
     window.setAnimationSpeed = setAnimationSpeed;
+
+    // ---------------------------------------------------------------
+    // Development-Only Diagnostic View (Task 4)
+    // Isolated full-master playback, frame scrubbing (1-160),
+    // skeleton display, and named morph controls with suspend/restore.
+    // ---------------------------------------------------------------
+    let isDevDiagnosticOpen = false;
+    let devSkeletonHelper = null;
+    let isManualMorphOverride = false;
+    let masterScrubAction = null;
+    let isMasterPlaying = false;
+
+    function initDevDiagnosticView() {
+      let modal = document.getElementById('dev-anim-diagnostic-modal');
+      if (modal) {
+        modal.classList.toggle('hidden');
+        isDevDiagnosticOpen = !modal.classList.contains('hidden');
+        return;
+      }
+
+      modal = document.createElement('div');
+      modal.id = 'dev-anim-diagnostic-modal';
+      modal.className = 'fixed top-4 right-4 z-50 w-96 max-w-[95vw] bg-black/90 backdrop-blur-xl border border-cyan-500/50 rounded-2xl p-4 shadow-2xl text-white font-mono text-xs select-none';
+      modal.innerHTML = `
+        <div class="flex items-center justify-between pb-2 mb-3 border-b border-white/10">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+            <span class="font-bold text-cyan-300 uppercase tracking-wider">3D Animation Diagnostic</span>
+          </div>
+          <button id="dev-diag-close" class="text-white/60 hover:text-white text-base px-1.5 py-0.5 rounded hover:bg-white/10">&times;</button>
+        </div>
+
+        <!-- Section 1: Full Master Scrubbing -->
+        <div class="mb-4 bg-white/5 p-3 rounded-xl border border-white/5">
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="font-bold text-amber-300">MASTER SCRUBBER</span>
+            <span id="dev-scrub-label" class="text-amber-400 font-bold">FRAME 1 (0.00s)</span>
+          </div>
+          <input id="dev-scrub-slider" type="range" min="1" max="160" value="1" step="1" class="w-full accent-amber-400 cursor-pointer mb-2" />
+          <div class="flex gap-2">
+            <button id="dev-btn-master-play" class="flex-1 py-1 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold hover:bg-amber-500/30">
+              ▶ PLAY MASTER
+            </button>
+            <button id="dev-btn-restore-normal" class="flex-1 py-1 rounded-lg bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 font-bold hover:bg-cyan-500/30">
+              ↺ RESUME NORMAL
+            </button>
+          </div>
+        </div>
+
+        <!-- Section 2: Skeleton Display -->
+        <div class="mb-4 bg-white/5 p-3 rounded-xl border border-white/5 flex items-center justify-between">
+          <span class="font-bold text-cyan-300">SKELETON HELPER</span>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input id="dev-toggle-skeleton" type="checkbox" class="accent-cyan-400 cursor-pointer" />
+            <span class="text-[11px] text-white/80">Show Bones</span>
+          </label>
+        </div>
+
+        <!-- Section 3: Named Morph Controls -->
+        <div class="bg-white/5 p-3 rounded-xl border border-white/5">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-bold text-purple-300">MORPH TARGETS</span>
+            <span id="dev-morph-override-status" class="text-[10px] text-white/50">TRACK SAMPLED</span>
+          </div>
+          <div id="dev-morph-sliders" class="space-y-2">
+            <!-- Populated dynamically -->
+          </div>
+          <button id="dev-btn-restore-morphs" class="w-full mt-3 py-1 rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 font-bold hover:bg-purple-500/30">
+            ↺ RESTORE TRACK MORPHS
+          </button>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+      isDevDiagnosticOpen = true;
+
+      // Close handler
+      modal.querySelector('#dev-diag-close').addEventListener('click', () => {
+        modal.classList.add('hidden');
+        isDevDiagnosticOpen = false;
+      });
+
+      // Populate Morph sliders
+      const morphContainer = modal.querySelector('#dev-morph-sliders');
+      const targetNames = ['monster.smile', 'monster.open', 'monster.pff', 'monster.scary', 'monster.closed'];
+      targetNames.forEach((name) => {
+        const row = document.createElement('div');
+        row.className = 'flex items-center gap-2';
+        row.innerHTML = `
+          <span class="w-28 truncate text-[10px] text-white/70" title="${name}">${name.replace('monster.', '')}</span>
+          <input type="range" min="-0.5" max="1.0" step="0.01" value="0" data-morph="${name}" class="dev-morph-input flex-1 accent-purple-400 cursor-pointer" />
+          <span class="dev-morph-val w-10 text-right text-[10px] text-purple-300">0.00</span>
+        `;
+        morphContainer.appendChild(row);
+      });
+
+      // Wire Morph Slider Inputs
+      const morphStatusEl = modal.querySelector('#dev-morph-override-status');
+      morphContainer.querySelectorAll('.dev-morph-input').forEach((slider) => {
+        slider.addEventListener('input', (e) => {
+          const mName = e.target.dataset.morph;
+          const val = parseFloat(e.target.value);
+          e.target.parentElement.querySelector('.dev-morph-val').textContent = val.toFixed(2);
+
+          const ctrl = getActiveAnimationController();
+          const targetMesh = ctrl ? ctrl.morphMesh : null;
+          if (targetMesh && targetMesh.morphTargetDictionary && targetMesh.morphTargetInfluences) {
+            const idx = targetMesh.morphTargetDictionary[mName];
+            if (idx !== undefined) {
+              // Suspend normal controller playback on manual override
+              isManualMorphOverride = true;
+              if (ctrl) ctrl.setSpeed(0);
+              targetMesh.morphTargetInfluences[idx] = val;
+              morphStatusEl.textContent = 'MANUAL OVERRIDE (PAUSED)';
+              morphStatusEl.className = 'text-[10px] text-amber-400 font-bold';
+            }
+          }
+        });
+      });
+
+      // Restore Morphs button
+      modal.querySelector('#dev-btn-restore-morphs').addEventListener('click', () => {
+        isManualMorphOverride = false;
+        const ctrl = getActiveAnimationController();
+        if (ctrl) {
+          ctrl.setSpeed(CONFIG.animationSpeed || 1.0);
+        }
+        morphStatusEl.textContent = 'TRACK SAMPLED';
+        morphStatusEl.className = 'text-[10px] text-white/50';
+        showToast('↺ Restored Sampled Track Morphs');
+      });
+
+      // Skeleton toggle
+      const skelToggle = modal.querySelector('#dev-toggle-skeleton');
+      skelToggle.addEventListener('change', (e) => {
+        const isSim = isSimulatorMode;
+        const currentModel = isSim ? simMonster : monsterModel;
+        const currentScene = isSim ? simScene : (scene || (anchor && anchor.group));
+
+        if (e.target.checked) {
+          if (currentModel && currentScene) {
+            devSkeletonHelper = new THREE.SkeletonHelper(currentModel);
+            devSkeletonHelper.material.linewidth = 2;
+            currentScene.add(devSkeletonHelper);
+            showToast('🦴 Skeleton Bones Display Active');
+          }
+        } else {
+          if (devSkeletonHelper) {
+            if (devSkeletonHelper.parent) devSkeletonHelper.parent.remove(devSkeletonHelper);
+            devSkeletonHelper.dispose();
+            devSkeletonHelper = null;
+            showToast('🦴 Skeleton Bones Hidden');
+          }
+        }
+      });
+
+      // Frame Scrubber
+      const scrubSlider = modal.querySelector('#dev-scrub-slider');
+      const scrubLabel = modal.querySelector('#dev-scrub-label');
+
+      scrubSlider.addEventListener('input', (e) => {
+        const frame = parseInt(e.target.value, 10);
+        const timeSec = (frame - 1) / 24;
+        scrubLabel.textContent = `FRAME ${frame} (${timeSec.toFixed(2)}s)`;
+
+        const ctrl = getActiveAnimationController();
+        if (ctrl) {
+          ctrl.setSpeed(0);
+          // Seek dominant active action or idle
+          if (ctrl.currentAction) {
+            ctrl.currentAction.time = timeSec;
+            ctrl.mixer.update(0);
+          }
+        }
+      });
+
+      // Resume Normal button
+      modal.querySelector('#dev-btn-restore-normal').addEventListener('click', () => {
+        isManualMorphOverride = false;
+        const ctrl = getActiveAnimationController();
+        if (ctrl) {
+          ctrl.setSpeed(CONFIG.animationSpeed || 1.0);
+          ctrl.playIdle();
+        }
+        morphStatusEl.textContent = 'TRACK SAMPLED';
+        morphStatusEl.className = 'text-[10px] text-white/50';
+        showToast('↺ Restored Normal Interactive Controller');
+      });
+
+      showToast('🛠️ Dev Animation Diagnostic Panel Ready (Press D to toggle)');
+    }
+
+    window.initDevDiagnosticView = initDevDiagnosticView;
+    window.addEventListener('keydown', (e) => {
+      if ((e.key === 'd' || e.key === 'D') && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+        initDevDiagnosticView();
+      }
+    });
+
+    if (urlParams.get('debugAnim') === '1') {
+      window.addEventListener('load', () => setTimeout(initDevDiagnosticView, 1000));
+    }
 
     // Expose core WebAR engine methods on window
     window.initAR = initAR;
