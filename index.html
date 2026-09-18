@@ -3477,10 +3477,10 @@
       }
 
       if (planesModel) {
-        planesModel.visible = isTargetLocked && !arePlanesDisappeared;
+        planesModel.visible = isTargetLocked;
       }
 
-      isPlaneInteractionActive = isTargetLocked && !arePlanesDisappeared;
+      isPlaneInteractionActive = isTargetLocked;
 
       if (!isPlaneInteractionActive) {
         resetAllPlanes();
@@ -3620,7 +3620,7 @@
           planesModel.position.set(0, 0, 0);
           planesModel.rotation.set(0, 0, 0);
           planesModel.scale.set(1, 1, 1);
-          planesModel.visible = isTargetLocked && !arePlanesDisappeared;
+          planesModel.visible = isTargetLocked;
           monsterModel.add(planesModel);
         }
 
@@ -5311,16 +5311,16 @@
         planesModel.position.set(0, 0, 0);
         planesModel.rotation.set(0, 0, 0);
         planesModel.scale.set(1, 1, 1);
-        planesModel.visible = isTargetLocked && !arePlanesDisappeared;
+        planesModel.visible = isTargetLocked;
         monsterModel.add(planesModel);
       } else {
         if (modelScale) planesModel.scale.set(modelScale, modelScale, modelScale);
         if (monsterGarmentPos) planesModel.position.copy(monsterGarmentPos);
         planesModel.rotation.set(0, 0, 0);
-        planesModel.visible = isTargetLocked && !arePlanesDisappeared;
+        planesModel.visible = isTargetLocked;
         group.add(planesModel);
       }
-      isPlaneInteractionActive = isTargetLocked && !arePlanesDisappeared;
+      isPlaneInteractionActive = isTargetLocked;
       console.log('[3D Buttons] Attached 4 procedural 3D software plates to AR scene');
     }
 
@@ -5387,7 +5387,7 @@
             });
             isPoseTrackerReady = true;
             console.log(`[PoseTracking] Successfully initialized with ${config.delegate} (${config.model})`);
-            updateGestureHUD(!arePlanesDisappeared);
+            updateGestureHUD();
             return poseLandmarker;
           } catch (err) {
             console.warn(`[PoseTracking] ${config.delegate} failed for ${config.model}:`, err);
@@ -5536,30 +5536,6 @@
     let leftArmUpDebounce = 0;
     let leftArmDownDebounce = 0;
 
-    // Check if MediaPipe elbows and wrists are above shoulders
-    // Landmarks: 11=left_shoulder, 12=right_shoulder, 13=left_elbow, 14=right_elbow, 15=left_wrist, 16=right_wrist
-    function areElbowsAndWristsAboveShoulders(landmarks) {
-      if (!landmarks || landmarks.length < 17) return false;
-      const leftShoulder = landmarks[11];
-      const rightShoulder = landmarks[12];
-      const leftElbow = landmarks[13];
-      const rightElbow = landmarks[14];
-      const leftWrist = landmarks[15];
-      const rightWrist = landmarks[16];
-
-      // In normalized image space: y = 0.0 is TOP of frame, y = 1.0 is BOTTOM of frame.
-      // "above shoulders" means y < shoulder.y.
-      // We include a small 0.02 (2%) tolerance for natural body geometry.
-      const TOLERANCE = 0.02;
-
-      // Left arm raised: both left elbow AND left wrist are above left shoulder
-      const leftArmRaised = (leftElbow.y < (leftShoulder.y + TOLERANCE)) && (leftWrist.y < (leftShoulder.y + TOLERANCE));
-
-      // Right arm raised: both right elbow AND right wrist are above right shoulder
-      const rightArmRaised = (rightElbow.y < (rightShoulder.y + TOLERANCE)) && (rightWrist.y < (rightShoulder.y + TOLERANCE));
-
-      return leftArmRaised || rightArmRaised;
-    }
 
     function updateGestureHUD(armSide, isRaised) {
       if (!els.gestureChip || !els.gestureText) return;
@@ -5608,7 +5584,6 @@
       }
 
       const now = performance.now();
-      const isPoseSatisfied = areElbowsAndWristsAboveShoulders(landmarks);
 
       // 1. Right Arm Raise -> Triggers 3D Explosion!
       const isRightUp = isRightArmRaisedCheck(landmarks);
@@ -5639,46 +5614,6 @@
         leftArmUpStartTime = 0;
         if ((now - leftArmDownStartTime) >= GESTURE_DEBOUNCE_MS && isLeftArmCurrentlyUp) {
           triggerLeftArmDown();
-        }
-      }
-
-      // Raycast index finger against interactive planes when visible
-      const indexTip = landmarks[19] || landmarks[20] || landmarks[15] || landmarks[16];
-      const activeCam = isSimulatorMode ? simCamera : camera;
-      if (indexTip && !arePlanesDisappeared && isPlaneInteractionActive && activeCam && interactivePlanes.length > 0) {
-        const { ndcX, ndcY } = handToNDC(indexTip, video, els.arContainer);
-        pointer.set(ndcX, ndcY);
-        if (planesModel) planesModel.updateMatrixWorld(true);
-        raycaster.setFromCamera(pointer, activeCam);
-        const hits = raycaster.intersectObjects(interactivePlanes, false);
-        if (hits.length > 0) {
-          setActivePlane(hits[0].object);
-        } else {
-          clearActivePlane();
-        }
-      }
-
-      // When arms are raised -> planes become INVISIBLE.
-      // When arms are down -> planes become VISIBLE.
-      if (isPoseSatisfied) {
-        if (!handRaisedStartTime) handRaisedStartTime = now;
-        handLoweredStartTime = 0;
-        if ((now - handRaisedStartTime) >= GESTURE_DEBOUNCE_MS && !arePlanesDisappeared) {
-          arePlanesDisappeared = true;
-          targetPlaneOpacity = 0.0;
-          showToast('✋ Arms Raised — Planes Hidden');
-          console.log('[PoseTracking] Arms raised above shoulders -> hiding planes');
-          updateGestureHUD(isRightUp ? 'right' : (isLeftUp ? 'left' : null), true);
-        }
-      } else {
-        if (!handLoweredStartTime) handLoweredStartTime = now;
-        handRaisedStartTime = 0;
-        if ((now - handLoweredStartTime) >= GESTURE_DEBOUNCE_MS && arePlanesDisappeared) {
-          arePlanesDisappeared = false;
-          targetPlaneOpacity = 0.88;
-          showToast('👇 Arms Down — Planes Visible ✨');
-          console.log('[PoseTracking] Arms down -> showing planes');
-          updateGestureHUD(null, false);
         }
       }
     }
@@ -6002,118 +5937,8 @@
         return;
       }
 
-      const activeCam = isSimulatorMode ? simCamera : camera;
-      const now = performance.now();
-
-      for (let h = 0; h < landmarksList.length && h < 2; h++) {
-        const hand = landmarksList[h];
-        const reticle = reticles[h];
-        const hold = handHoldStates[h];
-        if (!hand || !reticle) continue;
-
-        const indexTip = hand[8]; // Landmark 8: Index Fingertip
-
-        const { ndcX, ndcY, screenX, screenY } = handToNDC(indexTip, video, els.arContainer);
-        reticle.style.display = 'flex';
-        reticle.style.left = screenX + 'px';
-        reticle.style.top = screenY + 'px';
-
-        const labelEl = reticle.querySelector('.reticle-label');
-        const gaugeFill = reticle.querySelector('.reticle-gauge-fill');
-
-        let targetPlate = null;
-        if (activeCam && interactivePlanes.length > 0) {
-          pointer.set(ndcX, ndcY);
-          if (planesModel) planesModel.updateMatrixWorld(true);
-          raycaster.setFromCamera(pointer, activeCam);
-          const hits = raycaster.intersectObjects(interactivePlanes, false);
-          if (hits.length > 0) {
-            targetPlate = hits[0].object;
-          } else if (planesModel) {
-            planesModel.updateMatrixWorld(true);
-            for (const plane of interactivePlanes) {
-              plane.getWorldPosition(_scratchV1);
-              _scratchV1.project(activeCam);
-              const distToPlaneNDC = Math.hypot(ndcX - _scratchV1.x, ndcY - _scratchV1.y);
-              if (distToPlaneNDC < 0.20) {
-                targetPlate = plane;
-                break;
-              }
-            }
-          }
-        }
-
-        if (targetPlate) {
-          const cfg = targetPlate.userData.config;
-          if (hold.plateId === cfg.id) {
-            const elapsedMs = now - hold.startTime;
-            const holdProgress = Math.min(1.0, elapsedMs / 2000);
-            const remainingSec = Math.max(0, (2000 - elapsedMs) / 1000).toFixed(1);
-
-            if (gaugeFill) {
-              gaugeFill.style.strokeDashoffset = (175.93 * (1 - holdProgress)) + 'px';
-            }
-            if (targetPlate.userData.btnGroup) {
-              targetPlate.userData.btnGroup.userData.pressOffset = 0.015 + holdProgress * 0.040;
-            }
-            reticle.classList.add('holding-plate');
-
-            if (!hold.triggered) {
-              if (labelEl) {
-                labelEl.textContent = `⏱️ HOLD: ${remainingSec}s // ${cfg.title}`;
-              }
-              if (elapsedMs >= 2000) {
-                hold.triggered = true;
-                reticle.classList.remove('holding-plate');
-                reticle.classList.add('hold-complete');
-                if (labelEl) {
-                  labelEl.textContent = `✓ OPENED // ${cfg.title}`;
-                }
-                playPopSound();
-                openSoftwareModal(cfg.id);
-                showToast(`⏱️ 2s Hold Complete — Opened ${cfg.title} Window! ✨`);
-                console.log(`[HandTracking] 2-second hold complete on ${cfg.id} -> opened window`);
-              }
-            }
-          } else {
-            hold.plateId = cfg.id;
-            hold.startTime = now;
-            hold.triggered = false;
-            reticle.classList.add('holding-plate');
-            reticle.classList.remove('hold-complete');
-            if (gaugeFill) {
-              gaugeFill.style.strokeDashoffset = '175.93px';
-            }
-            if (labelEl) {
-              labelEl.textContent = `⏱️ HOLD: 2.0s // ${cfg.title}`;
-            }
-            if (targetPlate.userData.btnGroup) {
-              targetPlate.userData.btnGroup.userData.pressOffset = 0.018;
-            }
-          }
-        } else {
-          if (hold.plateId) {
-            hold.plateId = null;
-            hold.startTime = 0;
-            hold.triggered = false;
-          }
-          reticle.classList.remove('holding-plate', 'hold-complete');
-          if (gaugeFill) {
-            gaugeFill.style.strokeDashoffset = '175.93px';
-          }
-          if (labelEl) {
-            labelEl.textContent = 'INDEX FINGERTIP // AIM AT 3D PLATES';
-          }
-        }
-      }
-
-      // Hide unused reticle if only 1 hand is visible
-      if (landmarksList.length < 2 && reticle1) {
-        reticle1.style.display = 'none';
-        handHoldStates[1].plateId = null;
-        handHoldStates[1].startTime = 0;
-        handHoldStates[1].triggered = false;
-      }
+      hideFingertipReticles();
+      handHoldStates.forEach(st => { st.plateId = null; st.startTime = 0; st.triggered = false; });
     }
 
     function updateHandTracking(video) {
@@ -6477,7 +6302,7 @@
         const handInterval = Math.round(1000 / (policy.handCeilingHz || 15));
 
         const canRunPose = !window.DISABLE_POSE;
-        const canRunHands = !window.DISABLE_HANDS && isTargetLocked && isPlaneInteractionActive && !arePlanesDisappeared;
+        const canRunHands = !window.DISABLE_HANDS && isTargetLocked && isPlaneInteractionActive;
 
         const isPoseDue = canRunPose && (now - lastWorkerPoseTime >= poseInterval);
         const isHandDue = canRunHands && (now - lastWorkerHandTime >= handInterval);
@@ -6598,7 +6423,7 @@
       }
 
       const canRunPose = !window.DISABLE_POSE && typeof updatePoseTracking === 'function' && poseLandmarker;
-      const canRunHands = !window.DISABLE_HANDS && typeof updateHandTracking === 'function' && handLandmarker && isTargetLocked && isPlaneInteractionActive && !arePlanesDisappeared;
+      const canRunHands = !window.DISABLE_HANDS && typeof updateHandTracking === 'function' && handLandmarker && isTargetLocked && isPlaneInteractionActive;
 
       const isPoseDue = canRunPose && (now - lastFallbackPoseTime >= MAIN_THREAD_FALLBACK_INTERVAL);
       const isHandDue = canRunHands && (now - lastFallbackHandTime >= MAIN_THREAD_FALLBACK_INTERVAL);
@@ -6748,27 +6573,9 @@
       // Update active 3D explosions and electric storm VFX in the render loop with active elapsed time
       updateEffects(elapsed);
 
-      // 3D Floating Buttons: Micro-float animation & Gesture Opacity Fade
+      // 3D Floating Buttons: Micro-float animation & Tactile press recovery
       if (planesModel) {
-        const opacityDiff = targetPlaneOpacity - currentPlaneOpacity;
-        if (Math.abs(opacityDiff) > 0.005) {
-          const fadeFactor = 1.0 - Math.exp(-14.0 * decorativeDelta);
-          currentPlaneOpacity += opacityDiff * fadeFactor;
-          if (planesModel.userData && planesModel.userData.buttons) {
-            planesModel.userData.buttons.forEach((btn) => {
-              if (btn.userData.materials) {
-                btn.userData.materials.forEach(mat => {
-                  mat.opacity = currentPlaneOpacity;
-                  mat.transparent = true;
-                });
-              }
-            });
-          }
-        } else {
-          currentPlaneOpacity = targetPlaneOpacity;
-        }
-
-        if (currentPlaneOpacity < 0.03 || !isTargetLocked) {
+        if (!isTargetLocked) {
           planesModel.visible = false;
           isPlaneInteractionActive = false;
         } else {
@@ -6990,9 +6797,9 @@
           planesModel.position.set(0, 0, 0);
           planesModel.rotation.set(0, 0, 0);
           planesModel.scale.set(1, 1, 1);
-          planesModel.visible = !arePlanesDisappeared;
+          planesModel.visible = true;
           simMonster.add(planesModel);
-          isPlaneInteractionActive = !arePlanesDisappeared;
+          isPlaneInteractionActive = true;
           console.log('[3D Buttons] Attached procedural 3D software plates directly to simMonster');
         }
 
@@ -7154,47 +6961,24 @@
         // Update active VFX in simulator loop with active elapsed time
         updateEffects(elapsed);
 
-        // 3D Floating Buttons: Micro-float animation & Gesture Opacity Fade
+        // 3D Floating Buttons: Micro-float animation & Tactile press recovery
         if (planesModel) {
-          const opacityDiff = targetPlaneOpacity - currentPlaneOpacity;
-          if (Math.abs(opacityDiff) > 0.005) {
-            const fadeFactor = 1.0 - Math.exp(-14.0 * decorativeDelta);
-            currentPlaneOpacity += opacityDiff * fadeFactor;
-            if (planesModel.userData && planesModel.userData.buttons) {
-              planesModel.userData.buttons.forEach((btn) => {
-                if (btn.userData.materials) {
-                  btn.userData.materials.forEach(mat => {
-                    mat.opacity = currentPlaneOpacity;
-                    mat.transparent = true;
-                  });
-                }
-              });
-            }
-          } else {
-            currentPlaneOpacity = targetPlaneOpacity;
-          }
+          planesModel.visible = true;
+          isPlaneInteractionActive = true;
+          if (planesModel.userData && planesModel.userData.buttons) {
+            const simTime = t;
+            planesModel.userData.buttons.forEach((btn, idx) => {
+              // Tactile press recovery with elapsed time exponential decay
+              if (btn.userData.pressOffset > 0.0005) {
+                btn.userData.pressOffset *= Math.exp(-12.0 * decorativeDelta);
+              } else {
+                btn.userData.pressOffset = 0;
+              }
 
-          if (currentPlaneOpacity < 0.03) {
-            planesModel.visible = false;
-            isPlaneInteractionActive = false;
-          } else {
-            planesModel.visible = true;
-            isPlaneInteractionActive = true;
-            if (planesModel.userData && planesModel.userData.buttons) {
-              const simTime = t;
-              planesModel.userData.buttons.forEach((btn, idx) => {
-                // Tactile press recovery with elapsed time exponential decay
-                if (btn.userData.pressOffset > 0.0005) {
-                  btn.userData.pressOffset *= Math.exp(-12.0 * decorativeDelta);
-                } else {
-                  btn.userData.pressOffset = 0;
-                }
-
-                btn.position.y = btn.userData.baseY + Math.sin(simTime * 2.2 + idx * 1.5) * 0.015;
-                btn.position.z = btn.userData.baseZ - btn.userData.pressOffset + Math.cos(simTime * 1.8 + idx * 1.2) * 0.008;
-                btn.rotation.z = btn.userData.rotZ + Math.sin(simTime * 1.5 + idx) * 0.012;
-              });
-            }
+              btn.position.y = btn.userData.baseY + Math.sin(simTime * 2.2 + idx * 1.5) * 0.015;
+              btn.position.z = btn.userData.baseZ - btn.userData.pressOffset + Math.cos(simTime * 1.8 + idx * 1.2) * 0.008;
+              btn.rotation.z = btn.userData.rotZ + Math.sin(simTime * 1.5 + idx) * 0.012;
+            });
           }
         }
 
@@ -7356,7 +7140,7 @@
     function handleSceneTap(clientX, clientY) {
       const currentCam = isSimulatorMode ? simCamera : camera;
       if (!currentCam) return false;
-      if (!isSimulatorMode && (!isTargetLocked || arePlanesDisappeared)) return false;
+      if (!isSimulatorMode && !isTargetLocked) return false;
 
       const rect = els.arContainer ? els.arContainer.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
       const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
@@ -7558,6 +7342,14 @@
         trigger3DExplosion();
       } else if (e.key === 's' || e.key === 'S') {
         trigger3DStorm();
+      } else if (e.key === '1') {
+        if (typeof window.toggleVfxLayer === 'function') window.toggleVfxLayer(0);
+      } else if (e.key === '2') {
+        if (typeof window.toggleVfxLayer === 'function') window.toggleVfxLayer(1);
+      } else if (e.key === '3') {
+        if (typeof window.toggleVfxLayer === 'function') window.toggleVfxLayer(2);
+      } else if (e.key === '4') {
+        if (typeof window.toggleVfxLayer === 'function') window.toggleVfxLayer(3);
       }
     });
 
