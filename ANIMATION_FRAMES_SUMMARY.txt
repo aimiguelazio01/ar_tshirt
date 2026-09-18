@@ -1,0 +1,133 @@
+================================================================================
+          MONSTER AR — 3D CHARACTER ANIMATION FRAME REFERENCE SUMMARY
+================================================================================
+Master Animation Timeline: Sampled at 24 FPS
+Base Model: monster_anime_bs_v02 (EXT_meshopt compressed GLB)
+
+--------------------------------------------------------------------------------
+1. MASTER ANIMATION FRAME TIMELINE TABLE
+--------------------------------------------------------------------------------
+Frame Range | Clip Identifier        | Duration | Loop Mode  | Action / Trigger
+------------+------------------------+----------+------------+------------------------------------------------
+001 – 024   | idle_1_24              | ~1.00s   | Repeat     | Default State: Continuous breathing & neutral posture
+025 – 072   | react_25_72            | ~2.00s   | 2-5x / Once| Tap Monster or "DON'T TOUCH": Jump & panic reaction
+042 – 060   | loop_42_60             | ~0.79s   | Repeat     | Secondary Loop: Intermediate motion loop
+061 – 085   | calm_61_85             | ~1.04s   | Once       | Recovery: Calming motion returning to rest
+073 – 080   | left_arm_up_73_80      | ~0.33s   | Clamped    | Raise Left Arm (MediaPipe): Rise & hold at frame 80
+081 – 116   | left_arm_down_81_116   | ~1.50s   | Once       | Lower Left Arm: Triggers 3D Electric Storm VFX
+117 – 125   | right_arm_up_117_125   | ~0.38s   | Clamped    | Raise Right Arm (MediaPipe): Rise & hold at frame 125
+126 – 160   | right_arm_down_126_160 | ~1.46s   | Once       | Lower Right Arm: Triggers 3D Fire Blast VFX
+
+
+--------------------------------------------------------------------------------
+2. DETAILED BREAKDOWN PER ANIMATION CLIP
+--------------------------------------------------------------------------------
+
+[01] IDLE LOOP (Frames 1 – 24)
+  - Clip Name: 'idle_1_24' (AR) / 'sim_idle_1_24' (Simulator)
+  - Duration: 23 frames (~0.96s - 1.00s @ 24 FPS)
+  - Loop Setting: THREE.LoopRepeat
+  - Description: The default ambient resting loop. Character breathes gently,
+    sways subtly, and holds hands ready. Plays continuously whenever no gesture
+    or tap sequence is active.
+
+[02] REACTION / DON'T TOUCH (Frames 25 – 72)
+  - Clip Name: 'react_25_72' (AR) / 'sim_react_25_72' (Simulator)
+  - Duration: 47 frames (~1.96s @ 24 FPS)
+  - Loop Setting: THREE.LoopRepeat (2 cycles standard, 5 cycles on panic button)
+  - Trigger: Directly tapping the 3D monster on screen or clicking the "DON'T TOUCH" button.
+  - Audio: Accompanied by panic scream sound effect / panic music.
+  - Return: Smoothly fades back to 'idle_1_24' when the sequence finishes.
+
+[03] SECONDARY LOOP (Frames 42 – 60)
+  - Clip Name: 'loop_42_60' (AR) / 'sim_loop_42_60' (Simulator)
+  - Duration: 18 frames (~0.75s @ 24 FPS)
+  - Loop Setting: THREE.LoopRepeat
+  - Description: Intermediate loop segment used for dynamic transitions.
+
+[04] CALMING / RECOVERY (Frames 61 – 85)
+  - Clip Name: 'calm_61_85' (AR) / 'sim_calm_61_85' (Simulator)
+  - Duration: 24 frames (~1.00s @ 24 FPS)
+  - Loop Setting: THREE.LoopOnce (clampWhenFinished = true)
+  - Description: Transition from high-energy motion back to neutral rest.
+
+[05] LEFT ARM UP (Frames 73 – 80)
+  - Clip Name: 'left_arm_up_73_80' (AR) / 'sim_left_arm_up_73_80' (Simulator)
+  - Duration: 7 frames (~0.29s - 0.33s @ 24 FPS)
+  - Loop Setting: THREE.LoopOnce (clampWhenFinished = true)
+  - Trigger: Raising left arm above shoulder in front of camera (MediaPipe Pose).
+  - Behavior: Arms raise quickly and stay clamped at Frame 80 for as long as
+    the user's left arm stays raised.
+  - HUD / VFX: HUD turns cyan: "⚡ LEFT ARM (73-80) — LOWER TO PLAY 81-116 🌩️".
+    Software plates fade out to 0% opacity to highlight character pose.
+
+[06] LEFT ARM DOWN — ELECTRIC STORM (Frames 81 – 116)
+  - Clip Name: 'left_arm_down_81_116' (AR) / 'sim_left_arm_down_81_116' (Simulator)
+  - Duration: 35 frames (~1.46s - 1.50s @ 24 FPS)
+  - Loop Setting: THREE.LoopOnce (clampWhenFinished = true)
+  - Trigger: Lowering the left arm after it was raised.
+  - VFX Triggered: 3D Electric Storm (storm_01.png 6x5 sprite flipbook, 30 frames,
+    cyan electrical arcs, electric shock particles, and thunder sound).
+  - Return: Transitions back to 'idle_1_24' upon completing frame 116.
+    Software plates fade back in to 88% opacity.
+
+[07] RIGHT ARM UP (Frames 117 – 125)
+  - Clip Name: 'right_arm_up_117_125' (AR) / 'sim_right_arm_up_117_125' (Simulator)
+  - Duration: 8 frames (~0.33s - 0.38s @ 24 FPS)
+  - Loop Setting: THREE.LoopOnce (clampWhenFinished = true)
+  - Trigger: Raising right arm above shoulder in front of camera (MediaPipe Pose).
+  - Behavior: Arms raise quickly and stay clamped at Frame 125 for as long as
+    the user's right arm stays raised.
+  - HUD / VFX: HUD turns orange: "🔥 RIGHT ARM (117-125) — LOWER TO PLAY 126-160 💥".
+    Software plates fade out to 0% opacity.
+
+[08] RIGHT ARM DOWN — FIRE BLAST (Frames 126 – 160)
+  - Clip Name: 'right_arm_down_126_160' (AR) / 'sim_right_arm_down_126_160' (Simulator)
+  - Duration: 34 frames (~1.42s - 1.46s @ 24 FPS)
+  - Loop Setting: THREE.LoopOnce (clampWhenFinished = true)
+  - Trigger: Lowering the right arm after it was raised.
+  - VFX Triggered: 3D Fiery Blast Explosion (explosion_01.png 8x8 sprite flipbook,
+    64 frames, smoke & spark particles, and pop/blast audio).
+  - Return: Transitions back to 'idle_1_24' upon completing frame 160.
+    Software plates fade back in to 88% opacity.
+
+
+--------------------------------------------------------------------------------
+3. GESTURE & INTERACTION BEHAVIOR SUMMARY
+--------------------------------------------------------------------------------
+- Left Arm Raised: Plays 73 -> 80, Clamps at 80, Hides Software Plates.
+- Left Arm Lowered: Plays 81 -> 116, Triggers 3D Storm VFX, Restores Idle (1-24),
+  Restores Software Plates.
+- Right Arm Raised: Plays 117 -> 125, Clamps at 125, Hides Software Plates.
+- Right Arm Lowered: Plays 126 -> 160, Triggers 3D Blast VFX, Restores Idle (1-24),
+  Restores Software Plates.
+- Monster Character Tapped: Plays 25 -> 72, Screams/Jumps, Restores Idle (1-24).
+- Both Arms Lowered: Software Plates visible & touch-interactive.
+
+
+--------------------------------------------------------------------------------
+4. DEBUGGING HUD SHORTCUTS & APIS
+--------------------------------------------------------------------------------
+- On-Screen Debug HUD:
+  - Element: #anim-frame-debug (located at top-center under gesture chip)
+  - Displays real-time exact animation frame number (1 - 160), active clip name,
+    and progress bar in large cyan typography.
+  - Clicking the HUD toggles between Large (56px) and Extra-Large (88px) modes.
+
+- Browser Console Inspection API:
+  - window.getCurrentAnimationFrame()
+    Returns an object with:
+    {
+      frame: <number>,       // e.g. 82
+      clipName: <string>,    // e.g. "LEFT ARM DOWN (STORM)"
+      rangeText: <string>,   // e.g. "[81–116]"
+      progress: <number>,    // 0.0 to 1.0 within clip
+      rawTime: <number>      // seconds elapsed in action
+    }
+
+- Interactive Test Functions in Console:
+  - window.testLeftArmGesture(true)   // Simulate raising left arm
+  - window.testLeftArmGesture(false)  // Simulate lowering left arm
+  - window.testRightArmGesture(true)  // Simulate raising right arm
+  - window.testRightArmGesture(false) // Simulate lowering right arm
+================================================================================
