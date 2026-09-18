@@ -1413,7 +1413,7 @@
     // Independent bottleneck isolation switches (MediaPipe enabled by default for interactive gestures)
     window.DISABLE_MEDIAPIPE = urlParams.get('noMediaPipe') === '1' || urlParams.get('disableMediaPipe') === '1';
     window.DISABLE_POSE = window.DISABLE_MEDIAPIPE || urlParams.get('noPose') === '1';
-    window.DISABLE_HANDS = window.DISABLE_MEDIAPIPE || urlParams.get('noHands') === '1';
+    window.DISABLE_HANDS = true; // MediaPipe hand tracking removed; only MediaPipe arms (pose) are used
     window.DISABLE_VFX = urlParams.get('noVfx') === '1';
 
     // Diagnostic-only controls: trackingDelegate=auto|cpu|gpu, cameraProfile=standard|economy, quality=auto|balanced|reduced
@@ -2380,19 +2380,6 @@
 
         if (enabledTasks.includes('pose') && !window.DISABLE_POSE) {
           await initPoseTracking(vision).catch(() => {});
-          if (els.gestureText) {
-            els.gestureText.textContent = enabledTasks.includes('hand') && !window.DISABLE_HANDS
-              ? '🦾 POSE READY, LOADING HANDS…'
-              : '🦾 LOWER ARM TO TRIGGER: RIGHT (BLAST) / LEFT (STORM)';
-          }
-        }
-
-        // Yield execution to browser presentation opportunity
-        await new Promise(resolve => setTimeout(resolve, 0));
-        if (!isCurrent(session)) return;
-
-        if (enabledTasks.includes('hand') && !window.DISABLE_HANDS) {
-          await initHandTracking(vision).catch(() => {});
           if (els.gestureText) {
             els.gestureText.textContent = '🦾 LOWER ARM TO TRIGGER: RIGHT (BLAST) / LEFT (STORM)';
           }
@@ -6522,23 +6509,13 @@
         const handInterval = Math.round(1000 / (policy.handCeilingHz || 15));
 
         const canRunPose = !window.DISABLE_POSE;
-        const canRunHands = !window.DISABLE_HANDS && isTargetLocked && isPlaneInteractionActive && areSoftwarePlatesVisible();
-
         const isPoseDue = canRunPose && (now - lastWorkerPoseTime >= poseInterval);
-        const isHandDue = canRunHands && (now - lastWorkerHandTime >= handInterval);
 
-        if (!isPoseDue && !isHandDue) {
+        if (!isPoseDue) {
           return;
         }
 
-        let chosenTask = 'pose';
-        if (isPoseDue && isHandDue) {
-          chosenTask = lastWorkerTaskDispatched === 'pose' ? 'hand' : 'pose';
-        } else if (isHandDue) {
-          chosenTask = 'hand';
-        } else {
-          chosenTask = 'pose';
-        }
+        const chosenTask = 'pose';
 
         const vw = video.videoWidth;
         const vh = video.videoHeight;
@@ -6556,8 +6533,7 @@
         lastMonotonicTimestamp = targetTimestampMs;
 
         lastWorkerTaskDispatched = chosenTask;
-        if (chosenTask === 'pose') lastWorkerPoseTime = now;
-        if (chosenTask === 'hand') lastWorkerHandTime = now;
+        lastWorkerPoseTime = now;
 
         const capturedWorker = trackingWorker;
         const capturedWorkerId = currentWorkerId;
@@ -6643,32 +6619,15 @@
       }
 
       const canRunPose = !window.DISABLE_POSE && typeof updatePoseTracking === 'function' && poseLandmarker;
-      const canRunHands = !window.DISABLE_HANDS && typeof updateHandTracking === 'function' && handLandmarker && isTargetLocked && isPlaneInteractionActive && areSoftwarePlatesVisible();
-
       const isPoseDue = canRunPose && (now - lastFallbackPoseTime >= MAIN_THREAD_FALLBACK_INTERVAL);
-      const isHandDue = canRunHands && (now - lastFallbackHandTime >= MAIN_THREAD_FALLBACK_INTERVAL);
 
-      if (!isPoseDue && !isHandDue) return;
+      if (!isPoseDue) return;
 
-      let fallbackTask = 'pose';
-      if (isPoseDue && isHandDue) {
-        fallbackTask = lastFallbackTaskDispatched === 'pose' ? 'hand' : 'pose';
-      } else if (isHandDue) {
-        fallbackTask = 'hand';
-      } else {
-        fallbackTask = 'pose';
-      }
-
+      const fallbackTask = 'pose';
       lastFallbackInferenceTime = now;
       lastFallbackTaskDispatched = fallbackTask;
-
-      if (fallbackTask === 'pose') {
-        lastFallbackPoseTime = now;
-        updatePoseTracking(video);
-      } else {
-        lastFallbackHandTime = now;
-        updateHandTracking(video);
-      }
+      lastFallbackPoseTime = now;
+      updatePoseTracking(video);
     }
 
     function hideFingertipReticles() {

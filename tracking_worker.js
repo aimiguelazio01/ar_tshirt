@@ -65,7 +65,7 @@ async function initTask(type, vision, localUrl, remoteUrl, requestedDelegate = '
   }
 }
 
-async function initVision(workerId, assets = {}, enabledTasks = ['pose', 'hand'], delegate = 'auto') {
+async function initVision(workerId, assets = {}, enabledTasks = ['pose'], delegate = 'auto') {
   if (isReady) {
     self.postMessage({ type: 'ready', workerId });
     return;
