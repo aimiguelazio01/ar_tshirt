@@ -29,7 +29,7 @@ import {
 
 global.self = global;
 
-const GLB_PATH = 'assets/3d/monster/monster_anime_bs_v03.glb';
+const GLB_PATH = 'assets/3d/monster/monster_anime_bs_v03_repaired.glb';
 
 function loadModel() {
   return new Promise((resolve, reject) => {

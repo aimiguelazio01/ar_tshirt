@@ -1040,12 +1040,6 @@
           </div>
         </div>
 
-        <!-- Pose AI Status Pill -->
-        <div id="gesture-chip" role="button" tabindex="0" title="MediaPipe AI: Raise Left Arm (frames 73-80) or Right Arm (frames 117-125)"
-          class="pointer-events-auto self-center px-3 py-1 rounded-full bg-black/80 backdrop-blur-md border border-brand/50 text-[10px] sm:text-[11px] font-mono text-white flex items-center gap-2 cursor-pointer shadow-[0_2px_12px_rgba(0,0,0,0.6)] select-none hover:border-brand transition-all">
-          <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
-          <span id="gesture-text">🦾 POSE AI LOADING...</span>
-        </div>
       </div>
 
       <!-- CENTER RETICLE HINT (Minimal Rounded Frame Guide) -->
@@ -1367,8 +1361,8 @@
   <script type="importmap">
 {
   "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.157.0/examples/jsm/"
+    "three": "./node_modules/three/build/three.module.js",
+    "three/addons/": "./node_modules/three/examples/jsm/"
   }
 }
 </script>
@@ -1943,9 +1937,9 @@
       // Target AR Marker compiled file (generated from assets/monster_tshirt.jpg)
       targetUrl: ASSET_CFG.targetMarker || "assets/versioned/monster_tshirt.mind",
 
-      // 3D Character model: Primary is lossless EXT_meshopt compressed (1.25 MB, optimized), with fallback
-      modelUrl: ASSET_CFG.monsterModel || "assets/versioned/monster_anime_bs_v03.d04648be50cd3135.opt.glb",
-      fallbackModelUrl: "assets/3d/monster/monster_anime_bs_v03.glb",
+      // 3D Character model: Primary is lossless EXT_meshopt compressed (repaired v03 skinning), with fallback
+      modelUrl: ASSET_CFG.monsterModel || "assets/versioned/monster_anime_bs_v03_repaired.3b8373c6bf56e9b9.opt.glb",
+      fallbackModelUrl: "assets/3d/monster/monster_anime_bs_v03_repaired.glb",
       explosionTextureUrl: ASSET_CFG.explosionTexture || "assets/versioned/explosion_01.png",
       stormTextureUrl: ASSET_CFG.stormTexture || "assets/versioned/storm_01.png",
       poseModelUrl: ASSET_CFG.poseModel || "assets/models/pose_landmarker_lite.task",
@@ -2747,7 +2741,8 @@
     // 0. Capability check & Device Enumeration
     // ---------------------------------------------------------------
     function checkSupport() {
-      const hasWebRTC = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+      const isSim = (urlParams.get('sim') === '1' || urlParams.get('simulator') === '1' || urlParams.get('simulator') === 'true' || urlParams.get('mode') === 'simulator');
+      const hasWebRTC = isSim || !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
       const hasWebGL = (() => {
         try {
           const c = document.createElement('canvas');
@@ -3176,7 +3171,7 @@
     }
 
     async function runPreload() {
-      if (urlParams.get('sim') === '1' || urlParams.get('simulator') === '1' || urlParams.get('mode') === 'simulator') {
+      if (urlParams.get('sim') === '1' || urlParams.get('simulator') === '1' || urlParams.get('simulator') === 'true' || urlParams.get('mode') === 'simulator') {
         isWelcomeScreenActive = false;
         modeEntryMark = performance.now();
         const welcomeEl = document.getElementById('screen-welcome');
@@ -3559,24 +3554,32 @@
     let simActionRightArmUp = null, simActionRightArmDown = null;
     let particleSystem, particleVelocities;
 
-    function buildSceneContent(group) {
-      // 1. Scene illumination — ambient + directional lights added to SCENE directly
-      const ambLight = new THREE.AmbientLight(0xffffff, 2.5);
-      const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444455, 2.0);
-      const dirLight = new THREE.DirectionalLight(0xffb020, 2.8);
-      dirLight.position.set(2, 4, 3);
-      const frontLight = new THREE.DirectionalLight(0xffffff, 2.2);
-      frontLight.position.set(0, 0, 4);
-      const pointLight = new THREE.PointLight(0x4fe3d0, 2.2, 10);
-      pointLight.position.set(-1, 1, 2);
-      pointLight.visible = (typeof QualityPolicy !== 'undefined') ? QualityPolicy.getPolicy().enableSecondaryLights : true;
+    function createNeutralCharacterLighting() {
+      const lightGroup = new THREE.Group();
+      lightGroup.name = 'NeutralCharacterLighting';
 
+      const ambLight = new THREE.AmbientLight(0xffffff, 2.2);
+      const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444455, 1.8);
+      const dirLight = new THREE.DirectionalLight(0xffffff, 2.5);
+      dirLight.position.set(2, 4, 3);
+      const frontLight = new THREE.DirectionalLight(0xffffff, 2.0);
+      frontLight.position.set(0, 0, 4);
+      const fillLight = new THREE.DirectionalLight(0xffffff, 1.2);
+      fillLight.position.set(-2, 2, 2);
+      fillLight.visible = (typeof QualityPolicy !== 'undefined') ? QualityPolicy.getPolicy().enableSecondaryLights : true;
+
+      lightGroup.add(ambLight);
+      lightGroup.add(hemiLight);
+      lightGroup.add(dirLight);
+      lightGroup.add(frontLight);
+      lightGroup.add(fillLight);
+      return lightGroup;
+    }
+
+    function buildSceneContent(group) {
+      // 1. Scene illumination — neutral white character lighting shared between AR & Simulator
       const lightContainer = scene || group;
-      lightContainer.add(ambLight);
-      lightContainer.add(hemiLight);
-      lightContainer.add(dirLight);
-      lightContainer.add(frontLight);
-      lightContainer.add(pointLight);
+      lightContainer.add(createNeutralCharacterLighting());
 
       // 2. Particle field: Allocate capacity once, use setDrawRange for active ambient particles
       const MAX_PARTICLES = 220;
@@ -4997,7 +5000,6 @@
 
       const started = ctrl.raiseArm('right');
       if (started) {
-        showToast('🔥 Right Arm Raised — Frames 117-125 (Hold 125) 💥');
         updateGestureHUD('right', true);
         console.log('[Gesture] Right Arm Raised -> Frames 117 to 125 (holding at 125)');
       }
@@ -5012,7 +5014,6 @@
       const lowered = ctrl.lowerArm('right', { triggerEffect });
       if (lowered) {
         if (triggerEffect) {
-          showToast('💥 Right Arm Down — Frames 126-160 & 3D Explosion Triggered!');
           console.log('[Gesture] Right Arm Down -> Frames 126 to 160 played, 3D Explosion triggered');
         }
       }
@@ -5031,7 +5032,6 @@
 
       const started = ctrl.raiseArm('left');
       if (started) {
-        showToast('⚡ Left Arm Raised — Frames 73-80 (Hold 80) 🌩️');
         updateGestureHUD('left', true);
         console.log('[Gesture] Left Arm Raised -> Frames 73 to 80 (holding at 80)');
       }
@@ -5046,7 +5046,6 @@
       const lowered = ctrl.lowerArm('left', { triggerEffect });
       if (lowered) {
         if (triggerEffect) {
-          showToast('🌩️ Left Arm Down — Frames 81-116 & 3D Storm Triggered!');
           console.log('[Gesture] Left Arm Down -> Frames 81 to 116 played, 3D Electric Storm triggered');
         }
       }
@@ -5427,31 +5426,6 @@
 
     function updateGestureHUD(armSide, isRaised) {
       if (!els.gestureChip || !els.gestureText) return;
-      if (!isPoseTrackerReady) {
-        els.gestureText.textContent = '⏳ POSE AI LOADING...';
-        els.gestureChip.style.background = '';
-        els.gestureChip.style.color = '';
-        els.gestureChip.style.fontWeight = 'normal';
-        return;
-      }
-      if (isRaised) {
-        if (armSide === 'right') {
-          els.gestureText.textContent = '🔥 RIGHT ARM (117-125) — LOWER TO PLAY 126-160 💥';
-          els.gestureChip.style.background = 'rgba(241, 107, 37, 0.45)';
-          els.gestureChip.style.color = '#FFFFFF';
-          els.gestureChip.style.fontWeight = 'bold';
-        } else {
-          els.gestureText.textContent = '⚡ LEFT ARM (73-80) — LOWER TO PLAY 81-116 🌩️';
-          els.gestureChip.style.background = 'rgba(6, 182, 212, 0.45)';
-          els.gestureChip.style.color = '#FFFFFF';
-          els.gestureChip.style.fontWeight = 'bold';
-        }
-      } else {
-        els.gestureText.textContent = '🦾 RAISE ARM: LEFT (73-80) / RIGHT (117-125)';
-        els.gestureChip.style.background = '';
-        els.gestureChip.style.color = '';
-        els.gestureChip.style.fontWeight = 'normal';
-      }
     }
 
     function processPoseLandmarks(landmarks, video) {
@@ -5536,7 +5510,6 @@
         if ((now - handRaisedStartTime) >= GESTURE_DEBOUNCE_MS && !arePlanesDisappeared) {
           arePlanesDisappeared = true;
           targetPlaneOpacity = 0.0;
-          showToast('✋ Arms Raised — Planes Hidden');
           console.log('[PoseTracking] Arms raised above shoulders -> hiding planes');
           updateGestureHUD(isRightUp ? 'right' : (isLeftUp ? 'left' : null), true);
         }
@@ -5546,7 +5519,6 @@
         if ((now - handLoweredStartTime) >= GESTURE_DEBOUNCE_MS && arePlanesDisappeared) {
           arePlanesDisappeared = false;
           targetPlaneOpacity = areSoftwarePlatesVisible() ? 0.88 : 0;
-          showToast(areSoftwarePlatesVisible() ? '👇 Arms Down — Planes Visible ✨' : '👇 Arms Down — Plates Disabled');
           console.log('[PoseTracking] Arms down -> updating plate visibility');
           updateGestureHUD(null, false);
         }
@@ -6706,14 +6678,7 @@
       QualityPolicy.applyToRenderer(simRenderer, simCamera);
       els.arContainer.appendChild(simRenderer.domElement);
 
-      const hemiLight = new THREE.HemisphereLight(0xffffff, 0x222233, 2.0);
-      simScene.add(hemiLight);
-      const dirLight = new THREE.DirectionalLight(0xffb020, 2.5);
-      dirLight.position.set(2, 4, 3);
-      simScene.add(dirLight);
-      const pointLight = new THREE.PointLight(0x4fe3d0, 2.5, 10);
-      pointLight.position.set(-1, 1, 2);
-      simScene.add(pointLight);
+      simScene.add(createNeutralCharacterLighting());
 
       // Start background webcam for MediaPipe gesture tracking in simulator mode if accessible
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && !window.DISABLE_MEDIAPIPE) {

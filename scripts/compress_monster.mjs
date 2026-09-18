@@ -13,7 +13,7 @@ async function main() {
   await MeshoptEncoder.ready;
   await MeshoptDecoder.ready;
 
-  const inputPath = path.resolve('assets/3d/monster/monster_anime_bs_v03.glb');
+  const inputPath = path.resolve('assets/3d/monster/monster_anime_bs_v03_repaired.glb');
   const outputDir = path.resolve('assets/versioned');
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
@@ -36,7 +36,7 @@ async function main() {
   // Hash the EMITTED bytes strictly per specification (16-char sha256)
   const compressedBuffer = await io.writeBinary(doc);
   const hash = computeHash(compressedBuffer);
-  const outputPath = path.join(outputDir, `monster_anime_bs_v03.${hash}.opt.glb`);
+  const outputPath = path.join(outputDir, `monster_anime_bs_v03_repaired.${hash}.opt.glb`);
 
   fs.writeFileSync(outputPath, compressedBuffer);
 

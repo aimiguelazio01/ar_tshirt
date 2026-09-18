@@ -15,6 +15,8 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         '.task': 'application/octet-stream',
         '.mind': 'application/octet-stream',
         '.glb': 'model/gltf-binary',
+        '.mjs': 'text/javascript',
+        '.js': 'text/javascript',
     })
     def do_POST(self):
         if self.path == '/upload_mind' or self.path.startswith('/upload_mind'):

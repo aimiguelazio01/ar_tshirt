@@ -14,7 +14,7 @@ globalThis.window = globalThis;
 test('Mobile Character Loading & Texture Quality Verification', async (t) => {
 
   await t.test('1. Authored character material factors, textures, and anisotropy preservation', async () => {
-    const glbBuf = fs.readFileSync('assets/3d/monster/monster_anime_bs_v03.glb');
+    const glbBuf = fs.readFileSync('assets/3d/monster/monster_anime_bs_v03_repaired.glb');
     const loader = new GLTFLoader();
 
     const gltf = await new Promise((resolve, reject) => {

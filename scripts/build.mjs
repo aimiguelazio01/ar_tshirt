@@ -79,7 +79,7 @@ async function build() {
   await MeshoptEncoder.ready;
   await MeshoptDecoder.ready;
 
-  const glbInputPath = path.resolve('assets/3d/monster/monster_anime_bs_v03.glb');
+  const glbInputPath = path.resolve('assets/3d/monster/monster_anime_bs_v03_repaired.glb');
   const io = new NodeIO()
     .registerExtensions([EXTMeshoptCompression])
     .registerDependencies({
@@ -94,7 +94,7 @@ async function build() {
   // Hash the EMITTED bytes strictly per specification
   const emittedBytes = await io.writeBinary(doc);
   const glbHash = computeHash(emittedBytes);
-  const glbFileName = `monster_anime_bs_v03.${glbHash}.opt.glb`;
+  const glbFileName = `monster_anime_bs_v03_repaired.${glbHash}.opt.glb`;
   fs.writeFileSync(path.join(versionedDir, glbFileName), emittedBytes);
   console.log(`✅ Model compressed: assets/versioned/${glbFileName} (${(emittedBytes.byteLength / 1024 / 1024).toFixed(2)} MB)`);
 
@@ -197,6 +197,16 @@ async function build() {
 
   const inlineStyleRegex = /<style>[\s\S]*?<\/style>/i;
   builtHtml = builtHtml.replace(inlineStyleRegex, '');
+
+  // Ensure production importmap uses CDN for three.js
+  builtHtml = builtHtml.replace(
+    './node_modules/three/build/three.module.js',
+    'https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.module.js'
+  );
+  builtHtml = builtHtml.replace(
+    './node_modules/three/examples/jsm/',
+    'https://cdn.jsdelivr.net/npm/three@0.157.0/examples/jsm/'
+  );
 
   fs.writeFileSync(path.join(distDir, 'index.html'), builtHtml, 'utf8');
 

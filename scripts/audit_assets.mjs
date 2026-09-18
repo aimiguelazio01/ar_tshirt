@@ -8,15 +8,15 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 // Setup global environment for loaders in Node
 global.self = global;
 
-export const SOURCE_GLB = 'assets/3d/monster/monster_anime_bs_v03.glb';
+export const SOURCE_GLB = 'assets/3d/monster/monster_anime_bs_v03_repaired.glb';
 export const RAW_BACKUP_GLB = 'assets/3d/monster/monster_anime_bs_v02_raw_backup.glb';
 
 export function getOptimizedGLBPath() {
   if (fs.existsSync('assets/versioned')) {
-    const file = fs.readdirSync('assets/versioned').find(f => f.startsWith('monster_anime_bs_v03') && f.endsWith('.opt.glb'));
+    const file = fs.readdirSync('assets/versioned').find(f => (f.startsWith('monster_anime_bs_v03_repaired') || f.startsWith('monster_anime_bs_v03')) && f.endsWith('.opt.glb'));
     if (file) return path.join('assets/versioned', file);
   }
-  return 'assets/versioned/monster_anime_bs_v03.opt.glb';
+  return 'assets/versioned/monster_anime_bs_v03_repaired.opt.glb';
 }
 
 export const OPT_GLB = getOptimizedGLBPath();
@@ -192,9 +192,6 @@ export async function auditAsset(filePath, label = 'Asset') {
       results.passed = false;
     } else {
       const numVertices = positionAttr.count;
-      const indexArr = skinIndexAttr.array;
-      const weightArr = skinWeightAttr.array;
-      const itemSize = skinIndexAttr.itemSize; // typically 4
 
       let invalidJointCount = 0;
       let negativeWeightCount = 0;
@@ -202,10 +199,13 @@ export async function auditAsset(filePath, label = 'Asset') {
       let maxWeightSumDelta = 0;
 
       for (let v = 0; v < numVertices; v++) {
+        const joints = [skinIndexAttr.getX(v), skinIndexAttr.getY(v), skinIndexAttr.getZ(v), skinIndexAttr.getW(v)];
+        const weights = [skinWeightAttr.getX(v), skinWeightAttr.getY(v), skinWeightAttr.getZ(v), skinWeightAttr.getW(v)];
         let weightSum = 0;
-        for (let j = 0; j < itemSize; j++) {
-          const jointIdx = indexArr[v * itemSize + j];
-          const weight = weightArr[v * itemSize + j];
+
+        for (let j = 0; j < 4; j++) {
+          const jointIdx = joints[j];
+          const weight = weights[j];
 
           if (jointIdx < 0 || jointIdx >= bones.length) {
             invalidJointCount++;
@@ -220,7 +220,7 @@ export async function auditAsset(filePath, label = 'Asset') {
         if (delta > maxWeightSumDelta) {
           maxWeightSumDelta = delta;
         }
-        if (delta > 1e-4) {
+        if (delta > 1e-5) {
           badWeightSumCount++;
         }
       }
@@ -234,7 +234,7 @@ export async function auditAsset(filePath, label = 'Asset') {
         results.passed = false;
       }
       if (badWeightSumCount > 0) {
-        results.errors.push(`Found ${badWeightSumCount} vertices whose skin weights do not sum to 1 within 1e-4 (max delta: ${maxWeightSumDelta.toExponential(3)})`);
+        results.errors.push(`Found ${badWeightSumCount} vertices whose skin weights do not sum to 1 within 1e-5 (max delta: ${maxWeightSumDelta.toExponential(3)})`);
         results.passed = false;
       }
     }
@@ -344,11 +344,13 @@ export async function compareSkinningAgainstRawBackup(currentPath, rawBackupPath
     let maxDelta = 0;
     let diffCount = 0;
 
-    const len = Math.min(currWeights.array.length, rawWeights.array.length);
-    for (let i = 0; i < len; i++) {
-      const delta = Math.abs(currWeights.array[i] - rawWeights.array[i]);
-      if (delta > maxDelta) maxDelta = delta;
-      if (delta > 1e-4) diffCount++;
+    const getComp = (attr, v, c) => (c === 0 ? attr.getX(v) : c === 1 ? attr.getY(v) : c === 2 ? attr.getZ(v) : attr.getW(v));
+    for (let v = 0; v < diffReport.totalVertices; v++) {
+      for (let c = 0; c < 4; c++) {
+        const delta = Math.abs(getComp(currWeights, v, c) - getComp(rawWeights, v, c));
+        if (delta > maxDelta) maxDelta = delta;
+        if (delta > 1e-4) diffCount++;
+      }
     }
 
     diffReport.maxWeightDiff = maxDelta;
