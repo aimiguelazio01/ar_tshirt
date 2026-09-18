@@ -79,7 +79,7 @@ async function build() {
   await MeshoptEncoder.ready;
   await MeshoptDecoder.ready;
 
-  const glbInputPath = path.resolve('assets/3d/monster/monster_anime_bs_v02.glb');
+  const glbInputPath = path.resolve('assets/3d/monster/monster_anime_bs_v03.glb');
   const io = new NodeIO()
     .registerExtensions([EXTMeshoptCompression])
     .registerDependencies({
@@ -94,7 +94,7 @@ async function build() {
   // Hash the EMITTED bytes strictly per specification
   const emittedBytes = await io.writeBinary(doc);
   const glbHash = computeHash(emittedBytes);
-  const glbFileName = `monster_anime_bs_v02.${glbHash}.opt.glb`;
+  const glbFileName = `monster_anime_bs_v03.${glbHash}.opt.glb`;
   fs.writeFileSync(path.join(versionedDir, glbFileName), emittedBytes);
   console.log(`✅ Model compressed: assets/versioned/${glbFileName} (${(emittedBytes.byteLength / 1024 / 1024).toFixed(2)} MB)`);
 
@@ -163,23 +163,7 @@ async function build() {
   const rawHtml = fs.readFileSync('index.html', 'utf8');
   let builtHtml = rawHtml;
 
-  // Replace build commit meta tag
-  builtHtml = builtHtml.replace(
-    /<meta name="app-build" content="[^"]*"\s*\/?>/i,
-    `<meta name="app-build" content="${gitCommit}" />`
-  );
-
-  // Replace Tailwind Play CDN and inline <style> block with compiled CSS link
-  const tailwindCdnRegex = /<!-- Tailwind CSS Engine -->[\s\S]*?<script src="https:\/\/cdn\.tailwindcss\.com"><\/script>[\s\S]*?<script id="tailwind-config">[\s\S]*?<\/script>/i;
-  builtHtml = builtHtml.replace(
-    tailwindCdnRegex,
-    `<!-- Compiled Production Tailwind CSS -->\n  <link rel="stylesheet" href="assets/versioned/${cssFileName}" />`
-  );
-
-  const inlineStyleRegex = /<style>[\s\S]*?<\/style>/i;
-  builtHtml = builtHtml.replace(inlineStyleRegex, '');
-
-  // High-priority Preload tags for 3D model and marker ahead of application modules
+  // High-priority Preload tags for 3D model and marker inserted early in <head>
   const highPriorityPreloads = `
   <!-- High-Priority Preloads: Stream essential 3D character and target marker before module execution -->
   <link rel="preload" as="fetch" crossorigin="anonymous" href="assets/versioned/${glbFileName}" fetchpriority="high">
@@ -196,13 +180,23 @@ async function build() {
       poseModel: "assets/versioned/${poseFileName}",
       handModel: "assets/versioned/${handFileName}"
     };
-  </script>
-`;
-  if (builtHtml.includes('<script type="importmap">')) {
-    builtHtml = builtHtml.replace('<script type="importmap">', `${highPriorityPreloads}  <script type="importmap">`);
-  } else {
-    builtHtml = builtHtml.replace('</head>', `${highPriorityPreloads}</head>`);
-  }
+  </script>`;
+
+  // Replace build commit meta tag and insert preloads early in <head>
+  builtHtml = builtHtml.replace(
+    /<meta name="app-build" content="[^"]*"\s*\/?>/i,
+    `<meta name="app-build" content="${gitCommit}" />\n${highPriorityPreloads}`
+  );
+
+  // Replace Tailwind Play CDN and inline <style> block with compiled CSS link
+  const tailwindCdnRegex = /<!-- Tailwind CSS Engine -->[\s\S]*?<script src="https:\/\/cdn\.tailwindcss\.com"><\/script>[\s\S]*?<script id="tailwind-config">[\s\S]*?<\/script>/i;
+  builtHtml = builtHtml.replace(
+    tailwindCdnRegex,
+    `<!-- Compiled Production Tailwind CSS -->\n  <link rel="stylesheet" href="assets/versioned/${cssFileName}" />`
+  );
+
+  const inlineStyleRegex = /<style>[\s\S]*?<\/style>/i;
+  builtHtml = builtHtml.replace(inlineStyleRegex, '');
 
   fs.writeFileSync(path.join(distDir, 'index.html'), builtHtml, 'utf8');
 

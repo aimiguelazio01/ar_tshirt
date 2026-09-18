@@ -29,7 +29,7 @@ import {
 
 global.self = global;
 
-const GLB_PATH = 'assets/3d/monster/monster_anime_bs_v02.glb';
+const GLB_PATH = 'assets/3d/monster/monster_anime_bs_v03.glb';
 
 function loadModel() {
   return new Promise((resolve, reject) => {
@@ -394,7 +394,10 @@ test('Character Animation Repair — Complete Behavioral Test Suite', async (sui
     assert.ok(sourceAudit.results.passed, `Source asset audit must pass. Errors: ${sourceAudit.results.errors.join('; ')}`);
     assert.equal(sourceAudit.results.morphTargets.length, 5, 'Must have 5 morph targets');
 
-    const optPath = 'assets/versioned/monster_anime_bs_v02.opt.glb';
+    const optFile = fs.existsSync('assets/versioned')
+      ? fs.readdirSync('assets/versioned').find(f => f.startsWith('monster_anime_bs_v03') && f.endsWith('.opt.glb'))
+      : null;
+    const optPath = optFile ? path.join('assets/versioned', optFile) : 'assets/versioned/monster_anime_bs_v03.opt.glb';
     if (fs.existsSync(optPath)) {
       const optAudit = await auditAsset(optPath, 'Optimized Production Asset');
       assert.ok(optAudit.results.passed, `Compressed asset audit must pass. Errors: ${optAudit.results.errors.join('; ')}`);
@@ -403,11 +406,12 @@ test('Character Animation Repair — Complete Behavioral Test Suite', async (sui
       assert.ok(compare.matches, `Source vs compressed comparison must match. Errors: ${compare.errors.join('; ')}`);
     }
 
-    // Report skinning difference against raw backup
+    // Verify skinning against raw backup
     const rawBackupPath = 'assets/3d/monster/monster_anime_bs_v02_raw_backup.glb';
     if (fs.existsSync(rawBackupPath)) {
       const skinningDiff = await compareSkinningAgainstRawBackup(GLB_PATH, rawBackupPath);
-      assert.ok(skinningDiff.skinWeightsDiffer, 'Skinning diff against raw backup should be reported');
+      assert.ok(skinningDiff.jointCountMatch, 'Joint counts must match raw backup');
+      assert.ok(skinningDiff.jointNamesMatch, 'Joint names must match raw backup');
     }
   });
 

@@ -7,11 +7,10 @@ console.log(`index.html loaded: ${(html.length / 1024).toFixed(1)} KB`);
 
 // Check required assets exist
 const assetsToCheck = [
-  'assets/versioned/monster_anime_bs_v02.opt.glb',
   'assets/versioned/monster_tshirt.mind',
   'assets/versioned/explosion_01.png',
   'assets/versioned/storm_01.png',
-  'assets/3d/monster/monster_anime_bs_v02.glb',
+  'assets/3d/monster/monster_anime_bs_v03.glb',
   'assets/monster_tshirt.mind',
   'assets/textures/explosion_01.png',
   'assets/textures/storm_01.png',

@@ -26,8 +26,8 @@ export function createQualityPolicy({ isMobile = false, forcedProfile = null } =
     }
     if (profile === 'reduced') {
       return {
-        maxPixelRatio: 0.75,
-        maxBufferPixels: 650000,
+        maxPixelRatio: 1.0,
+        maxBufferPixels: 750000,
         ambientParticles: 30,
         sparksPerEffect: 6,
         particleMultiplier: 0.5,
@@ -41,8 +41,8 @@ export function createQualityPolicy({ isMobile = false, forcedProfile = null } =
       };
     }
     return {
-      maxPixelRatio: 1.0,
-      maxBufferPixels: 1000000,
+      maxPixelRatio: 1.5,
+      maxBufferPixels: 1500000,
       ambientParticles: 80,
       sparksPerEffect: 12,
       particleMultiplier: 1.0,
@@ -83,11 +83,19 @@ export function createQualityPolicy({ isMobile = false, forcedProfile = null } =
 
   function computeBufferRatio(width, height, dpr = 1.0) {
     const policy = getPolicy();
+    if (!width || !height || width <= 0 || height <= 0) {
+      return Math.min(dpr, policy.maxPixelRatio);
+    }
     return Math.min(
       dpr,
       policy.maxPixelRatio,
       Math.sqrt(policy.maxBufferPixels / (width * height))
     );
+  }
+
+  function resetHysteresis() {
+    consecutiveHighWindows = 0;
+    consecutiveLowWindows = 0;
   }
 
   return {
@@ -98,6 +106,10 @@ export function createQualityPolicy({ isMobile = false, forcedProfile = null } =
     getPolicy,
     recordWindow,
     computeBufferRatio,
-    setProfile(p) { profile = p; }
+    resetHysteresis,
+    setProfile(p) {
+      profile = p;
+      resetHysteresis();
+    }
   };
 }

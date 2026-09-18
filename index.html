@@ -772,36 +772,6 @@
       backdrop-filter: blur(28px);
       -webkit-backdrop-filter: blur(28px);
     }
-
-    /* 3D Character Large Animation Frame Debug Display */
-    #anim-frame-debug {
-      background: rgba(8, 12, 18, 0.88);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      border: 2px solid rgba(0, 240, 255, 0.85);
-      box-shadow: 0 0 35px rgba(0, 240, 255, 0.35), inset 0 0 15px rgba(0, 240, 255, 0.12);
-      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-    }
-
-    #anim-frame-debug:hover {
-      border-color: #00F0FF;
-      box-shadow: 0 0 45px rgba(0, 240, 255, 0.55), inset 0 0 20px rgba(0, 240, 255, 0.2);
-      transform: scale(1.02);
-    }
-
-    #debug-frame-num {
-      font-size: 3.5rem;
-      line-height: 1;
-      color: #00F0FF;
-      text-shadow: 0 0 16px rgba(0, 240, 255, 0.85), 0 0 32px rgba(0, 240, 255, 0.45);
-      font-family: 'JetBrains Mono', monospace;
-      font-weight: 900;
-      letter-spacing: -0.04em;
-    }
-
-    #anim-frame-debug.giant-mode #debug-frame-num {
-      font-size: 5.5rem;
-    }
   </style>
 </head>
 
@@ -1075,24 +1045,6 @@
           class="pointer-events-auto self-center px-3 py-1 rounded-full bg-black/80 backdrop-blur-md border border-brand/50 text-[10px] sm:text-[11px] font-mono text-white flex items-center gap-2 cursor-pointer shadow-[0_2px_12px_rgba(0,0,0,0.6)] select-none hover:border-brand transition-all">
           <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
           <span id="gesture-text">🦾 POSE AI LOADING...</span>
-        </div>
-
-        <!-- 3D Character Large Animation Frame Debug HUD -->
-        <div id="anim-frame-debug"
-          class="pointer-events-auto self-center flex flex-col items-center justify-center px-4 sm:px-6 py-1.5 sm:py-2 rounded-2xl select-none cursor-pointer mt-0.5"
-          title="Click to toggle between Extra-Large and Standard size">
-          <div class="flex items-center gap-2">
-            <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
-            <span class="text-[9px] sm:text-[11px] font-mono font-bold tracking-widest text-cyan-300 uppercase">3D ANIMATION FRAME</span>
-            <span id="debug-frame-clip" class="text-[9px] sm:text-[11px] font-mono font-bold text-amber-400 tracking-wider">IDLE [1-24]</span>
-          </div>
-          <div class="flex items-baseline gap-1.5 my-0.5">
-            <span class="text-xs sm:text-sm font-mono font-bold text-cyan-300/70">FRAME</span>
-            <span id="debug-frame-num">1</span>
-          </div>
-          <div class="w-full h-1.5 bg-cyan-950/80 rounded-full overflow-hidden border border-cyan-500/30 mt-0.5">
-            <div id="debug-frame-progress" class="h-full bg-gradient-to-r from-cyan-400 to-amber-400 transition-all duration-75" style="width: 4%;"></div>
-          </div>
         </div>
       </div>
 
@@ -1505,79 +1457,31 @@
     // ---------------------------------------------------------------
     const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (window.innerWidth <= 768);
 
+    const qualityPolicyInstance = createQualityPolicy({
+      isMobile: isMobileDevice,
+      forcedProfile: (window.DIAGNOSTIC_QUALITY && window.DIAGNOSTIC_QUALITY !== 'auto') ? window.DIAGNOSTIC_QUALITY : null
+    });
+
     function applyBufferBudget(renderer, container, policy) {
       const width = container ? container.clientWidth : window.innerWidth;
       const height = container ? container.clientHeight : window.innerHeight;
       if (!width || !height) return;
 
-      const ratio = Math.min(
-        window.devicePixelRatio || 1,
-        policy.maxPixelRatio,
-        Math.sqrt(policy.maxBufferPixels / (width * height))
-      );
-
+      const ratio = qualityPolicyInstance.computeBufferRatio(width, height, window.devicePixelRatio || 1);
       renderer.setPixelRatio(ratio);
       renderer.setSize(width, height, false);
     }
 
+    // Adaptive QualityPolicy (delegating directly to src/runtime/quality-policy.mjs: 1.5/1500000 balanced, 1.0/750000 reduced)
     const QualityPolicy = {
-      isMobile: isMobileDevice,
-      forcedProfile: (window.DIAGNOSTIC_QUALITY && window.DIAGNOSTIC_QUALITY !== 'auto') ? window.DIAGNOSTIC_QUALITY : null,
-      profile: (window.DIAGNOSTIC_QUALITY && window.DIAGNOSTIC_QUALITY !== 'auto')
-        ? window.DIAGNOSTIC_QUALITY
-        : (isMobileDevice ? 'balanced' : 'desktop'), // 'desktop', 'balanced', or 'reduced'
-      consecutiveHighWindows: 0,
-      consecutiveLowWindows: 0,
-
-      getPolicy() {
-        if (!this.isMobile) {
-          return {
-            maxPixelRatio: Math.min(window.devicePixelRatio || 1, 2),
-            maxBufferPixels: 2073600, // 1080p
-            ambientParticles: 160,
-            sparksPerEffect: 20,
-            particleMultiplier: 1.0,
-            enableSecondaryLights: true,
-            temporaryEffectLights: true,
-            enableVfxBursts: true,
-            poseCeilingHz: 15,
-            handCeilingHz: 20,
-            trackingFrameMaxEdge: 720,
-            profile: 'desktop'
-          };
-        }
-        if (this.profile === 'reduced') {
-          return {
-            maxPixelRatio: 0.75,
-            maxBufferPixels: 650000,
-            ambientParticles: 30,
-            sparksPerEffect: 6,
-            particleMultiplier: 0.5,
-            enableSecondaryLights: false,
-            temporaryEffectLights: false,
-            enableVfxBursts: true,
-            poseCeilingHz: 6,
-            handCeilingHz: 10,
-            trackingFrameMaxEdge: 480,
-            profile: 'reduced'
-          };
-        }
-        // balanced (default mobile)
-        return {
-          maxPixelRatio: 1.0,
-          maxBufferPixels: 1000000,
-          ambientParticles: 80,
-          sparksPerEffect: 12,
-          particleMultiplier: 1.0,
-          enableSecondaryLights: true,
-          temporaryEffectLights: true,
-          enableVfxBursts: true,
-          poseCeilingHz: 10,
-          handCeilingHz: 15,
-          trackingFrameMaxEdge: 640,
-          profile: 'balanced'
-        };
-      },
+      get isMobile() { return isMobileDevice; },
+      get forcedProfile() { return qualityPolicyInstance.forcedProfile; },
+      get profile() { return qualityPolicyInstance.profile; },
+      get consecutiveHighWindows() { return qualityPolicyInstance.consecutiveHighWindows; },
+      get consecutiveLowWindows() { return qualityPolicyInstance.consecutiveLowWindows; },
+      getPolicy() { return qualityPolicyInstance.getPolicy(); },
+      computeBufferRatio(w, h, dpr) { return qualityPolicyInstance.computeBufferRatio(w, h, dpr); },
+      resetHysteresis() { qualityPolicyInstance.resetHysteresis(); },
 
       applyToRenderer(targetRenderer, targetCamera, targetContainer) {
         if (!targetRenderer) return;
@@ -1598,31 +1502,20 @@
       },
 
       recordWindow(windowStats) {
-        if (!this.isMobile || this.forcedProfile) return;
-        const p90 = windowStats.p90;
-        if (p90 > 40) {
-          this.consecutiveHighWindows++;
-          this.consecutiveLowWindows = 0;
-          if (this.consecutiveHighWindows >= 3 && this.profile !== 'reduced') {
-            this.setProfile('reduced');
-          }
-        } else if (p90 < 30) {
-          this.consecutiveLowWindows++;
-          this.consecutiveHighWindows = 0;
-          if (this.consecutiveLowWindows >= 5 && this.profile !== 'balanced') {
-            this.setProfile('balanced');
-          }
-        } else {
-          this.consecutiveHighWindows = 0;
-          this.consecutiveLowWindows = 0;
+        const prevProfile = qualityPolicyInstance.profile;
+        const newProfile = qualityPolicyInstance.recordWindow(windowStats);
+        if (newProfile && newProfile !== prevProfile) {
+          this.onProfileChanged(newProfile);
         }
       },
 
       setProfile(newProfile) {
         if (this.profile === newProfile) return;
-        this.profile = newProfile;
-        this.consecutiveHighWindows = 0;
-        this.consecutiveLowWindows = 0;
+        qualityPolicyInstance.setProfile(newProfile);
+        this.onProfileChanged(newProfile);
+      },
+
+      onProfileChanged(newProfile) {
         console.log(`⚡ [QualityPolicy] Profile switched to: ${newProfile}`);
 
         if (newProfile === 'reduced') {
@@ -1669,6 +1562,8 @@
       trackingDelegate: window.DIAGNOSTIC_TRACKING_DELEGATE || 'auto',
       diagnosticQuality: window.DIAGNOSTIC_QUALITY || 'auto',
       actualCameraSettings: null,
+      assetUrl: '',
+      transferredBytes: 0,
       lastFrameTime: 0,
       currentWindowStart: performance.now(),
       currentWindowIntervals: [],
@@ -1700,6 +1595,7 @@
         activeWorkers: 0,
         modelDownloadDuration: 0,
         modelParseDuration: 0,
+        modelAttachmentDuration: 0,
         cameraRequestDuration: 0,
         firstVideoFrameDuration: 0,
         firstMarkerDetectionDuration: 0,
@@ -1725,13 +1621,32 @@
         this.lastFrameTime = 0;
         this.currentWindowStart = performance.now();
         this.currentWindowIntervals = [];
-        if (typeof QualityPolicy !== 'undefined') {
+        if (typeof QualityPolicy !== 'undefined' && typeof QualityPolicy.resetHysteresis === 'function') {
+          QualityPolicy.resetHysteresis();
+        } else if (typeof QualityPolicy !== 'undefined') {
           QualityPolicy.consecutiveHighWindows = 0;
           QualityPolicy.consecutiveLowWindows = 0;
         }
       },
       recordMilestone(name, value) {
         this.milestones[name] = value;
+      },
+      recordModelDownload({ url, bytes, duration }) {
+        if (url) this.assetUrl = url;
+        if (typeof bytes === 'number') this.transferredBytes = bytes;
+        if (typeof duration === 'number') this.metrics.modelDownloadDuration = Number(duration.toFixed(1));
+      },
+      recordModelParse(duration) {
+        if (typeof duration === 'number') this.metrics.modelParseDuration = Number(duration.toFixed(1));
+      },
+      recordModelAttachment(duration) {
+        if (typeof duration === 'number') this.metrics.modelAttachmentDuration = Number(duration.toFixed(1));
+      },
+      recordFirstMarkerDetection(duration) {
+        if (typeof duration === 'number') this.metrics.firstMarkerDetectionDuration = Number(duration.toFixed(1));
+      },
+      recordFirstCharacterRender(duration) {
+        if (typeof duration === 'number') this.metrics.firstCharacterRenderDuration = Number(duration.toFixed(1));
       },
       recordFrame(renderer) {
         const now = performance.now();
@@ -1768,7 +1683,7 @@
             this.metrics.drawingBufferHeight = renderer.domElement.height || 0;
           }
           if (typeof renderer.getPixelRatio === 'function') {
-            this.metrics.pixelRatio = renderer.getPixelRatio();
+            this.metrics.pixelRatio = Number(renderer.getPixelRatio().toFixed(2));
           }
         }
       },
@@ -1816,6 +1731,8 @@
       getSnapshot() {
         return {
           buildSha: this.buildSha,
+          assetUrl: this.assetUrl,
+          transferredBytes: this.transferredBytes,
           cameraProfile: this.cameraProfile,
           actualCameraSettings: this.actualCameraSettings,
           trackingDelegate: this.trackingDelegate,
@@ -1836,6 +1753,7 @@
         const snap = PerformanceDiagnostics.getSnapshot();
         console.group('⏱️ WebAR Diagnostics & Performance Snapshot');
         console.log('Build SHA:', snap.buildSha);
+        console.log('Asset URL:', snap.assetUrl, `(${snap.transferredBytes ? (snap.transferredBytes / 1024 / 1024).toFixed(2) + ' MB' : '0 MB'})`);
         console.log('Diagnostic Controls:', {
           cameraProfile: snap.cameraProfile,
           actualCameraSettings: snap.actualCameraSettings,
@@ -1843,10 +1761,13 @@
           diagnosticQuality: snap.diagnosticQuality,
           qualityProfile: snap.qualityProfile
         });
-        console.table(snap.marks);
-        if (snap.measures.length > 0) {
-          console.table(snap.measures);
-        }
+        console.log('Loading & Readiness Timings (ms):', {
+          modelDownload: snap.modelDownloadDuration,
+          modelParse: snap.modelParseDuration,
+          modelAttachment: snap.modelAttachmentDuration,
+          firstMarkerDetection: snap.firstMarkerDetectionDuration,
+          firstCharacterRender: snap.firstCharacterRenderDuration
+        });
         console.log('Rendering Metrics:', {
           fps: snap.medianFps,
           medianIntervalMs: snap.medianFrameInterval,
@@ -1859,6 +1780,12 @@
           activeLoops: snap.activeLoops,
           activeWorkers: snap.activeWorkers
         });
+        if (snap.marks.length > 0) {
+          console.table(snap.marks);
+        }
+        if (snap.measures.length > 0) {
+          console.table(snap.measures);
+        }
         console.groupEnd();
       } catch (e) {}
     }
@@ -2016,9 +1943,9 @@
       // Target AR Marker compiled file (generated from assets/monster_tshirt.jpg)
       targetUrl: ASSET_CFG.targetMarker || "assets/versioned/monster_tshirt.mind",
 
-      // 3D Character model: Primary is lossless EXT_meshopt compressed (1.64 MB, 50% lighter), with fallback
-      modelUrl: ASSET_CFG.monsterModel || "assets/versioned/monster_anime_bs_v02.b016e6cc.opt.glb",
-      fallbackModelUrl: "assets/3d/monster/monster_anime_bs_v02.glb",
+      // 3D Character model: Primary is lossless EXT_meshopt compressed (1.25 MB, optimized), with fallback
+      modelUrl: ASSET_CFG.monsterModel || "assets/versioned/monster_anime_bs_v03.d04648be50cd3135.opt.glb",
+      fallbackModelUrl: "assets/3d/monster/monster_anime_bs_v03.glb",
       explosionTextureUrl: ASSET_CFG.explosionTexture || "assets/versioned/explosion_01.png",
       stormTextureUrl: ASSET_CFG.stormTexture || "assets/versioned/storm_01.png",
       poseModelUrl: ASSET_CFG.poseModel || "assets/models/pose_landmarker_lite.task",
@@ -2270,9 +2197,17 @@
         clearTimeout(timeoutId);
 
         performance.mark('model-download-end');
+        let downloadDuration = 0;
         try {
-          performance.measure('model-download', 'model-download-start', 'model-download-end');
+          const m = performance.measure('model-download', 'model-download-start', 'model-download-end');
+          downloadDuration = m ? m.duration : 0;
         } catch (e) {}
+
+        PerformanceDiagnostics.recordModelDownload({
+          url,
+          bytes: arrayBuffer.byteLength,
+          duration: downloadDuration
+        });
 
         performance.mark('model-parse-start');
         if (els.progressText) els.progressText.textContent = 'PARSING 3D CHARACTER…';
@@ -2289,9 +2224,13 @@
         });
 
         performance.mark('model-parse-end');
+        let parseDuration = 0;
         try {
-          performance.measure('model-parse', 'model-parse-start', 'model-parse-end');
+          const m = performance.measure('model-parse', 'model-parse-start', 'model-parse-end');
+          parseDuration = m ? m.duration : 0;
         } catch (e) {}
+
+        PerformanceDiagnostics.recordModelParse(parseDuration);
 
         sharedGltf = gltf;
         preloadedGLTF = gltf;
@@ -2456,14 +2395,30 @@
       session.firstCharacterVisible = true;
       isFirstCharacterVisible = true;
       performance.mark(`character-visible-${session.id}`);
+      let renderDur = 0;
       try {
         const start = modeEntryMark !== null ? modeEntryMark : 0;
         performance.measure(`time-to-first-character-${session.id}`, { start, end: `character-visible-${session.id}` });
+        const m = performance.getEntriesByName(`time-to-first-character-${session.id}`).pop();
+        renderDur = m ? m.duration : (performance.now() - start);
       } catch (e) {
         try {
           performance.measure('time-to-first-character');
-        } catch (e2) {}
+          const m = performance.getEntriesByName('time-to-first-character').pop();
+          renderDur = m ? m.duration : performance.now();
+        } catch (e2) {
+          renderDur = performance.now();
+        }
       }
+      PerformanceDiagnostics.recordFirstCharacterRender(renderDur);
+
+      // Defer decorative software plate creation and logo texture work until after first character render
+      setTimeout(() => {
+        const parent = isSimulatorMode ? simMonster : monsterModel;
+        if (parent && typeof ensurePlanesModelAttached === 'function') {
+          ensurePlanesModelAttached(parent);
+        }
+      }, 0);
 
       if (window.DEBUG_PERFORMANCE) {
         logPerformanceSummary();
@@ -2601,6 +2556,12 @@
     function setSoftwarePlatesEnabled(enabled) {
       arePlanesManuallyHidden = !enabled;
       targetPlaneOpacity = areSoftwarePlatesVisible() ? 0.88 : 0;
+      if (enabled) {
+        const parent = isSimulatorMode ? simMonster : monsterModel;
+        if (parent && typeof ensurePlanesModelAttached === 'function') {
+          ensurePlanesModelAttached(parent);
+        }
+      }
       if (!enabled) {
         isPlaneInteractionActive = false;
         resetAllPlanes();
@@ -3663,33 +3624,52 @@
       material.needsUpdate = true;
     }
 
+    function setupCharacterMaterials(model, targetRenderer) {
+      if (!model) return;
+      const maxAniso = (targetRenderer && targetRenderer.capabilities && typeof targetRenderer.capabilities.getMaxAnisotropy === 'function')
+        ? Math.min(4, targetRenderer.capabilities.getMaxAnisotropy())
+        : 4;
+
+      model.traverse((child) => {
+        if (child.isMesh) {
+          child.frustumCulled = false;
+          child.castShadow = false;
+          child.receiveShadow = false;
+          if (child.material) {
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            mats.forEach(mat => {
+              // Preserve GLTFLoader authored roughness, metalness, transparency, sidedness, and colorspaces.
+              // Apply texture anisotropy and mipmaps on all assigned texture channels.
+              ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap'].forEach(slot => {
+                const tex = mat[slot];
+                if (tex && tex.isTexture) {
+                  tex.anisotropy = maxAniso;
+                  tex.generateMipmaps = true;
+                  tex.minFilter = THREE.LinearMipmapLinearFilter;
+                  tex.magFilter = THREE.LinearFilter;
+                  tex.needsUpdate = true;
+                }
+              });
+              mat.depthTest = true;
+              mat.depthWrite = true;
+              mat.needsUpdate = true;
+            });
+          }
+        }
+      });
+    }
+
     function attachMonsterModel(group) {
       const instantiateModel = (gltf) => {
+        performance.mark('model-attach-start');
         if (!window.SkeletonUtils || typeof window.SkeletonUtils.clone !== 'function') {
           throw new Error('[AR] SkeletonUtils.clone is required for skinned character instantiation');
         }
         monsterModel = window.SkeletonUtils.clone(gltf.scene);
         cachedArRootBone = monsterModel.getObjectByName('C_root');
 
-        monsterModel.traverse((child) => {
-          if (child.isMesh) {
-            child.frustumCulled = false;
-            child.castShadow = false;
-            child.receiveShadow = false;
-            if (child.material) {
-              applyMatteMaterial(child.material);
-              child.material.side = THREE.FrontSide;
-              child.material.transparent = false;
-              child.material.depthWrite = true;
-              child.material.depthTest = true;
-              child.material.needsUpdate = true;
-              if (isMobileDevice) {
-                child.material.precision = 'mediump';
-                child.material.dithering = false;
-              }
-            }
-          }
-        });
+        // Restore authored character materials & configure texture anisotropy
+        setupCharacterMaterials(monsterModel, renderer);
 
         // Auto-scale and center using exact model bounding box
         const box = new THREE.Box3().setFromObject(monsterModel);
@@ -3769,6 +3749,14 @@
             console.log('[AR] Animation sequence initialized: Idle [1-24], React [25-72], LeftArmUp [73-80], LeftArmDown [81-116], RightArmUp [117-125], RightArmDown [126-160]');
           }
         }
+
+        performance.mark('model-attach-end');
+        let attachDur = 0;
+        try {
+          const m = performance.measure('model-attach', 'model-attach-start', 'model-attach-end');
+          attachDur = m ? m.duration : 0;
+        } catch (e) {}
+        PerformanceDiagnostics.recordModelAttachment(attachDur);
 
         console.log('[AR] 3D Monster attached. Garment Pos:', monsterGarmentPos, 'Scale:', modelScale);
         showToast('3D Monster Model Active ✨');
@@ -4106,6 +4094,7 @@
           opacity: currentPlaneOpacity,
           depthWrite: false
         });
+        applyMatteMaterial(bodyMat);
         const bodyMesh = new THREE.Mesh(bevelGeo, bodyMat);
         bodyMesh.castShadow = false;
         bodyMesh.receiveShadow = false;
@@ -4152,6 +4141,7 @@
           // The raycast target stays tappable while the plate floats and rotates.
           side: THREE.DoubleSide
         });
+        applyMatteMaterial(frontMat);
 
         const frontGeo = new THREE.CircleGeometry(plateRadius - 0.002, 48);
         const frontMesh = new THREE.Mesh(frontGeo, frontMat);
@@ -4193,6 +4183,23 @@
       group.userData.buttons = buttons;
       planesModel = group;
       return group;
+    }
+
+    function ensurePlanesModelAttached(parent) {
+      if (!planesModel) {
+        create3DButtonsGroup();
+      }
+      if (planesModel && parent) {
+        if (planesModel.parent && planesModel.parent !== parent) {
+          planesModel.parent.remove(planesModel);
+        }
+        planesModel.position.set(0, 0, 0);
+        planesModel.rotation.set(0, 0, 0);
+        planesModel.scale.set(1, 1, 1);
+        planesModel.visible = (isSimulatorMode || isTargetLocked) && areSoftwarePlatesVisible();
+        parent.add(planesModel);
+        isPlaneInteractionActive = areSoftwarePlatesVisible();
+      }
     }
 
     let isPanicActive = false;
@@ -5055,7 +5062,7 @@
     }
 
     // ---------------------------------------------------------------
-    // 3D Character Animation Frame Debug HUD
+    // 3D Character Animation State & Diagnostics
     // ---------------------------------------------------------------
     function getCharacterAnimationFrame(activeMixer) {
       const ctrl = getActiveAnimationController();
@@ -5065,34 +5072,13 @@
       return null;
     }
 
-    let debugFrameNumEl = null;
-    let debugFrameClipEl = null;
-    let debugFrameProgEl = null;
-    let lastRenderedDebugFrame = -1;
-    let lastRenderedDebugClip = '';
-
-    function updateAnimationFrameDebugUI(ctrlOrMixer) {
-      if (!debugFrameNumEl) {
-        debugFrameNumEl = document.getElementById('debug-frame-num');
-        debugFrameClipEl = document.getElementById('debug-frame-clip');
-        debugFrameProgEl = document.getElementById('debug-frame-progress');
-      }
-      if (!debugFrameNumEl) return;
-
+    function syncAnimationControllerUI(ctrlOrMixer) {
       const ctrl = (ctrlOrMixer && typeof ctrlOrMixer.getDebugState === 'function')
         ? ctrlOrMixer
         : getActiveAnimationController();
 
       const info = ctrl ? ctrl.getDebugState() : null;
-      if (!info) {
-        if (lastRenderedDebugFrame !== 0) {
-          lastRenderedDebugFrame = 0;
-          debugFrameNumEl.textContent = '--';
-          if (debugFrameClipEl) debugFrameClipEl.textContent = 'WAITING FOR 3D MODEL';
-          if (debugFrameProgEl) debugFrameProgEl.style.width = '0%';
-        }
-        return;
-      }
+      if (!info) return;
 
       // Sync UI state reactively with controller state
       if (info.state === 'reaction') {
@@ -5120,35 +5106,11 @@
         isRightArmCurrentlyUp = true;
         isLeftArmCurrentlyUp = false;
       }
-
-      if (info.frame !== lastRenderedDebugFrame) {
-        lastRenderedDebugFrame = info.frame;
-        debugFrameNumEl.textContent = String(info.frame);
-      }
-
-      const clipLabel = `${info.clipName} ${info.rangeText}`.trim();
-      if (clipLabel !== lastRenderedDebugClip) {
-        lastRenderedDebugClip = clipLabel;
-        if (debugFrameClipEl) debugFrameClipEl.textContent = clipLabel;
-      }
-
-      if (debugFrameProgEl) {
-        debugFrameProgEl.style.width = `${Math.round(info.progress * 100)}%`;
-      }
     }
 
     window.getCurrentAnimationFrame = function () {
       return getCharacterAnimationFrame();
     };
-
-    (function wireAnimFrameDebugToggle() {
-      const box = document.getElementById('anim-frame-debug');
-      if (!box) return;
-      box.addEventListener('click', () => {
-        const isGiant = box.classList.toggle('giant-mode');
-        showToast(isGiant ? '🔍 Frame Display: EXTRA LARGE (88px)' : '🔍 Frame Display: STANDARD LARGE (56px)');
-      });
-    })();
 
     function toggleButtonState(targetMesh) {
       if (!targetMesh) return false;
@@ -6559,10 +6521,10 @@
 
       if (arAnimationController) {
         arAnimationController.update(elapsed);
-        updateAnimationFrameDebugUI(arAnimationController);
+        syncAnimationControllerUI(arAnimationController);
       } else if (mixer) {
         mixer.update(elapsed);
-        updateAnimationFrameDebugUI(mixer);
+        syncAnimationControllerUI(mixer);
       }
 
       // Character is aligned to the shirt marker, not to the camera
@@ -6817,28 +6779,16 @@
 
       // Load Model
       function setupSimModel(gltf) {
+        performance.mark('model-attach-start');
         if (!window.SkeletonUtils || typeof window.SkeletonUtils.clone !== 'function') {
           throw new Error('[Simulator] SkeletonUtils.clone is required for skinned character instantiation');
         }
         simMonster = window.SkeletonUtils.clone(gltf.scene);
         cachedSimRootBone = simMonster.getObjectByName('C_root');
-        simMonster.traverse(child => {
-          if (child.isMesh) {
-            child.frustumCulled = false;
-            if (child.material) {
-              applyMatteMaterial(child.material);
-              child.material.side = THREE.FrontSide;
-              child.material.transparent = false;
-              child.material.depthWrite = true;
-              child.material.depthTest = true;
-              child.material.needsUpdate = true;
-              if (isMobileDevice) {
-                child.material.precision = 'mediump';
-                child.material.dithering = false;
-              }
-            }
-          }
-        });
+
+        // Restore authored character materials & configure texture anisotropy
+        setupCharacterMaterials(simMonster, simRenderer);
+
         const box = new THREE.Box3().setFromObject(simMonster);
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
@@ -6888,19 +6838,19 @@
         }
         modelGroup.add(simMonster);
 
-        // Setup procedural 3D buttons in simulator directly in front of the 3D character
-        function setupSimPlanes() {
-          create3DButtonsGroup();
-          planesModel.position.set(0, 0, 0);
-          planesModel.rotation.set(0, 0, 0);
-          planesModel.scale.set(1, 1, 1);
-          planesModel.visible = areSoftwarePlatesVisible();
-          simMonster.add(planesModel);
-          isPlaneInteractionActive = areSoftwarePlatesVisible();
-          console.log('[3D Buttons] Attached procedural 3D software plates directly to simMonster');
+        performance.mark('model-attach-end');
+        let attachDur = 0;
+        try {
+          const m = performance.measure('model-attach', 'model-attach-start', 'model-attach-end');
+          attachDur = m ? m.duration : 0;
+        } catch (e) {}
+        PerformanceDiagnostics.recordModelAttachment(attachDur);
+
+        // Attach planes if already initialized; otherwise deferred until first render
+        if (planesModel) {
+          ensurePlanesModelAttached(simMonster);
         }
 
-        setupSimPlanes();
         showToast('3D Monster Active — Drag to rotate!');
         updateCharacterLoadingUI(false);
       }
@@ -6972,10 +6922,10 @@
 
         if (simAnimationController) {
           simAnimationController.update(elapsed);
-          updateAnimationFrameDebugUI(simAnimationController);
+          syncAnimationControllerUI(simAnimationController);
         } else if (simMixer) {
           simMixer.update(elapsed);
-          updateAnimationFrameDebugUI(simMixer);
+          syncAnimationControllerUI(simMixer);
         }
 
         // Character is aligned to the marker / turntable platform

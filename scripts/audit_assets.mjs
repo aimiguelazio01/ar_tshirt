@@ -8,9 +8,18 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 // Setup global environment for loaders in Node
 global.self = global;
 
-const SOURCE_GLB = 'assets/3d/monster/monster_anime_bs_v02.glb';
-const RAW_BACKUP_GLB = 'assets/3d/monster/monster_anime_bs_v02_raw_backup.glb';
-const OPT_GLB = 'assets/versioned/monster_anime_bs_v02.opt.glb';
+export const SOURCE_GLB = 'assets/3d/monster/monster_anime_bs_v03.glb';
+export const RAW_BACKUP_GLB = 'assets/3d/monster/monster_anime_bs_v02_raw_backup.glb';
+
+export function getOptimizedGLBPath() {
+  if (fs.existsSync('assets/versioned')) {
+    const file = fs.readdirSync('assets/versioned').find(f => f.startsWith('monster_anime_bs_v03') && f.endsWith('.opt.glb'));
+    if (file) return path.join('assets/versioned', file);
+  }
+  return 'assets/versioned/monster_anime_bs_v03.opt.glb';
+}
+
+export const OPT_GLB = getOptimizedGLBPath();
 
 const EXPECTED_MORPH_TARGETS = [
   'monster.smile',

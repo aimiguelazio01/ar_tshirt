@@ -78,10 +78,12 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     assert.ok(!html.toLowerCase().includes('monster graphic tee'), 'Old product label must be removed');
   });
 
-  await t.test('0f. Character and software plates use matte materials', () => {
+  await t.test('0f. Authored character materials preserved and software plates use matte materials', () => {
     const html = fs.readFileSync('index.html', 'utf8');
     assert.match(html, /function applyMatteMaterial\(material\)/, 'Matte material helper must be present');
-    assert.ok((html.match(/applyMatteMaterial\(child\.material\)/g) || []).length >= 2, 'AR and simulator character materials must be matte');
+    assert.ok(!html.includes('applyMatteMaterial(child.material)'), 'Character must not overwrite authored materials with matte');
+    assert.match(html, /setupCharacterMaterials\(monsterModel, renderer\)/, 'AR character must configure authored materials');
+    assert.match(html, /setupCharacterMaterials\(simMonster, simRenderer\)/, 'Simulator character must configure authored materials');
     assert.match(html, /roughness: 1,\s*\n\s*metalness: 0,/, 'Floating plate materials must disable glossy reflections');
   });
 
@@ -532,10 +534,13 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     const qpMobile = createQualityPolicy({ isMobile: true });
     assert.equal(qpMobile.profile, 'balanced');
 
-    // Balanced ratio at 1080x1920
+    // Balanced ratio at 1080x1920 (maxPixelRatio 1.5, maxBufferPixels 1.5M)
     const ratioBalanced = qpMobile.computeBufferRatio(1080, 1920, 2.0);
-    assert.ok(ratioBalanced <= 1.0, 'Ratio must not exceed balanced maxPixelRatio (1.0)');
-    assert.ok(ratioBalanced * 1080 * ratioBalanced * 1920 <= 1000000 * 1.01, 'Buffer pixels respect 1M budget');
+    assert.ok(ratioBalanced <= 1.5, 'Ratio must not exceed balanced maxPixelRatio (1.5)');
+    assert.ok(ratioBalanced * 1080 * ratioBalanced * 1920 <= 1500000 * 1.01, 'Buffer pixels respect 1.5M budget');
+
+    // Zero-sized container protection
+    assert.equal(qpMobile.computeBufferRatio(0, 0, 2.0), 1.5, 'Zero-sized container returns maxPixelRatio');
 
     // 3 high windows trigger downgrade
     qpMobile.recordWindow({ p90: 45 });
@@ -545,10 +550,10 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     assert.equal(downgraded, 'reduced');
     assert.equal(qpMobile.profile, 'reduced');
 
-    // Reduced ratio respects reduced budget (650k)
+    // Reduced ratio respects reduced budget (750k, maxPixelRatio 1.0)
     const ratioReduced = qpMobile.computeBufferRatio(1080, 1920, 2.0);
-    assert.ok(ratioReduced <= 0.75, 'Ratio must not exceed reduced maxPixelRatio (0.75)');
-    assert.ok(ratioReduced * 1080 * ratioReduced * 1920 <= 650000 * 1.01, 'Buffer pixels respect 650k budget');
+    assert.ok(ratioReduced <= 1.0, 'Ratio must not exceed reduced maxPixelRatio (1.0)');
+    assert.ok(ratioReduced * 1080 * ratioReduced * 1920 <= 750000 * 1.01, 'Buffer pixels respect 750k budget');
 
     // 5 low windows restore to balanced
     for (let i = 0; i < 4; i++) qpMobile.recordWindow({ p90: 25 });
@@ -556,6 +561,12 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     const restored = qpMobile.recordWindow({ p90: 25 });
     assert.equal(restored, 'balanced');
     assert.equal(qpMobile.profile, 'balanced');
+
+    // Reset hysteresis resets window counts
+    qpMobile.recordWindow({ p90: 45 });
+    assert.equal(qpMobile.consecutiveHighWindows, 1);
+    qpMobile.resetHysteresis();
+    assert.equal(qpMobile.consecutiveHighWindows, 0);
 
     // Forced quality policy locks profile
     const qpForced = createQualityPolicy({ isMobile: true, forcedProfile: 'reduced' });

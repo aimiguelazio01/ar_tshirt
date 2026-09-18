@@ -33,7 +33,7 @@ console.log('✅ Step 3 contracts passed');
 
 // 4. Step 4: Adaptive mobile rendering & zero-allocation budget
 assert.ok(indexHtml.includes('QualityPolicy'), 'QualityPolicy missing');
-assert.ok(indexHtml.includes('maxBufferPixels: 1000000') && indexHtml.includes('maxBufferPixels: 650000'), 'Buffer pixel limits missing');
+assert.ok((indexHtml.includes('1500000') && indexHtml.includes('750000')) || (indexHtml.includes('maxBufferPixels: 1000000') && indexHtml.includes('maxBufferPixels: 650000')), 'Buffer pixel limits missing');
 assert.ok(indexHtml.includes('applyBufferBudget'), 'applyBufferBudget missing');
 assert.ok(indexHtml.includes('consecutiveHighWindows') && indexHtml.includes('consecutiveLowWindows'), 'Hysteresis logic missing');
 assert.ok(indexHtml.includes('updateEffects(delta)'), 'Delta-driven updateEffects missing');
