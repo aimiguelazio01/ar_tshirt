@@ -1410,8 +1410,8 @@
     const isDebugPerformance = urlParams.get('debugPerformance') === '1';
     window.DEBUG_PERFORMANCE = isDebugPerformance;
 
-    // Independent bottleneck isolation switches (MediaPipe enabled by default for interactive gestures)
-    window.DISABLE_MEDIAPIPE = urlParams.get('noMediaPipe') === '1' || urlParams.get('disableMediaPipe') === '1';
+    // Independent bottleneck isolation switches (MediaPipe disabled by default for maximum mobile speed & zero startup freeze)
+    window.DISABLE_MEDIAPIPE = urlParams.get('enableMediaPipe') === '1' ? false : true;
     window.DISABLE_POSE = window.DISABLE_MEDIAPIPE || urlParams.get('noPose') === '1';
     window.DISABLE_HANDS = true; // MediaPipe hand tracking removed; only MediaPipe arms (pose) are used
     window.DISABLE_VFX = urlParams.get('noVfx') === '1';
@@ -2406,13 +2406,13 @@
       }
       PerformanceDiagnostics.recordFirstCharacterRender(renderDur);
 
-      // Defer decorative software plate creation and logo texture work until after first character render
+      // Defer decorative software plate creation until after initial character animation has begun
       setTimeout(() => {
         const parent = isSimulatorMode ? simMonster : monsterModel;
         if (parent && typeof ensurePlanesModelAttached === 'function') {
           ensurePlanesModelAttached(parent);
         }
-      }, 0);
+      }, 150);
 
       if (window.DEBUG_PERFORMANCE) {
         logPerformanceSummary();
@@ -2435,8 +2435,10 @@
       session.optionalFeaturesStarted = true;
       optionalFeaturesStarted = true;
 
-      // Wait for an actual browser presentation opportunity after first visible render
-      requestAnimationFrame(() => {
+      if (window.DISABLE_MEDIAPIPE && window.DISABLE_VFX) return;
+
+      // Defer background optional feature initialization until animation is well underway
+      setTimeout(() => {
         requestAnimationFrame(async () => {
           if (!isCurrent(session)) return;
 
@@ -2445,10 +2447,12 @@
             ...(!window.DISABLE_HANDS ? ['hand'] : [])
           ];
 
-          try {
-            await ensureTrackingReady({ session, enabledTasks });
-          } catch (e) {
-            console.warn('[Queue] Tracking ready error:', e);
+          if (enabledTasks.length > 0) {
+            try {
+              await ensureTrackingReady({ session, enabledTasks });
+            } catch (e) {
+              console.warn('[Queue] Tracking ready error:', e);
+            }
           }
 
           if (!isCurrent(session)) return;
@@ -2466,7 +2470,7 @@
             }
           }
         });
-      });
+      }, 1500);
     }
 
     let isPageVisible = true;
@@ -3771,6 +3775,11 @@
           }
         }
 
+        // Pre-compile character shaders in GPU cache before first frame render
+        if (renderer && typeof renderer.compile === 'function') {
+          try { renderer.compile(scene, camera); } catch (e) {}
+        }
+
         performance.mark('model-attach-end');
         let attachDur = 0;
         try {
@@ -4091,7 +4100,7 @@
       const extrudeSettings = {
         depth: 0.018,
         bevelEnabled: true,
-        bevelSegments: 8,
+        bevelSegments: 3,
         steps: 1,
         bevelSize: 0.008,
         bevelThickness: 0.006
@@ -4164,7 +4173,7 @@
         });
         applyMatteMaterial(frontMat);
 
-        const frontGeo = new THREE.CircleGeometry(plateRadius - 0.002, 48);
+        const frontGeo = new THREE.CircleGeometry(plateRadius - 0.002, 32);
         const frontMesh = new THREE.Mesh(frontGeo, frontMat);
         frontMesh.position.z = 0.018 / 2 + 0.003;
         frontMesh.name = cfg.title;
@@ -6796,6 +6805,11 @@
 
             console.log('[Simulator] Animation sequence initialized: Idle [1-24], React [25-72], LeftArmUp [73-80], LeftArmDown [81-116], RightArmUp [117-125], RightArmDown [126-160]');
           }
+        }
+
+        // Pre-compile simulator character shaders in GPU cache before first frame render
+        if (simRenderer && typeof simRenderer.compile === 'function') {
+          try { simRenderer.compile(simScene, simCamera); } catch (e) {}
         }
         modelGroup.add(simMonster);
 
