@@ -2533,13 +2533,13 @@
     const GESTURE_DEBOUNCE_MS = 70;
 
     function areSoftwarePlatesVisible() {
-      return !arePlanesDisappeared && !arePlanesManuallyHidden;
+      return !arePlanesManuallyHidden;
     }
 
     function updateSoftwarePlatesToggleButton() {
       const btn = els.btnTogglePlates;
       if (!btn) return;
-      const isEnabled = !arePlanesManuallyHidden;
+      const isEnabled = areSoftwarePlatesVisible();
       const label = isEnabled ? 'Hide Software Plates' : 'Show Software Plates';
       btn.title = label;
       btn.setAttribute('aria-label', label);
@@ -2549,15 +2549,33 @@
 
     function setSoftwarePlatesEnabled(enabled) {
       arePlanesManuallyHidden = !enabled;
+      arePlanesDisappeared = false;
       targetPlaneOpacity = areSoftwarePlatesVisible() ? 0.88 : 0;
+      currentPlaneOpacity = targetPlaneOpacity;
+      const parent = isSimulatorMode ? simMonster : (monsterModel || (anchor && anchor.group));
       if (enabled) {
-        const parent = isSimulatorMode ? simMonster : monsterModel;
         if (parent && typeof ensurePlanesModelAttached === 'function') {
           ensurePlanesModelAttached(parent);
         }
-      }
-      if (!enabled) {
+        if (planesModel) {
+          planesModel.visible = (isSimulatorMode || isTargetLocked);
+          isPlaneInteractionActive = planesModel.visible;
+          if (planesModel.userData && planesModel.userData.buttons) {
+            planesModel.userData.buttons.forEach((btn) => {
+              if (btn.userData.materials) {
+                btn.userData.materials.forEach(mat => {
+                  mat.opacity = 0.88;
+                  mat.transparent = true;
+                });
+              }
+            });
+          }
+        }
+      } else {
         isPlaneInteractionActive = false;
+        if (planesModel) {
+          planesModel.visible = false;
+        }
         resetAllPlanes();
         clearActivePlane();
       }
@@ -5245,7 +5263,7 @@
             });
             isPoseTrackerReady = true;
             console.log(`[PoseTracking] Successfully initialized with ${config.delegate} (${config.model})`);
-            updateGestureHUD(!arePlanesDisappeared);
+            updateGestureHUD();
             return poseLandmarker;
           } catch (err) {
             console.warn(`[PoseTracking] ${config.delegate} failed for ${config.model}:`, err);
@@ -5499,28 +5517,6 @@
           setActivePlane(hits[0].object);
         } else {
           clearActivePlane();
-        }
-      }
-
-      // When arms are raised -> planes become INVISIBLE.
-      // When arms are down -> planes become VISIBLE.
-      if (isPoseSatisfied) {
-        if (!handRaisedStartTime) handRaisedStartTime = now;
-        handLoweredStartTime = 0;
-        if ((now - handRaisedStartTime) >= GESTURE_DEBOUNCE_MS && !arePlanesDisappeared) {
-          arePlanesDisappeared = true;
-          targetPlaneOpacity = 0.0;
-          console.log('[PoseTracking] Arms raised above shoulders -> hiding planes');
-          updateGestureHUD(isRightUp ? 'right' : (isLeftUp ? 'left' : null), true);
-        }
-      } else {
-        if (!handLoweredStartTime) handLoweredStartTime = now;
-        handRaisedStartTime = 0;
-        if ((now - handLoweredStartTime) >= GESTURE_DEBOUNCE_MS && arePlanesDisappeared) {
-          arePlanesDisappeared = false;
-          targetPlaneOpacity = areSoftwarePlatesVisible() ? 0.88 : 0;
-          console.log('[PoseTracking] Arms down -> updating plate visibility');
-          updateGestureHUD(null, false);
         }
       }
     }
@@ -7560,6 +7556,7 @@
       if (els.btnTogglePlates) {
         els.btnTogglePlates.addEventListener('click', (e) => {
           e.stopPropagation();
+          e.preventDefault();
           setSoftwarePlatesEnabled(arePlanesManuallyHidden);
         });
         updateSoftwarePlatesToggleButton();
