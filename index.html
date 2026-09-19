@@ -3673,25 +3673,9 @@
       const lightContainer = scene || group;
       lightContainer.add(createNeutralCharacterLighting());
 
-      // 2. Particle field: Allocate capacity once, use setDrawRange for active ambient particles
-      const MAX_PARTICLES = 220;
-      const policy = (typeof QualityPolicy !== 'undefined') ? QualityPolicy.getPolicy() : { ambientParticles: 80 };
-      const positions = new Float32Array(MAX_PARTICLES * 3);
-      particleVelocities = new Float32Array(MAX_PARTICLES * 3);
-      for (let i = 0; i < MAX_PARTICLES; i++) {
-        positions[i * 3 + 0] = (Math.random() - 0.5) * 1.5;
-        positions[i * 3 + 1] = (Math.random() - 0.5) * 1.5;
-        positions[i * 3 + 2] = Math.random() * 0.8;
-        particleVelocities[i * 3 + 0] = (Math.random() - 0.5) * 0.002;
-        particleVelocities[i * 3 + 1] = Math.random() * 0.003 + 0.0008;
-        particleVelocities[i * 3 + 2] = 0;
-      }
-      const pGeo = new THREE.BufferGeometry();
-      pGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      pGeo.setDrawRange(0, policy.ambientParticles);
-      const pMat = new THREE.PointsMaterial({ color: 0xfff2d6, size: 0.015, transparent: true, opacity: 0.85 });
-      particleSystem = new THREE.Points(pGeo, pMat);
-      group.add(particleSystem);
+      // 2. Ambient white particles removed per user request
+      particleSystem = null;
+      particleVelocities = null;
 
       // 3. Attach 3D Monster Model
       attachMonsterModel(group);
@@ -3733,7 +3717,18 @@
           if (child.material) {
             const mats = Array.isArray(child.material) ? child.material : [child.material];
             mats.forEach(mat => {
-              // Preserve GLTFLoader authored roughness, metalness, transparency, sidedness, and colorspaces.
+              // Eliminate character glossiness: full matte roughness without specular reflection
+              mat.roughness = 1.0;
+              mat.metalness = 0.0;
+              if ('clearcoat' in mat) mat.clearcoat = 0;
+              if ('clearcoatRoughness' in mat) mat.clearcoatRoughness = 1;
+              if ('sheen' in mat) mat.sheen = 0;
+              if ('specularIntensity' in mat) mat.specularIntensity = 0;
+              if ('envMapIntensity' in mat) mat.envMapIntensity = 0;
+              if ('roughnessMap' in mat) mat.roughnessMap = null;
+              if ('metalnessMap' in mat) mat.metalnessMap = null;
+
+              // Preserve GLTFLoader authored transparency, sidedness, and colorspaces.
               // Apply texture anisotropy and mipmaps on all assigned texture channels.
               ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap'].forEach(slot => {
                 const tex = mat[slot];
@@ -6799,26 +6794,8 @@
       simScene.add(modelGroup);
       simInteractionRoot = modelGroup;
 
-      // Floating particles
-      // Floating particles: Allocate capacity once, use setDrawRange for active ambient particles
-      const MAX_SIM_PARTICLES = 220;
-      const simPolicy = (typeof QualityPolicy !== 'undefined') ? QualityPolicy.getPolicy() : { ambientParticles: 80 };
-      const positions = new Float32Array(MAX_SIM_PARTICLES * 3);
-      const vels = new Float32Array(MAX_SIM_PARTICLES * 3);
-      for (let i = 0; i < MAX_SIM_PARTICLES; i++) {
-        positions[i * 3 + 0] = (Math.random() - 0.5) * 3;
-        positions[i * 3 + 1] = (Math.random() - 0.5) * 3;
-        positions[i * 3 + 2] = (Math.random() - 0.5) * 1.5;
-        vels[i * 3 + 0] = (Math.random() - 0.5) * 0.001;
-        vels[i * 3 + 1] = Math.random() * 0.002 + 0.0005;
-        vels[i * 3 + 2] = 0;
-      }
-      const pGeo = new THREE.BufferGeometry();
-      pGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      pGeo.setDrawRange(0, simPolicy.ambientParticles);
-      const pMat = new THREE.PointsMaterial({ color: 0xffb020, size: 0.018, transparent: true, opacity: 0.8 });
-      simParticleSystem = new THREE.Points(pGeo, pMat);
-      simScene.add(simParticleSystem);
+      // Floating particles removed per user request
+      simParticleSystem = null;
 
       // Load Model
       function setupSimModel(gltf) {
@@ -6988,18 +6965,20 @@
         const decorativeDelta = Math.min(elapsed, 0.05);
 
         // Update ambient particles based on QualityPolicy drawRange and delta time
-        const simPolicy = (typeof QualityPolicy !== 'undefined') ? QualityPolicy.getPolicy() : null;
-        const simActiveCount = simPolicy ? Math.min(simPolicy.ambientParticles || 80, 220) : 80;
-        const pos = pGeo.attributes.position;
-        const arr = pos.array;
-        const dtFactor = decorativeDelta * 60;
-        for (let i = 0; i < simActiveCount; i++) {
-          const idxY = i * 3 + 1;
-          let y = arr[idxY] + vels[idxY] * dtFactor;
-          if (y > 1.5) y = -1.5;
-          arr[idxY] = y;
+        if (simParticleSystem && typeof pGeo !== 'undefined' && pGeo) {
+          const simPolicy = (typeof QualityPolicy !== 'undefined') ? QualityPolicy.getPolicy() : null;
+          const simActiveCount = simPolicy ? Math.min(simPolicy.ambientParticles || 80, 220) : 80;
+          const pos = pGeo.attributes.position;
+          const arr = pos.array;
+          const dtFactor = decorativeDelta * 60;
+          for (let i = 0; i < simActiveCount; i++) {
+            const idxY = i * 3 + 1;
+            let y = arr[idxY] + vels[idxY] * dtFactor;
+            if (y > 1.5) y = -1.5;
+            arr[idxY] = y;
+          }
+          pos.needsUpdate = true;
         }
-        pos.needsUpdate = true;
 
         // Update active VFX in simulator loop with active elapsed time
         updateEffects(elapsed);
