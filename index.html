@@ -4310,6 +4310,27 @@
       }
     }
 
+    let screamAudio = null;
+    let lastScreamTime = 0;
+
+    function playScreamSound() {
+      if (!audioEnabled) return;
+      const now = performance.now();
+      if (now - lastScreamTime < 350) return;
+      lastScreamTime = now;
+      try {
+        if (!screamAudio) {
+          screamAudio = new Audio('assets/scream.mp3');
+          screamAudio.volume = 0.95;
+        }
+        screamAudio.currentTime = 0;
+        screamAudio.play().catch((err) => console.warn('[Audio] Scream audio playback prevented:', err));
+      } catch (err) {
+        console.warn('[Audio] Scream audio error:', err);
+      }
+    }
+    window.playScreamSound = playScreamSound;
+
     // ---------------------------------------------------------------
     // 3D Explosion FX using assets/textures/explosion_01.png (5x5 Sprite Sheet)
     // ---------------------------------------------------------------
@@ -5102,6 +5123,7 @@
       if (!isRightArmCurrentlyUp) return;
       isRightArmCurrentlyUp = false;
 
+      playScreamSound();
       const lowered = ctrl.lowerArm('right', { triggerEffect });
       if (lowered) {
         if (triggerEffect) {
@@ -5134,6 +5156,7 @@
       if (!isLeftArmCurrentlyUp) return;
       isLeftArmCurrentlyUp = false;
 
+      playScreamSound();
       const lowered = ctrl.lowerArm('left', { triggerEffect });
       if (lowered) {
         if (triggerEffect) {

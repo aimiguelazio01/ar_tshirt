@@ -759,4 +759,14 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     const offscreenPlate = projectToScreen(0.7, 0);
     assert.strictEqual(offscreenPlate.isVisible, false, 'Offscreen plate must be recognized as outside viewport');
   });
+
+  await t.test('7g. Arms lower sound effect plays scream.mp3', () => {
+    assert.ok(fs.existsSync('assets/scream.mp3'), 'assets/scream.mp3 must exist in repository');
+    const html = fs.readFileSync('index.html', 'utf8');
+    assert.ok(html.includes('assets/scream.mp3'), 'index.html must reference assets/scream.mp3');
+    assert.match(html, /function playScreamSound\(\)/, 'index.html must define playScreamSound');
+    assert.match(html, /triggerRightArmDown[\s\S]*?playScreamSound\(\)/, 'triggerRightArmDown must call playScreamSound');
+    assert.match(html, /triggerLeftArmDown[\s\S]*?playScreamSound\(\)/, 'triggerLeftArmDown must call playScreamSound');
+    assert.ok(fs.existsSync('dist/assets/scream.mp3'), 'dist/assets/scream.mp3 must be packaged into build');
+  });
 });
