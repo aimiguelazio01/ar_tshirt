@@ -2480,7 +2480,7 @@
         if (parent && typeof ensurePlanesModelAttached === 'function') {
           ensurePlanesModelAttached(parent);
         }
-        nextTouchHintTime = performance.now() + 1500;
+        nextTouchHintTime = performance.now() + 800;
       }, 150);
 
       if (window.DEBUG_PERFORMANCE) {
@@ -7178,11 +7178,11 @@
 
     function initTouchSoftwareHint() {
       touchHintEl = document.getElementById('touch-software-hint');
-      nextTouchHintTime = performance.now() + 1500;
+      nextTouchHintTime = performance.now() + 800;
 
       const dismissAndDelay = () => {
         if (isTouchHintVisible) hideTouchSoftwareHint();
-        nextTouchHintTime = performance.now() + 8000;
+        nextTouchHintTime = performance.now() + 3500;
       };
 
       if (els.arContainer) {
@@ -7206,16 +7206,16 @@
       const positioned = updateTouchHintPosition();
       if (!positioned) {
         isTouchHintVisible = false;
-        nextTouchHintTime = performance.now() + 1500;
+        nextTouchHintTime = performance.now() + 800;
         return;
       }
 
-      // Subtle display: tap for 3.6 seconds then fade out and schedule next circle in 7s
+      // Subtle display: tap for 3.2 seconds then fade out and schedule next circle in 2.5s
       clearTimeout(touchHintTimeout);
       touchHintTimeout = setTimeout(() => {
         hideTouchSoftwareHint();
-        nextTouchHintTime = performance.now() + 7000; // Alternate to next circle in 7s
-      }, 3600);
+        nextTouchHintTime = performance.now() + 2500; // Alternate to next circle in 2.5s
+      }, 3200);
     }
 
     function hideTouchSoftwareHint() {
@@ -7291,7 +7291,7 @@
         if (areSoftwarePlatesActiveOnScreen() && (interactivePlanes.length > 0 || planesModel)) {
           showTouchSoftwareHint();
         } else {
-          nextTouchHintTime = currentNow + 1500;
+          nextTouchHintTime = currentNow + 800;
         }
       }
     }
@@ -7407,7 +7407,7 @@
         const targetPlane = directHit || findNearestInteractivePlane(clientX, clientY, rect, currentCam);
         if (targetPlane) {
           hideTouchSoftwareHint();
-          nextTouchHintTime = performance.now() + 8000;
+          nextTouchHintTime = performance.now() + 4000;
           return openSoftwarePlate(targetPlane);
         }
       }
