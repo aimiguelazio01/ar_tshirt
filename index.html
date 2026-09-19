@@ -1477,10 +1477,10 @@
     const isDebugPerformance = urlParams.get('debugPerformance') === '1';
     window.DEBUG_PERFORMANCE = isDebugPerformance;
 
-    // Independent bottleneck isolation switches (MediaPipe disabled by default for maximum mobile speed & zero startup freeze)
-    window.DISABLE_MEDIAPIPE = urlParams.get('enableMediaPipe') === '1' ? false : true;
+    // MediaPipe tracking enabled by default for interactive arm gestures & 3D effects
+    window.DISABLE_MEDIAPIPE = urlParams.get('noMediaPipe') === '1';
     window.DISABLE_POSE = window.DISABLE_MEDIAPIPE || urlParams.get('noPose') === '1';
-    window.DISABLE_HANDS = true; // MediaPipe hand tracking removed; only MediaPipe arms (pose) are used
+    window.DISABLE_HANDS = true; // MediaPipe pose (arms) handles hand raising & interactive triggers
     window.DISABLE_VFX = urlParams.get('noVfx') === '1';
 
     // Diagnostic-only controls: trackingDelegate=auto|cpu|gpu, cameraProfile=standard|economy, quality=auto|balanced|reduced
@@ -2539,7 +2539,7 @@
             }
           }
         });
-      }, 1500);
+      }, 300);
     }
 
     let isPageVisible = true;
@@ -6095,9 +6095,9 @@
     async function initMainThreadVisionFallback() {
       try {
         const vision = await getSharedVisionFileset();
-        if (!activeSession || activeSession.mode !== 'ar') return;
+        if (!activeSession) return;
         if (!window.DISABLE_POSE) await initPoseTracking(vision).catch(() => {});
-        if (!activeSession || activeSession.mode !== 'ar') return;
+        if (!activeSession) return;
         if (!window.DISABLE_HANDS) await initHandTracking(vision).catch(() => {});
         if (els.gestureText) {
           els.gestureText.textContent = '🦾 LOWER ARM TO TRIGGER: RIGHT (BLAST) / LEFT (STORM)';
@@ -7167,18 +7167,75 @@
       if (isSimulatorMode) {
         return !!(simMonster && simMonster.visible && planesModel && planesModel.visible);
       }
-      return !!(isTargetLocked && monsterModel && monsterModel.visible && planesModel && planesModel.visible);
+      const platesReady = (planesModel && planesModel.visible) || (interactivePlanes && interactivePlanes.length > 0 && currentPlaneOpacity > 0.05);
+      return !!(isTargetLocked && monsterModel && platesReady);
+    }
+
+    function getScreenPositionForPlate(plate, activeCamera, targetVec) {
+      if (!plate || !activeCamera) return null;
+      const activeScene = isSimulatorMode ? simScene : scene;
+      if (activeScene) {
+        activeScene.updateMatrixWorld(true);
+      } else if (planesModel) {
+        planesModel.updateMatrixWorld(true);
+      }
+      activeCamera.updateMatrixWorld();
+
+      plate.getWorldPosition(targetVec);
+      targetVec.project(activeCamera);
+
+      // Verify projected plate is in front of camera and within reasonable clip bounds
+      if (targetVec.z < -1.1 || targetVec.z > 1.1) return null;
+
+      const rect = (typeof getActiveSceneRect === 'function')
+        ? getActiveSceneRect()
+        : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+
+      const screenX = rect.left + (targetVec.x + 1) * 0.5 * rect.width;
+      const screenY = rect.top + (1 - targetVec.y) * 0.5 * rect.height;
+
+      // Ensure inside viewport bounds (comparing with actual window viewport)
+      const vpW = window.innerWidth || rect.width;
+      const vpH = window.innerHeight || rect.height;
+      const minMargin = 16;
+      if (screenX < minMargin || screenX > vpW - minMargin || screenY < minMargin || screenY > vpH - minMargin) {
+        return null;
+      }
+
+      return { x: screenX, y: screenY };
     }
 
     function getNextTargetCircle() {
       if (!interactivePlanes || interactivePlanes.length === 0) return null;
-      touchHintTargetIndex = (touchHintTargetIndex + 1) % interactivePlanes.length;
+      const activeCamera = isSimulatorMode ? simCamera : camera;
+      const total = interactivePlanes.length;
+
+      // Prioritize the next alternating circle that is currently visible within viewport
+      for (let offset = 1; offset <= total; offset++) {
+        const candidateIndex = (touchHintTargetIndex + offset) % total;
+        const candidate = interactivePlanes[candidateIndex];
+        if (!candidate) continue;
+
+        if (activeCamera) {
+          const pos = getScreenPositionForPlate(candidate, activeCamera, _scratchV2);
+          if (pos) {
+            touchHintTargetIndex = candidateIndex;
+            return candidate;
+          }
+        } else {
+          touchHintTargetIndex = candidateIndex;
+          return candidate;
+        }
+      }
+
+      // Fallback: pick next alternating circle even if near edge
+      touchHintTargetIndex = (touchHintTargetIndex + 1) % total;
       return interactivePlanes[touchHintTargetIndex];
     }
 
     function initTouchSoftwareHint() {
       touchHintEl = document.getElementById('touch-software-hint');
-      nextTouchHintTime = performance.now() + 800;
+      nextTouchHintTime = performance.now() + 600;
 
       const dismissAndDelay = () => {
         if (isTouchHintVisible) hideTouchSoftwareHint();
@@ -7198,7 +7255,7 @@
       if (!touchHintEl || isTouchHintVisible) return;
       if (!areSoftwarePlatesActiveOnScreen()) return;
 
-      // Select next alternating circle
+      // Select next alternating circle that is on-screen
       touchHintTargetPlate = getNextTargetCircle();
       if (!touchHintTargetPlate) return;
 
@@ -7210,12 +7267,12 @@
         return;
       }
 
-      // Subtle display: tap for 3.2 seconds then fade out and schedule next circle in 2.5s
+      // Subtle display: tap for 3.5 seconds then fade out and schedule next circle in 2.5s
       clearTimeout(touchHintTimeout);
       touchHintTimeout = setTimeout(() => {
         hideTouchSoftwareHint();
         nextTouchHintTime = performance.now() + 2500; // Alternate to next circle in 2.5s
-      }, 3200);
+      }, 3500);
     }
 
     function hideTouchSoftwareHint() {
@@ -7238,35 +7295,14 @@
         return false;
       }
 
-      if (planesModel) {
-        planesModel.updateMatrixWorld(true);
-      }
-      activeCamera.updateMatrixWorld();
-
-      touchHintTargetPlate.getWorldPosition(_scratchV2);
-      _scratchV2.project(activeCamera);
-
-      // Verify that the projected plate is in front of the camera and within clip bounds
-      if (_scratchV2.z < -1 || _scratchV2.z > 1) {
+      const pos = getScreenPositionForPlate(touchHintTargetPlate, activeCamera, _scratchV2);
+      if (!pos) {
         touchHintEl.classList.remove('hint-visible');
         return false;
       }
 
-      const rect = (typeof getActiveSceneRect === 'function')
-        ? getActiveSceneRect()
-        : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
-
-      const screenX = rect.left + (_scratchV2.x + 1) * 0.5 * rect.width;
-      const screenY = rect.top + (1 - _scratchV2.y) * 0.5 * rect.height;
-
-      // Ensure inside viewport bounds
-      if (screenX < 12 || screenX > rect.width - 12 || screenY < 12 || screenY > rect.height - 12) {
-        touchHintEl.classList.remove('hint-visible');
-        return false;
-      }
-
-      touchHintEl.style.left = `${Math.round(screenX)}px`;
-      touchHintEl.style.top = `${Math.round(screenY)}px`;
+      touchHintEl.style.left = `${Math.round(pos.x)}px`;
+      touchHintEl.style.top = `${Math.round(pos.y)}px`;
       touchHintEl.classList.add('hint-visible');
       return true;
     }

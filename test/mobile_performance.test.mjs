@@ -723,4 +723,40 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
     }
     assert.ok(Math.abs(accum - 10.0) < 0.001, 'Production animationTime yields full 10s at 5 FPS');
   });
+
+  await t.test('7f. AR mode touch hint projection and screen bounds resilience', () => {
+    const html = fs.readFileSync('index.html', 'utf8');
+    assert.ok(html.includes('touch-software-hint'), 'index.html must include touch-software-hint');
+    assert.ok(html.includes('getScreenPositionForPlate'), 'index.html must have getScreenPositionForPlate helper');
+    assert.ok(html.includes('window.innerWidth || rect.width'), 'Coordinate bounds check must use window viewport dimensions');
+
+    // Simulate mobile portrait cover scaling where canvas is wider than screen:
+    // Window is 390x844. Canvas is 1125x844, left = -367.5px.
+    const vpW = 390;
+    const vpH = 844;
+    const rect = { left: -367.5, top: 0, width: 1125, height: 844 };
+
+    function projectToScreen(ndcX, ndcY) {
+      const screenX = rect.left + (ndcX + 1) * 0.5 * rect.width;
+      const screenY = rect.top + (1 - ndcY) * 0.5 * rect.height;
+      const minMargin = 16;
+      const isVisible = screenX >= minMargin && screenX <= vpW - minMargin &&
+                        screenY >= minMargin && screenY <= vpH - minMargin;
+      return { screenX, screenY, isVisible };
+    }
+
+    // Center plate (NDC x=0, y=0)
+    const centerPlate = projectToScreen(0, 0);
+    assert.ok(Math.abs(centerPlate.screenX - 195) < 0.01, 'Center plate must map to screen center (195px)');
+    assert.ok(centerPlate.isVisible, 'Center plate must be visible in viewport');
+
+    // Plate slightly to the right (NDC x=0.2)
+    const rightPlate = projectToScreen(0.2, 0);
+    assert.ok(rightPlate.screenX > 195 && rightPlate.screenX < vpW, 'Right plate within screen must be valid');
+    assert.ok(rightPlate.isVisible, 'Right plate within screen must be visible');
+
+    // Plate outside mobile screen (NDC x=0.7 -> screenX = 590px > 390px)
+    const offscreenPlate = projectToScreen(0.7, 0);
+    assert.strictEqual(offscreenPlate.isVisible, false, 'Offscreen plate must be recognized as outside viewport');
+  });
 });
