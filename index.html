@@ -293,6 +293,101 @@
       display: none !important;
     }
 
+    /* Touch Software Finger Hint (Occasional prompt) */
+    #touch-software-hint {
+      position: fixed;
+      left: 50%;
+      top: 38%;
+      transform: translate(-50%, -50%);
+      z-index: 55;
+      pointer-events: none !important;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      opacity: 0;
+      transition: opacity 0.4s ease, transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    #touch-software-hint.hint-visible {
+      opacity: 1;
+    }
+
+    .touch-hint-finger-wrap {
+      position: relative;
+      width: 54px;
+      height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .touch-hint-ripple {
+      position: absolute;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: rgba(241, 107, 37, 0.35);
+      border: 1.5px solid #F16B25;
+      box-shadow: 0 0 16px rgba(241, 107, 37, 0.65);
+      animation: touchRippleAnim 1.6s ease-out infinite;
+    }
+
+    .touch-hint-ripple-2 {
+      animation-delay: 0.55s;
+    }
+
+    .touch-hint-hand {
+      position: relative;
+      user-select: none;
+      filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.85)) drop-shadow(0 0 12px rgba(241, 107, 37, 0.8));
+      animation: fingerTapAnim 1.6s ease-in-out infinite;
+    }
+
+    .touch-hint-pill {
+      margin-top: 5px;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      background: rgba(18, 20, 28, 0.9);
+      border: 1px solid rgba(241, 107, 37, 0.6);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6), 0 0 14px rgba(241, 107, 37, 0.35);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: #FFFFFF;
+      text-transform: uppercase;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    @keyframes fingerTapAnim {
+      0%, 100% {
+        transform: translateY(0) scale(1);
+      }
+      32% {
+        transform: translateY(-8px) scale(1.08);
+      }
+      54% {
+        transform: translateY(3px) scale(0.92);
+      }
+      72% {
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @keyframes touchRippleAnim {
+      0% {
+        transform: scale(0.5);
+        opacity: 0.95;
+      }
+      100% {
+        transform: scale(2.3);
+        opacity: 0;
+      }
+    }
+
     /* Camera Blur for Welcome Screen */
     #ar-container video.camera-welcome-blur {
       filter: blur(22px) brightness(0.4) saturate(0.8) !important;
@@ -1141,6 +1236,19 @@
       <div id="toast">
         <span class="material-symbols-outlined text-brand text-[17px]">check_circle</span>
         <span id="toast-text">NOTIFICATION</span>
+      </div>
+
+      <!-- Touch Software Finger Hint (Shows periodically on screen to prompt interaction) -->
+      <div id="touch-software-hint" aria-hidden="true">
+        <div class="touch-hint-finger-wrap">
+          <div class="touch-hint-ripple"></div>
+          <div class="touch-hint-ripple touch-hint-ripple-2"></div>
+          <span class="material-symbols-outlined touch-hint-hand text-[34px] text-brand">touch_app</span>
+        </div>
+        <div class="touch-hint-pill">
+          <span class="w-1.5 h-1.5 rounded-full bg-brand animate-pulse"></span>
+          <span>touch software</span>
+        </div>
       </div>
 
       <!-- MediaPipe Hand Debug Cursor -->
@@ -2036,6 +2144,7 @@
       btnAudio: document.getElementById('btn-audio'),
       btnTogglePlates: document.getElementById('btn-toggle-plates'),
       toast: document.getElementById('toast'),
+      touchSoftwareHint: document.getElementById('touch-software-hint'),
       arContainer: document.getElementById('ar-container'),
       btnSizeDown: document.getElementById('btn-size-down'),
       btnSizeUp: document.getElementById('btn-size-up'),
@@ -2555,6 +2664,7 @@
         }
         resetAllPlanes();
         clearActivePlane();
+        hideTouchSoftwareHint();
       }
       updateSoftwarePlatesToggleButton();
       showToast(enabled ? 'Software Plates Enabled' : 'Software Plates Disabled');
@@ -5588,6 +5698,7 @@
     let currentInspectedSoftware = null;
 
     function openSoftwareModal(id) {
+      hideTouchSoftwareHint();
       const data = SOFTWARE_DETAILS[id];
       if (!data) return;
       currentInspectedSoftware = id;
@@ -6516,6 +6627,9 @@
       // Update active 3D explosions and electric storm VFX in the render loop with active elapsed time
       updateEffects(elapsed);
 
+      // Periodically guide user with touch software hint when plates are visible
+      checkTouchHintScheduler(nowMs);
+
       // 3D Floating Buttons: Micro-float animation & Gesture Opacity Fade
       if (planesModel) {
         const opacityDiff = targetPlaneOpacity - currentPlaneOpacity;
@@ -6961,6 +7075,7 @@
         }
 
         simRenderer.render(simScene, simCamera);
+        checkTouchHintScheduler(performance.now());
         if (window.PerformanceDiagnostics) {
           window.PerformanceDiagnostics.recordFrame(simRenderer);
         }
@@ -7071,6 +7186,104 @@
     }
 
     // ---------------------------------------------------------------
+    // Occasional "Touch Software" Finger Hint System
+    // ---------------------------------------------------------------
+    let touchHintEl = null;
+    let isTouchHintVisible = false;
+    let touchHintTimeout = null;
+    let nextTouchHintTime = Date.now() + 5000;
+    let touchHintTargetPlate = null;
+
+    function initTouchSoftwareHint() {
+      touchHintEl = document.getElementById('touch-software-hint');
+      const dismissAndDelay = () => {
+        hideTouchSoftwareHint();
+        nextTouchHintTime = Date.now() + 25000;
+      };
+      window.addEventListener('pointerdown', dismissAndDelay, { capture: true, passive: true });
+      window.addEventListener('touchstart', dismissAndDelay, { capture: true, passive: true });
+    }
+
+    function showTouchSoftwareHint() {
+      if (!touchHintEl || isTouchHintVisible) return;
+      if (typeof areSoftwarePlatesVisible === 'function' && !areSoftwarePlatesVisible()) return;
+      if (typeof isSoftwareModalOpen === 'function' && isSoftwareModalOpen()) return;
+
+      touchHintTargetPlate = (interactivePlanes && interactivePlanes.length > 0)
+        ? (interactivePlanes.find(p => isObjectVisibleInScene(p)) || interactivePlanes[0])
+        : null;
+
+      isTouchHintVisible = true;
+      updateTouchHintPosition();
+      touchHintEl.classList.add('hint-visible');
+
+      clearTimeout(touchHintTimeout);
+      touchHintTimeout = setTimeout(() => {
+        hideTouchSoftwareHint();
+        nextTouchHintTime = Date.now() + 22000;
+      }, 3600);
+    }
+
+    function hideTouchSoftwareHint() {
+      if (!touchHintEl) return;
+      isTouchHintVisible = false;
+      touchHintEl.classList.remove('hint-visible');
+      clearTimeout(touchHintTimeout);
+    }
+
+    function updateTouchHintPosition() {
+      if (!touchHintEl || !isTouchHintVisible) return;
+      const activeCamera = isSimulatorMode ? simCamera : camera;
+      const rect = typeof getActiveSceneRect === 'function'
+        ? getActiveSceneRect()
+        : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+
+      let targetX = rect.left + rect.width * 0.5;
+      let targetY = rect.top + rect.height * 0.38;
+
+      if (touchHintTargetPlate && activeCamera && isObjectVisibleInScene(touchHintTargetPlate)) {
+        touchHintTargetPlate.getWorldPosition(_scratchV2);
+        _scratchV2.project(activeCamera);
+        if (_scratchV2.z >= -1 && _scratchV2.z <= 1) {
+          const screenX = rect.left + (_scratchV2.x + 1) * 0.5 * rect.width;
+          const screenY = rect.top + (1 - _scratchV2.y) * 0.5 * rect.height;
+          if (screenX >= 50 && screenX <= rect.width - 50 && screenY >= 90 && screenY <= rect.height - 140) {
+            targetX = screenX;
+            targetY = screenY;
+          }
+        }
+      }
+
+      touchHintEl.style.left = `${Math.round(targetX)}px`;
+      touchHintEl.style.top = `${Math.round(targetY)}px`;
+    }
+
+    function checkTouchHintScheduler(now) {
+      if (!touchHintEl) return;
+      if (isTouchHintVisible) {
+        if ((typeof areSoftwarePlatesVisible === 'function' && !areSoftwarePlatesVisible()) ||
+            (typeof isSoftwareModalOpen === 'function' && isSoftwareModalOpen())) {
+          hideTouchSoftwareHint();
+          return;
+        }
+        updateTouchHintPosition();
+        return;
+      }
+
+      if (now >= nextTouchHintTime) {
+        if ((typeof areSoftwarePlatesVisible === 'function' && areSoftwarePlatesVisible()) &&
+            !(typeof isSoftwareModalOpen === 'function' && isSoftwareModalOpen()) &&
+            interactivePlanes.length > 0) {
+          showTouchSoftwareHint();
+        } else {
+          nextTouchHintTime = now + 4000;
+        }
+      }
+    }
+
+    initTouchSoftwareHint();
+
+    // ---------------------------------------------------------------
     // 8. 3D Scene Interaction & Tap Raycasting for 3D Buttons
     // ---------------------------------------------------------------
     function isSoftwareModalOpen() {
@@ -7175,6 +7388,8 @@
         const directHit = hits.find(hit => isObjectVisibleInScene(hit.object))?.object;
         const targetPlane = directHit || findNearestInteractivePlane(clientX, clientY, rect, currentCam);
         if (targetPlane) {
+          hideTouchSoftwareHint();
+          nextTouchHintTime = Date.now() + 45000;
           return openSoftwarePlate(targetPlane);
         }
       }
