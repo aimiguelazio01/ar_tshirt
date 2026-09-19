@@ -297,25 +297,27 @@
     #touch-software-hint {
       position: fixed;
       left: 50%;
-      top: 38%;
+      top: 36%;
       transform: translate(-50%, -50%);
-      z-index: 55;
+      z-index: 65;
       pointer-events: none !important;
       display: flex;
       flex-direction: column;
       align-items: center;
       opacity: 0;
-      transition: opacity 0.4s ease, transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      visibility: hidden;
+      transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.35s ease;
     }
 
     #touch-software-hint.hint-visible {
-      opacity: 1;
+      opacity: 1 !important;
+      visibility: visible !important;
     }
 
     .touch-hint-finger-wrap {
       position: relative;
-      width: 54px;
-      height: 54px;
+      width: 60px;
+      height: 60px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -323,34 +325,38 @@
 
     .touch-hint-ripple {
       position: absolute;
-      width: 22px;
-      height: 22px;
+      top: 20%;
+      left: 48%;
+      transform: translate(-50%, -50%);
+      width: 26px;
+      height: 26px;
       border-radius: 50%;
-      background: rgba(241, 107, 37, 0.35);
-      border: 1.5px solid #F16B25;
-      box-shadow: 0 0 16px rgba(241, 107, 37, 0.65);
-      animation: touchRippleAnim 1.6s ease-out infinite;
+      background: rgba(241, 107, 37, 0.45);
+      border: 2px solid #F16B25;
+      box-shadow: 0 0 18px #F16B25, 0 0 32px rgba(241, 107, 37, 0.85);
+      animation: touchRippleAnim 1.5s cubic-bezier(0, 0.2, 0.8, 1) infinite;
+      pointer-events: none;
     }
 
     .touch-hint-ripple-2 {
-      animation-delay: 0.55s;
+      animation-delay: 0.5s;
     }
 
     .touch-hint-hand {
       position: relative;
       user-select: none;
-      filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.85)) drop-shadow(0 0 12px rgba(241, 107, 37, 0.8));
-      animation: fingerTapAnim 1.6s ease-in-out infinite;
+      filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.95)) drop-shadow(0 0 16px rgba(241, 107, 37, 0.85));
+      animation: fingerTapAnim 1.5s ease-in-out infinite;
     }
 
     .touch-hint-pill {
       margin-top: 5px;
-      padding: 4px 10px;
+      padding: 4px 11px;
       border-radius: 9999px;
-      background: rgba(18, 20, 28, 0.9);
-      border: 1px solid rgba(241, 107, 37, 0.6);
+      background: rgba(18, 20, 28, 0.92);
+      border: 1px solid rgba(241, 107, 37, 0.7);
       backdrop-filter: blur(12px);
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6), 0 0 14px rgba(241, 107, 37, 0.35);
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.7), 0 0 16px rgba(241, 107, 37, 0.4);
       font-size: 10px;
       font-weight: 700;
       letter-spacing: 0.08em;
@@ -366,24 +372,24 @@
       0%, 100% {
         transform: translateY(0) scale(1);
       }
-      32% {
-        transform: translateY(-8px) scale(1.08);
+      30% {
+        transform: translateY(-9px) scale(1.08);
       }
-      54% {
-        transform: translateY(3px) scale(0.92);
+      52% {
+        transform: translateY(3px) scale(0.93);
       }
-      72% {
+      68% {
         transform: translateY(0) scale(1);
       }
     }
 
     @keyframes touchRippleAnim {
       0% {
-        transform: scale(0.5);
-        opacity: 0.95;
+        transform: translate(-50%, -50%) scale(0.3);
+        opacity: 1;
       }
       100% {
-        transform: scale(2.3);
+        transform: translate(-50%, -50%) scale(2.8);
         opacity: 0;
       }
     }
@@ -1243,7 +1249,9 @@
         <div class="touch-hint-finger-wrap">
           <div class="touch-hint-ripple"></div>
           <div class="touch-hint-ripple touch-hint-ripple-2"></div>
-          <span class="material-symbols-outlined touch-hint-hand text-[34px] text-brand">touch_app</span>
+          <svg class="touch-hint-hand" width="46" height="46" viewBox="0 0 24 24" fill="#FFFFFF">
+            <path d="M9 11.24V7.5C9 6.12 10.12 5 11.5 5S14 6.12 14 7.5v3.74c1.21-.81 2-2.18 2-3.74C16 5.01 13.99 3 11.5 3S7 5.01 7 7.5c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26c-.17-.07-.35-.11-.54-.11H13v-6c0-.83-.67-1.5-1.5-1.5S10 6.67 10 7.5v10.74l-3.44-.72c-.09-.02-.18-.03-.28-.03-.39 0-.75.16-1.02.42l-.86.87 5.07 5.07c.4.39.94.61 1.51.61h6.55c1.07 0 1.96-.8 2.08-1.87l.63-5.63c.02-.16-.02-.32-.1-.46-.09-.14-.23-.25-.38-.3z"/>
+          </svg>
         </div>
         <div class="touch-hint-pill">
           <span class="w-1.5 h-1.5 rounded-full bg-brand animate-pulse"></span>
@@ -2494,6 +2502,7 @@
         if (parent && typeof ensurePlanesModelAttached === 'function') {
           ensurePlanesModelAttached(parent);
         }
+        nextTouchHintTime = performance.now() + 1500;
       }, 150);
 
       if (window.DEBUG_PERFORMANCE) {
@@ -7191,24 +7200,33 @@
     let touchHintEl = null;
     let isTouchHintVisible = false;
     let touchHintTimeout = null;
-    let nextTouchHintTime = Date.now() + 5000;
+    let nextTouchHintTime = 0; // Trigger prompt promptly once scene & character load
     let touchHintTargetPlate = null;
 
     function initTouchSoftwareHint() {
       touchHintEl = document.getElementById('touch-software-hint');
+      nextTouchHintTime = performance.now() + 2000;
+
       const dismissAndDelay = () => {
-        hideTouchSoftwareHint();
-        nextTouchHintTime = Date.now() + 25000;
+        if (isTouchHintVisible) hideTouchSoftwareHint();
+        nextTouchHintTime = performance.now() + 16000;
       };
-      window.addEventListener('pointerdown', dismissAndDelay, { capture: true, passive: true });
-      window.addEventListener('touchstart', dismissAndDelay, { capture: true, passive: true });
+
+      if (els.arContainer) {
+        els.arContainer.addEventListener('pointerdown', dismissAndDelay, { passive: true });
+        els.arContainer.addEventListener('touchstart', dismissAndDelay, { passive: true });
+      }
     }
 
     function showTouchSoftwareHint() {
+      if (!touchHintEl) {
+        touchHintEl = document.getElementById('touch-software-hint');
+      }
       if (!touchHintEl || isTouchHintVisible) return;
       if (typeof areSoftwarePlatesVisible === 'function' && !areSoftwarePlatesVisible()) return;
       if (typeof isSoftwareModalOpen === 'function' && isSoftwareModalOpen()) return;
 
+      // Find an active interactive plane to point to
       touchHintTargetPlate = (interactivePlanes && interactivePlanes.length > 0)
         ? (interactivePlanes.find(p => isObjectVisibleInScene(p)) || interactivePlanes[0])
         : null;
@@ -7220,8 +7238,8 @@
       clearTimeout(touchHintTimeout);
       touchHintTimeout = setTimeout(() => {
         hideTouchSoftwareHint();
-        nextTouchHintTime = Date.now() + 22000;
-      }, 3600);
+        nextTouchHintTime = performance.now() + 14000; // Next hint in 14 seconds
+      }, 4200);
     }
 
     function hideTouchSoftwareHint() {
@@ -7234,12 +7252,12 @@
     function updateTouchHintPosition() {
       if (!touchHintEl || !isTouchHintVisible) return;
       const activeCamera = isSimulatorMode ? simCamera : camera;
-      const rect = typeof getActiveSceneRect === 'function'
+      const rect = (typeof getActiveSceneRect === 'function')
         ? getActiveSceneRect()
         : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
 
       let targetX = rect.left + rect.width * 0.5;
-      let targetY = rect.top + rect.height * 0.38;
+      let targetY = rect.top + rect.height * 0.36;
 
       if (touchHintTargetPlate && activeCamera && isObjectVisibleInScene(touchHintTargetPlate)) {
         touchHintTargetPlate.getWorldPosition(_scratchV2);
@@ -7247,7 +7265,7 @@
         if (_scratchV2.z >= -1 && _scratchV2.z <= 1) {
           const screenX = rect.left + (_scratchV2.x + 1) * 0.5 * rect.width;
           const screenY = rect.top + (1 - _scratchV2.y) * 0.5 * rect.height;
-          if (screenX >= 50 && screenX <= rect.width - 50 && screenY >= 90 && screenY <= rect.height - 140) {
+          if (screenX >= 40 && screenX <= rect.width - 40 && screenY >= 80 && screenY <= rect.height - 120) {
             targetX = screenX;
             targetY = screenY;
           }
@@ -7259,7 +7277,12 @@
     }
 
     function checkTouchHintScheduler(now) {
-      if (!touchHintEl) return;
+      const currentNow = (typeof now === 'number' && now > 0) ? now : performance.now();
+      if (!touchHintEl) {
+        touchHintEl = document.getElementById('touch-software-hint');
+        if (!touchHintEl) return;
+      }
+
       if (isTouchHintVisible) {
         if ((typeof areSoftwarePlatesVisible === 'function' && !areSoftwarePlatesVisible()) ||
             (typeof isSoftwareModalOpen === 'function' && isSoftwareModalOpen())) {
@@ -7270,17 +7293,20 @@
         return;
       }
 
-      if (now >= nextTouchHintTime) {
-        if ((typeof areSoftwarePlatesVisible === 'function' && areSoftwarePlatesVisible()) &&
-            !(typeof isSoftwareModalOpen === 'function' && isSoftwareModalOpen()) &&
-            interactivePlanes.length > 0) {
+      if (currentNow >= nextTouchHintTime) {
+        const platesOk = (typeof areSoftwarePlatesVisible === 'function') ? areSoftwarePlatesVisible() : true;
+        const modalOpen = (typeof isSoftwareModalOpen === 'function') ? isSoftwareModalOpen() : false;
+
+        if (platesOk && !modalOpen && (interactivePlanes.length > 0 || planesModel)) {
           showTouchSoftwareHint();
         } else {
-          nextTouchHintTime = now + 4000;
+          nextTouchHintTime = currentNow + 2500;
         }
       }
     }
 
+    window.showTouchSoftwareHint = showTouchSoftwareHint;
+    window.hideTouchSoftwareHint = hideTouchSoftwareHint;
     initTouchSoftwareHint();
 
     // ---------------------------------------------------------------
