@@ -60,7 +60,7 @@ test('Mobile Performance — Step 6 Production Tests', async (t) => {
   await t.test('0d. Footer social links use the supplied profiles', () => {
     const html = fs.readFileSync('index.html', 'utf8');
     const socialLinks = [
-      'https://linkedin.com/in/mvirgilstuio/',
+      'https://linkedin.com/in/mvirgilstudio/',
       'https://facebook.com/profile.php?id=100009122059507',
       'https://instagram.com/vfxmiguel/?hl=en',
       'https://x.com/miguelvfx',
