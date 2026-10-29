@@ -1,0 +1,9 @@
+.git
+.vercel
+.env*
+*.pem
+node_modules
+scratch
+__pycache__
+local_server.py
+assets/3d/monster/monster_rig_v02.glb
