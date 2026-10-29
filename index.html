@@ -1434,6 +1434,7 @@
 }
 </script>
   <script type="module">
+    import { createPoseGestureGate } from './src/runtime/pose-gesture.mjs';
     import * as THREE from 'three';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
@@ -2550,6 +2551,7 @@
     document.addEventListener('visibilitychange', () => {
       isDocumentHidden = document.hidden;
       isPageVisible = !isDocumentHidden;
+      if (isDocumentHidden) clearPendingGestures();
       PerformanceDiagnostics.resetWindows();
       if (activeSession && activeSession.animationTime) {
         activeSession.animationTime.reset();
@@ -2772,6 +2774,7 @@
     }
 
     function clearPendingGestures() {
+      cancelPoseGesture();
       rightArmUpStartTime = 0;
       rightArmDownStartTime = 0;
       leftArmUpStartTime = 0;
@@ -5107,30 +5110,31 @@
       if (ctrl.state === AnimationState.REACTION) return;
       if (isRightArmCurrentlyUp) return;
 
-      isRightArmCurrentlyUp = true;
-      isLeftArmCurrentlyUp = false;
-
       const started = ctrl.raiseArm('right');
       if (started) {
+        isRightArmCurrentlyUp = true;
+        isLeftArmCurrentlyUp = false;
         updateGestureHUD('right', true);
         console.log('[Gesture] Right Arm Raised -> Frames 117 to 125 (holding at 125)');
       }
+      return started;
     }
 
     function triggerRightArmDown(triggerEffect = true) {
       const ctrl = getActiveAnimationController();
       if (!ctrl) return;
       if (!isRightArmCurrentlyUp) return;
-      isRightArmCurrentlyUp = false;
-
-      playScreamSound();
+      if (!triggerEffect) { cancelPoseGesture(); return true; }
       const lowered = ctrl.lowerArm('right', { triggerEffect });
       if (lowered) {
+        isRightArmCurrentlyUp = false;
+        playScreamSound();
         if (triggerEffect) {
           console.log('[Gesture] Right Arm Down -> Frames 126 to 160 played, 3D Explosion triggered');
         }
       }
       updateGestureHUD();
+      return lowered;
     }
 
     // Trigger Left Arm Up -> Plays frames 73 to 80 and stays clamped at frame 80 (no loop)
@@ -5140,34 +5144,36 @@
       if (ctrl.state === AnimationState.REACTION) return;
       if (isLeftArmCurrentlyUp) return;
 
-      isLeftArmCurrentlyUp = true;
-      isRightArmCurrentlyUp = false;
-
       const started = ctrl.raiseArm('left');
       if (started) {
+        isLeftArmCurrentlyUp = true;
+        isRightArmCurrentlyUp = false;
         updateGestureHUD('left', true);
         console.log('[Gesture] Left Arm Raised -> Frames 73 to 80 (holding at 80)');
       }
+      return started;
     }
 
     function triggerLeftArmDown(triggerEffect = true) {
       const ctrl = getActiveAnimationController();
       if (!ctrl) return;
       if (!isLeftArmCurrentlyUp) return;
-      isLeftArmCurrentlyUp = false;
-
-      playScreamSound();
+      if (!triggerEffect) { cancelPoseGesture(); return true; }
       const lowered = ctrl.lowerArm('left', { triggerEffect });
       if (lowered) {
+        isLeftArmCurrentlyUp = false;
+        playScreamSound();
         if (triggerEffect) {
           console.log('[Gesture] Left Arm Down -> Frames 81 to 116 played, 3D Electric Storm triggered');
         }
       }
       updateGestureHUD();
+      return lowered;
     }
 
     function triggerPanicMode() {
       if (isSequenceRunning) return;
+      cancelPoseGesture();
       isRightArmCurrentlyUp = false;
       isLeftArmCurrentlyUp = false;
       playPanicMusic();
@@ -5461,168 +5467,48 @@
       if (cursor) cursor.style.display = 'none';
     }
 
-    // Check if Arm is RAISED / UP (normalized image space: Y=0 is TOP of frame, Y=1 is BOTTOM)
-    function isArmFullUp(shoulder, elbow, wrist, ear, nose) {
-      if (!shoulder) return false;
-      const headY = ear ? ear.y : (nose ? nose.y : shoulder.y - 0.15);
-
-      // 1. Wrist elevated: above or near shoulder level, or near/above head
-      if (wrist) {
-        const isWristAboveShoulder = wrist.y < (shoulder.y + 0.04);
-        const isWristNearHead = wrist.y < (headY + 0.10);
-        const isForearmUp = !elbow || (wrist.y < elbow.y + 0.10);
-        if ((isWristAboveShoulder || isWristNearHead) && isForearmUp) {
-          return true;
-        }
-      }
-
-      // 2. Elbow elevated (e.g. wrist off-screen above camera frame or bent arm held up)
-      if (elbow && elbow.y < (shoulder.y + 0.04)) {
-        return true;
-      }
-
-      return false;
-    }
-
-    // Check if Left Arm is RAISED / FULL UP (Landmarks: 11=left_shoulder, 13=left_elbow, 15=left_wrist, 7=left_ear)
-    function isLeftArmRaisedCheck(landmarks) {
-      if (!landmarks || landmarks.length < 17) return false;
-      const nose = landmarks[0];
-      const leftEar = landmarks[7];
-      const leftShoulder = landmarks[11];
-      const leftElbow = landmarks[13];
-      const leftWrist = landmarks[15];
-
-      return isArmFullUp(leftShoulder, leftElbow, leftWrist, leftEar, nose);
-    }
-
-    // Check if Right Arm is RAISED / FULL UP (Landmarks: 12=right_shoulder, 14=right_elbow, 16=right_wrist, 8=right_ear)
-    function isRightArmRaisedCheck(landmarks) {
-      if (!landmarks || landmarks.length < 17) return false;
-      const nose = landmarks[0];
-      const rightEar = landmarks[8];
-      const rightShoulder = landmarks[12];
-      const rightElbow = landmarks[14];
-      const rightWrist = landmarks[16];
-
-      return isArmFullUp(rightShoulder, rightElbow, rightWrist, rightEar, nose);
-    }
-
-    let rightArmUpDebounce = 0;
-    let rightArmDownDebounce = 0;
-    let leftArmUpDebounce = 0;
-    let leftArmDownDebounce = 0;
-
-    // Check if MediaPipe elbows and wrists are above shoulders
-    // Landmarks: 11=left_shoulder, 12=right_shoulder, 13=left_elbow, 14=right_elbow, 15=left_wrist, 16=right_wrist
-    function areElbowsAndWristsAboveShoulders(landmarks) {
-      if (!landmarks || landmarks.length < 17) return false;
-      const leftShoulder = landmarks[11];
-      const rightShoulder = landmarks[12];
-      const leftElbow = landmarks[13];
-      const rightElbow = landmarks[14];
-      const leftWrist = landmarks[15];
-      const rightWrist = landmarks[16];
-
-      // In normalized image space: y = 0.0 is TOP of frame, y = 1.0 is BOTTOM of frame.
-      // "above shoulders" means y < shoulder.y.
-      // We include a small 0.02 (2%) tolerance for natural body geometry.
-      const TOLERANCE = 0.02;
-
-      // Left arm raised: both left elbow AND left wrist are above left shoulder
-      const leftArmRaised = (leftElbow.y < (leftShoulder.y + TOLERANCE)) && (leftWrist.y < (leftShoulder.y + TOLERANCE));
-
-      // Right arm raised: both right elbow AND right wrist are above right shoulder
-      const rightArmRaised = (rightElbow.y < (rightShoulder.y + TOLERANCE)) && (rightWrist.y < (rightShoulder.y + TOLERANCE));
-
-      return leftArmRaised || rightArmRaised;
-    }
-
     function updateGestureHUD(armSide, isRaised) {
       if (!els.gestureChip || !els.gestureText) return;
     }
 
-    function processPoseLandmarks(landmarks, video) {
-      if (!landmarks || landmarks.length === 0) {
-        if (hasPoseDetected) {
-          hasPoseDetected = false;
-          console.log('[PoseTracking] Body pose lost');
-          if (isRightArmCurrentlyUp) triggerRightArmDown(false);
-          if (isLeftArmCurrentlyUp) triggerLeftArmDown(false);
-          onHandLost();
-        }
-        return;
+    const poseGestureGate = createPoseGestureGate({ diagnostic: (...args) => {
+      if (window.DEBUG_POSE_GESTURES) console.debug('[PoseGate]', ...args);
+    }});
+    let lastFreshPoseTime = 0;
+    function cancelPoseGesture() {
+      poseGestureGate.reset();
+      lastPoseVideoTime = -1;
+      if (isRightArmCurrentlyUp || isLeftArmCurrentlyUp) {
+        const ctrl = getActiveAnimationController();
+        if (ctrl && ctrl.state !== AnimationState.REACTION) ctrl.playIdle();
       }
-
-      if (!hasPoseDetected) {
-        hasPoseDetected = true;
-        console.log('[PoseTracking] Body pose detected');
-      }
-
+      isRightArmCurrentlyUp = false;
+      isLeftArmCurrentlyUp = false;
+      hasPoseDetected = false;
+      updateGestureHUD();
+    }
+    function processPoseLandmarks(landmarks, video, capturedAt = performance.now()) {
       const now = performance.now();
-      const isPoseSatisfied = areElbowsAndWristsAboveShoulders(landmarks);
-
-      // Evaluate left and right arms independently
-      const isRightUpRaw = isRightArmRaisedCheck(landmarks);
-      const isLeftUpRaw = isLeftArmRaisedCheck(landmarks);
-
-      const activeArm = arbitrateArms(isLeftUpRaw, isRightUpRaw, isRightArmCurrentlyUp ? 'right' : (isLeftArmCurrentlyUp ? 'left' : null));
-      const isRightUp = (activeArm === 'right');
-      const isLeftUp = (activeArm === 'left');
-
-      // 1. Right Arm Raise -> Plays frames 117 to 125, stays at frame 125
-      if (isRightUp) {
-        if (!rightArmUpStartTime) rightArmUpStartTime = now;
-        rightArmDownStartTime = 0;
-        if ((now - rightArmUpStartTime) >= GESTURE_DEBOUNCE_MS && !isRightArmCurrentlyUp) {
-          triggerRightArmUp();
-        }
-      } else {
-        if (!rightArmDownStartTime) rightArmDownStartTime = now;
-        rightArmUpStartTime = 0;
-        if ((now - rightArmDownStartTime) >= GESTURE_DEBOUNCE_MS && isRightArmCurrentlyUp) {
-          triggerRightArmDown();
-        }
-      }
-
-      // 2. Left Arm Raise -> Plays frames 73 to 80 (clamped), then frames 81 to 116 on lowering
-      if (isLeftUp) {
-        if (!leftArmUpStartTime) leftArmUpStartTime = now;
-        leftArmDownStartTime = 0;
-        if ((now - leftArmUpStartTime) >= GESTURE_DEBOUNCE_MS && !isLeftArmCurrentlyUp) {
-          triggerLeftArmUp();
-        }
-      } else {
-        if (!leftArmDownStartTime) leftArmDownStartTime = now;
-        leftArmUpStartTime = 0;
-        if ((now - leftArmDownStartTime) >= GESTURE_DEBOUNCE_MS && isLeftArmCurrentlyUp) {
-          triggerLeftArmDown();
-        }
-      }
-
-      // Raycast index finger against interactive planes when visible
-      const indexTip = landmarks[19] || landmarks[20] || landmarks[15] || landmarks[16];
-      const activeCam = isSimulatorMode ? simCamera : camera;
-      if (indexTip && areSoftwarePlatesVisible() && isPlaneInteractionActive && activeCam && interactivePlanes.length > 0) {
-        const { ndcX, ndcY } = handToNDC(indexTip, video, els.arContainer);
-        pointer.set(ndcX, ndcY);
-        if (planesModel) planesModel.updateMatrixWorld(true);
-        raycaster.setFromCamera(pointer, activeCam);
-        const hits = raycaster.intersectObjects(interactivePlanes, false);
-        if (hits.length > 0) {
-          setActivePlane(hits[0].object);
-        } else {
-          clearActivePlane();
-        }
+      if (now - capturedAt > 350) return;
+      lastFreshPoseTime = now;
+      for (const event of poseGestureGate.update(landmarks, capturedAt, now)) {
+        if (event.type === 'cancel') { cancelPoseGesture(); break; }
+        const action = event.side === 'left'
+          ? (event.type === 'raise' ? triggerLeftArmUp : triggerLeftArmDown)
+          : (event.type === 'raise' ? triggerRightArmUp : triggerRightArmDown);
+        if (action() !== true) { cancelPoseGesture(); break; }
       }
     }
 
+    let lastPoseVideoTime = -1;
     function updatePoseTracking(video) {
       if (!isPageVisible || !isCameraRunning || !poseLandmarker || !video) return;
       if (video.paused || video.ended || video.readyState < 2) return;
       if (!video.videoWidth || !video.videoHeight) return;
 
       const now = performance.now();
+      if (video.currentTime === lastPoseVideoTime) return;
+      lastPoseVideoTime = video.currentTime;
       const safeTimestamp = Math.max(Math.round(now), Math.round(lastPoseInferenceTime) + 1);
       lastPoseInferenceTime = safeTimestamp;
 
@@ -5640,9 +5526,9 @@
       }
 
       if (results && results.landmarks && results.landmarks.length > 0) {
-        processPoseLandmarks(results.landmarks[0], video);
+        processPoseLandmarks(results.landmarks[0], video, now);
       } else {
-        processPoseLandmarks(null, video);
+        processPoseLandmarks(null, video, now);
       }
     }
 
@@ -6280,9 +6166,9 @@
         const activeVideo = (els.arContainer ? els.arContainer.querySelector('video') : null) || document.querySelector('video');
         if (data.task === 'pose') {
           if (data.landmarks && activeVideo) {
-            processPoseLandmarks(data.landmarks[0], activeVideo);
+            processPoseLandmarks(data.landmarks[0], activeVideo, data.capturedAt);
           } else {
-            processPoseLandmarks(null, activeVideo);
+            processPoseLandmarks(null, activeVideo, data.capturedAt);
           }
         } else if (data.task === 'hand') {
           if (data.landmarks && activeVideo) {
@@ -6388,7 +6274,7 @@
       const now = performance.now();
 
       // Clear gesture state when no fresh result arrives for 350 ms
-      if (lastFreshResultTime > 0 && (now - lastFreshResultTime > 350)) {
+      if (lastFreshPoseTime > 0 && (now - lastFreshPoseTime > 350)) {
         clearPendingGestures();
       }
 

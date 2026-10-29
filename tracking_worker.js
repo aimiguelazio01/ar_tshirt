@@ -184,13 +184,13 @@ self.onmessage = async (e) => {
         const res = poseLandmarker.detectForVideo(bitmap, targetTimestampMs);
         durationMs = performance.now() - t0;
         if (res && res.landmarks && res.landmarks.length > 0) {
-          landmarks = res.landmarks.map(list => list.map(pt => ({ x: pt.x, y: pt.y, z: pt.z })));
+          landmarks = res.landmarks.map(list => list.map(pt => ({ x: pt.x, y: pt.y, z: pt.z, visibility: pt.visibility, presence: pt.presence })));
         }
       } else if (requestedTask === 'hand' && handLandmarker) {
         const res = handLandmarker.detectForVideo(bitmap, targetTimestampMs);
         durationMs = performance.now() - t0;
         if (res && res.landmarks && res.landmarks.length > 0) {
-          landmarks = res.landmarks.map(list => list.map(pt => ({ x: pt.x, y: pt.y, z: pt.z })));
+          landmarks = res.landmarks.map(list => list.map(pt => ({ x: pt.x, y: pt.y, z: pt.z, visibility: pt.visibility, presence: pt.presence })));
           handednesses = res.handednesses || [];
         }
       }
